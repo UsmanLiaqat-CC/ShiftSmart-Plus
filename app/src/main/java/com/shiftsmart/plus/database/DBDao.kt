@@ -1,0 +1,34 @@
+package com.shiftsmart.plus.database
+import androidx.lifecycle.LiveData
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+
+/**
+ * Created by Usman Liaqat on 28,Jan,2025
+ * usmanliaqat@codecoytechnologies.com,
+ * CodeCoy Technologies,
+ * Lahore, Pakistan.
+ */
+@Dao
+interface DBDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertRecord(recordModel: RecordModel)
+
+    @Update
+    fun updateRecord(recordModel: RecordModel)
+
+    @Query("DELETE FROM record WHERE UUID = :uuid")
+    suspend fun deleteRecordByUuid(uuid: Int)
+
+    @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time ASC")
+    fun getAllRecords(uId: String): List<RecordModel>
+
+//    @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time DESC ")
+//    fun getAllRecords(uId: String): LiveData<List<RecordModel>>
+
+    @Query("DELETE FROM record")
+    suspend fun deleteAllRecords()
+}

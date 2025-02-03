@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/white">
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/leftguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_begin="20dp" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/topguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_begin="20dp" />
+
+        <ImageView
+            android:id="@+id/logo_iv"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="@dimen/_30sdp"
+            android:src="@drawable/app_logo"
+            app:layout_constraintDimensionRatio="H,3:1"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <TextView
+            android:id="@+id/tv1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/_5sdp"
+            android:paddingTop="@dimen/_10sdp"
+            android:paddingBottom="@dimen/_10sdp"
+            android:text="@string/login_to_your_account"
+            app:layout_constraintEnd_toStartOf="@+id/rightguidline"
+            app:layout_constraintStart_toStartOf="@+id/leftguidline"
+            app:layout_constraintTop_toBottomOf="@id/logo_iv" />
+
+
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_marginTop="@dimen/_10sdp"
+
+            android:fillViewport="true"
+            app:layout_constraintBottom_toTopOf="@+id/bottomguidline"
+            app:layout_constraintEnd_toStartOf="@+id/rightguidline"
+            app:layout_constraintStart_toStartOf="@+id/leftguidline"
+            app:layout_constraintTop_toBottomOf="@+id/tv1">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/username"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        android:padding="@dimen/_5sdp">
+
+                        <ImageView
+                            android:layout_width="@dimen/_20sdp"
+                            android:layout_height="@dimen/_20sdp"
+                            android:contentDescription="email icon"
+                            android:src="@drawable/ic_email"
+                            android:layout_gravity="center_vertical"
+                            app:tint="#898989"
+                            />
+
+                        <EditText
+                            android:id="@+id/email_edittext"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint="@string/enter_username"
+                            android:inputType="textEmailAddress"
+                            android:maxLines="1"
+                            android:imeOptions="actionNext"
+                            android:background="@null"
+                            android:layout_gravity="center_vertical"
+
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/password"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        android:padding="@dimen/_5sdp">
+
+                        <ImageView
+                            android:id="@+id/image1"
+                            android:layout_width="@dimen/_20sdp"
+                            android:layout_height="@dimen/_20sdp"
+                            android:contentDescription="password icon"
+                            android:src="@drawable/ic_password"
+                            android:layout_centerVertical="true"
+                            app:tint="#898989"
+                            />
+
+                        <EditText
+                            android:id="@+id/password_edittext"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint="@string/enter_password"
+                            android:inputType="textPassword"
+                            android:maxLines="1"
+                            android:imeOptions="actionDone"
+                            android:background="@null"
+                            android:layout_gravity="center_vertical"
+                            android:layout_toEndOf="@id/image1"
+                            android:layout_centerVertical="true"
+                            android:layout_toStartOf="@id/password_toggle"
+
+                            />
+
+                        <ImageView
+                            android:id="@+id/password_toggle"
+                            android:layout_width="@dimen/_20sdp"
+                            android:layout_height="@dimen/_20sdp"
+                            android:contentDescription="password icon"
+                            android:src="@drawable/ic_visibility"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true"
+                            app:tint="#898989"
+                            />
+
+                    </RelativeLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:layout_marginTop="@dimen/_10sdp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <CheckBox
+                        android:id="@+id/accept_policy_checkbox"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="" /> <!-- Empty text for CheckBox -->
+
+                    <TextView
+                        android:id="@+id/privacy_policy_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="@string/i_accept_privacy_terms"
+                        android:textColor="@color/black" />
+                </LinearLayout>
+
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/login_btn"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="@dimen/_10sdp"
+                    android:layout_marginTop="@dimen/_20sdp"
+                    android:text="@string/login"
+                    app:cornerRadius="@dimen/_20sdp"
+                    android:textSize="@dimen/_14sdp"
+                    android:backgroundTint="@color/primary_color"
+                    app:elevation="@dimen/_10sdp"
+                    />
+
+
+            </LinearLayout>
+
+        </androidx.core.widget.NestedScrollView>
+
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/rightguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_end="20dp" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/bottomguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_end="20dp" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</layout>

@@ -1,0 +1,353 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<layout xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/white"
+        tools:context=".ui.fragments.ProfileFragment">
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/leftguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_begin="20dp" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/topguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_begin="20dp" />
+
+
+        <RelativeLayout
+            android:id="@+id/header_ll"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+
+            app:layout_constraintEnd_toEndOf="@id/rightguidline"
+            app:layout_constraintStart_toStartOf="@id/leftguidline"
+            app:layout_constraintTop_toTopOf="@id/topguidline">
+
+            <ImageButton
+                android:id="@+id/back_arrow"
+                android:layout_width="@dimen/_40sdp"
+                android:layout_height="@dimen/_40sdp"
+                android:layout_gravity="center_vertical"
+                android:backgroundTint="@android:color/transparent"
+                android:contentDescription="email icon"
+                android:src="@drawable/ic_arrow_back"
+                app:tint="#898989" />
+
+            <TextView
+
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+
+                android:layout_centerInParent="true"
+                android:text="@string/profile"
+                android:textSize="@dimen/_16sdp" />
+        </RelativeLayout>
+
+        <ScrollView
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+
+            app:layout_constraintBottom_toBottomOf="@id/bottomguidline"
+            app:layout_constraintEnd_toEndOf="@id/rightguidline"
+            app:layout_constraintStart_toStartOf="@id/leftguidline"
+            app:layout_constraintTop_toBottomOf="@id/header_ll">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/name"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                      >
+
+                        <TextView
+                            android:id="@+id/name_tv"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint=""
+                            android:layout_gravity="center_vertical"
+                            android:textSize="@dimen/_12sdp"
+                            android:textColor="@color/black"
+                            android:gravity="center_vertical"
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/organization"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        >
+
+                        <TextView
+                            android:id="@+id/org_tv"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint=""
+                            android:layout_gravity="center_vertical"
+                            android:textSize="@dimen/_12sdp"
+                            android:textColor="@color/black"
+                            android:gravity="center_vertical"
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/administrator"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        >
+
+                        <TextView
+                            android:id="@+id/administator_tv"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint=""
+                            android:layout_gravity="center_vertical"
+                            android:textSize="@dimen/_12sdp"
+                            android:textColor="@color/black"
+                            android:gravity="center_vertical"
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/business_unit"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        >
+
+                        <TextView
+                            android:id="@+id/business_unit_tv"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint=""
+                            android:layout_gravity="center_vertical"
+                            android:textSize="@dimen/_12sdp"
+                            android:textColor="@color/black"
+                            android:gravity="center_vertical"
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/general_manager"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        >
+
+                        <TextView
+                            android:id="@+id/general_manager_tv"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint=""
+                            android:layout_gravity="center_vertical"
+                            android:textSize="@dimen/_12sdp"
+                            android:textColor="@color/black"
+                            android:gravity="center_vertical"
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/regional_manager"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        >
+
+                        <TextView
+                            android:id="@+id/reginoal_manager_tv"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint=""
+                            android:layout_gravity="center_vertical"
+                            android:textSize="@dimen/_12sdp"
+                            android:textColor="@color/black"
+                            android:gravity="center_vertical"
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/supervisor"
+                    android:paddingStart="@dimen/_8sdp"
+                    android:textSize="@dimen/_16sdp"
+                    />
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="@dimen/_8sdp"
+                    app:cardBackgroundColor="@color/white"
+                    app:cardCornerRadius="@dimen/_8sdp"
+                    app:strokeColor="@color/white"
+                    app:cardElevation="@dimen/_8sdp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/_50sdp"
+                        >
+
+                        <TextView
+                            android:id="@+id/supervisor_tv"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:paddingStart="@dimen/_10sdp"
+                            android:paddingEnd="@dimen/_10sdp"
+                            android:hint=""
+                            android:layout_gravity="center_vertical"
+                            android:textSize="@dimen/_12sdp"
+                            android:textColor="@color/black"
+                            android:gravity="center_vertical"
+                            />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+            </LinearLayout>
+        </ScrollView>
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/rightguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_end="20dp" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/bottomguidline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_end="20dp" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>
