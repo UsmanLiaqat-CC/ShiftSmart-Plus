@@ -4,6 +4,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import androidx.work.Configuration
+import androidx.work.WorkManager
 import com.shiftsmart.plus.R
 
 import dagger.hilt.android.HiltAndroidApp
@@ -11,8 +13,11 @@ import dagger.hilt.android.HiltAndroidApp
 @HiltAndroidApp
 class MyApp : Application(){
 
+
+
     override fun onCreate() {
         super.onCreate()
+
         createChannel(
             applicationContext,
             getString(R.string.breakfast_notification_channel_id),

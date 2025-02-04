@@ -1,4 +1,4 @@
-package com.shiftsmart.plus.service
+package com.shiftsmart.plus.utils
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Service

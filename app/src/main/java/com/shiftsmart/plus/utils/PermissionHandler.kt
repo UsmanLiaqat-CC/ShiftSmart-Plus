@@ -13,7 +13,6 @@ import android.provider.Settings
 import androidx.activity.result.ActivityResultLauncher
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.shiftsmart.plus.service.MyForegroundService
 
 class PermissionHandler(
     private val context: Context,
@@ -210,15 +209,6 @@ class PermissionHandler(
         onAllPermissionsGranted.invoke()
     }
 
-    // Step 7: Start Foreground Service if Needed
-    fun startForegroundServiceIfNeeded() {
-        if (!isInternetAvailable()) {
-            if (!isForegroundServiceRunning()) {
-                val serviceIntent = Intent(context, MyForegroundService::class.java)
-                ContextCompat.startForegroundService(context, serviceIntent)
-            }
-        }
-    }
 
     private fun isForegroundServiceRunning(): Boolean {
         return false // Implement foreground service check logic

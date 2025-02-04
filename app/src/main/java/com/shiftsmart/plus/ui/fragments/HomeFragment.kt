@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
@@ -21,16 +20,13 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
-import android.widget.Button
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat.getSystemService
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.google.android.material.snackbar.Snackbar
-import com.google.gson.Gson
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.database.DBDao
 import com.shiftsmart.plus.database.RecordModel
@@ -43,9 +39,9 @@ import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
 import com.shiftsmart.plus.models.WifiModel
+import com.shiftsmart.plus.periodicAction.MyService
 import com.shiftsmart.plus.repository.MainRepository
-import com.shiftsmart.plus.service.LocationTrack
-import com.shiftsmart.plus.service.MyForegroundService
+import com.shiftsmart.plus.utils.LocationTrack
 import com.shiftsmart.plus.utils.BatteryOptimizationContract
 import com.shiftsmart.plus.utils.ButtonActionEnum
 import com.shiftsmart.plus.utils.Constants.MY_PERMISSIONS_REQUEST_LOCATION
@@ -60,13 +56,8 @@ import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -473,9 +464,9 @@ class HomeFragment : Fragment() {
         lifecycleScope.launch {
             locationTrack.stopListener()
             dao.deleteAllRecords()
-            if (isServiceRunning(MyForegroundService::class.java)) {
+            if (isServiceRunning(MyService::class.java)) {
                 Log.i("Service", "Service is running. Stopping it now.")
-                requireContext().stopService(Intent(requireContext(), MyForegroundService::class.java))
+                requireContext().stopService(Intent(requireContext(), MyService::class.java))
             }
             SharedPref.getInstance(requireContext())?.clearPrefrence()
             findNavController().navigate(R.id.action_homeFragment_to_loginFragment)
