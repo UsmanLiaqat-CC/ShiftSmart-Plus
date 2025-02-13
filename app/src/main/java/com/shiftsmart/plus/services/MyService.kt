@@ -276,11 +276,6 @@ class MyService : Service() {
                         0L, 0f, locationListener
                     )
 
-                  locationManager.requestLocationUpdates(
-                      LocationManager.NETWORK_PROVIDER,
-                      0L, 0f, locationListener
-                  )
-
                     // Wait for location update, if not received in 10 seconds, use last known location
                     CoroutineScope(Dispatchers.IO).launch {
                         delay(10000) // Wait for 10 seconds
@@ -298,34 +293,23 @@ class MyService : Service() {
                         }
                     }
                 }
-
-
             } else {
                 Log.i(TAG, "callApiData:Permissions not granted")
                 makeApiCallOnce(0.0, 0.0)
             }
         } catch (e: Exception) {
             Log.e(TAG, "callApiData: exception", e)
+            makeApiCallOnce(0.0, 0.0)
         }
     }
 
     // Function to make API call only once
     private fun makeApiCallOnce(lat: Double, lon: Double) {
-        if (!apiCallInProgress) {
-            apiCallInProgress = true
-            CoroutineScope(Dispatchers.IO).launch {
-                callApi(lat, lon)
-                delay(20000) // Reset flag after 20 seconds
-                apiCallInProgress = false
-            }
-        } else {
-            Log.i(TAG, "Skipping API call to avoid multiple calls per update.")
-        }
-        //       CoroutineScope(Dispatchers.IO).launch {
-        //          callApi(lat, lon)
-        //      delay(20000) // Reset flag after 20 seconds
-        //         apiCallInProgress = false
-        // }
+               CoroutineScope(Dispatchers.IO).launch {
+                  callApi(lat, lon)
+              delay(20000) // Reset flag after 20 seconds
+                 apiCallInProgress = false
+         }
     }
 
 
@@ -358,10 +342,9 @@ class MyService : Service() {
             )
 
             Log.i(TAG, "MRcallApi: model:${record}")
-            sendNotificationUpdate("Call Api at ${Utils.getCurrentDateTime()}")
 
 //             Handle the data and API call based on internet availability
-            /*if (Utils.isInternetAvailable(applicationContext)) {
+            if (Utils.isInternetAvailable(applicationContext)) {
                 val records = dao.getAllRecords(user?.id.toString()).map { it.toDataRequest() }.toMutableList()
                 records.add(record.toDataRequest())
                 Log.i(TAG, "callApi: networkAvailable recordModel:${records}")
@@ -384,7 +367,7 @@ class MyService : Service() {
                     dao.insertRecord(record)
                     sendNotificationUpdate("Data saved in database at ${Utils.getCurrentDateTime()}")
                 }
-            }*/
+            }
         }catch (e:Exception)
         {
             Log.i(TAG, "callApi: exception:${e.printStackTrace()}")
