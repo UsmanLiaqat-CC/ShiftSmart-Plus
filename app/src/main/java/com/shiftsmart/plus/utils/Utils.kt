@@ -12,6 +12,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import android.provider.Settings
 import android.view.View
 import android.widget.TextView
 import androidx.core.app.NotificationManagerCompat
@@ -37,11 +38,17 @@ import java.util.regex.Pattern
  * Lahore, Pakistan.
  */
 object Utils {
-
-    fun isIgnoringBatteryOptimizations(context: Context): Boolean {
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    fun isServiceRunning(context: Context,serviceClass: Class<out Service>): Boolean {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        for (service in manager.getRunningServices(Int.MAX_VALUE)) {
+            if (serviceClass.name == service.service.className) {
+                return true
+            }
+        }
+        return false
     }
+
+
     fun showSnackBar(msg:String, view: View){
         Snackbar.make(view, msg, Snackbar.LENGTH_SHORT).show()
     }
@@ -155,6 +162,15 @@ object Utils {
         }
         return 0L // Return 0 if parsing fails
     }
+    // Check if the app is ignoring battery optimization
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            return pm.isIgnoringBatteryOptimizations(context.packageName)
+        }
+        return true
+    }
+
 
 
 }

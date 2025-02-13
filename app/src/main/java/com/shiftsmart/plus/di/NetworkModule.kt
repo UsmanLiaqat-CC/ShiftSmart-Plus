@@ -8,7 +8,7 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.retrofit.ApiService
-import com.shiftsmart.plus.utils.LocationTrack
+import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.utils.WifiScanner
 import dagger.Module
 import dagger.Provides
@@ -24,6 +24,8 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
+
+
     @JvmStatic
     @Provides
     @Singleton

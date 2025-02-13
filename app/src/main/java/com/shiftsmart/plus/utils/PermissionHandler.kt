@@ -31,9 +31,9 @@ class PermissionHandler(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-        }
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+//            add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+//        }
     }
 
     fun registerPermissionLauncher(launcher: ActivityResultLauncher<Array<String>>) {
@@ -59,7 +59,7 @@ class PermissionHandler(
     // Step 3: Check & Handle Battery Optimization
     private fun checkBatteryOptimization() {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+        if (powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
             checkBatterySaverMode()
         } else {
             showBatteryOptimizationDialog()
@@ -162,12 +162,12 @@ class PermissionHandler(
                     data = Uri.parse("package:${context.packageName}")
                 }
             }
-            Settings.ACTION_BATTERY_SAVER_SETTINGS -> {
-                Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
-            }
-            Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS -> {
-                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            }
+//            Settings.ACTION_BATTERY_SAVER_SETTINGS -> {
+//                Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+//            }
+//            Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS -> {
+//                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+//            }
             else -> {
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.parse("package:${context.packageName}")

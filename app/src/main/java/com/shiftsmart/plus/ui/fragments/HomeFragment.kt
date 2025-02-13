@@ -1,9 +1,7 @@
 package com.shiftsmart.plus.ui.fragments
 
 import android.Manifest
-import android.app.ActivityManager
 import android.app.Dialog
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -39,9 +37,9 @@ import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
 import com.shiftsmart.plus.models.WifiModel
-import com.shiftsmart.plus.periodicAction.MyService
+import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.repository.MainRepository
-import com.shiftsmart.plus.utils.LocationTrack
+import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.utils.BatteryOptimizationContract
 import com.shiftsmart.plus.utils.ButtonActionEnum
 import com.shiftsmart.plus.utils.Constants.MY_PERMISSIONS_REQUEST_LOCATION
@@ -51,6 +49,7 @@ import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCurrentDateTime
+import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import com.shiftsmart.plus.utils.WifiScanner
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -369,6 +368,12 @@ class HomeFragment : Fragment() {
                                             showMessage(attendance.message)
                                         }
                                     }
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        val uuid = attendance.UUID // Get UUID from response
+                                        // Find and delete records with this UUID
+                                        db.dbDao().deleteRecordByUuid(uuid)
+
+                                    }
                                   
                                 }
                                 "offline" -> {
@@ -464,7 +469,7 @@ class HomeFragment : Fragment() {
         lifecycleScope.launch {
             locationTrack.stopListener()
             dao.deleteAllRecords()
-            if (isServiceRunning(MyService::class.java)) {
+            if (isServiceRunning(requireContext(), MyService::class.java)) {
                 Log.i("Service", "Service is running. Stopping it now.")
                 requireContext().stopService(Intent(requireContext(), MyService::class.java))
             }
@@ -473,15 +478,6 @@ class HomeFragment : Fragment() {
         }
     }
 
-    fun isServiceRunning(serviceClass: Class<out Service>): Boolean {
-        val manager = requireContext().getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        for (service in manager.getRunningServices(Int.MAX_VALUE)) {
-            if (serviceClass.name == service.service.className) {
-                return true
-            }
-        }
-        return false
-    }
 
     fun fetchLocationData() {
 

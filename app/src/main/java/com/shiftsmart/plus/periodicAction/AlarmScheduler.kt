@@ -1,23 +1,29 @@
 package com.shiftsmart.plus.periodicAction
 
-import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import com.shiftsmart.plus.database.DbConstants.RECORD_INTERVAL
 import com.shiftsmart.plus.models.TimeRange
+import com.shiftsmart.plus.services.MyService
+import com.shiftsmart.plus.utils.Utils
 import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 object AlarmScheduler {
     private const val TAG = "AlarmScheduler"
 
+
     fun scheduleAlarms(context: Context, shifts: List<TimeRange>) {
-        Log.i(TAG, "scheduleAlarms: ")
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        Log.i(TAG, "scheduleAlarms: ${Utils.getCurrentDateTime()}")
 
         val today = getCurrentDayName() // Get today's name, e.g., "Tuesday"
         Log.i(TAG, "Today's Day: $today")
@@ -25,41 +31,63 @@ object AlarmScheduler {
         val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
 
         if (todayShift != null && todayShift.start != null && todayShift.end != null) {
-            Log.i(TAG, "scheduleAlarms: Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
+            Log.i(TAG, "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
 
             val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
             val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
 
-            Log.i(TAG, "scheduleAlarms: startCalendar:$startCalendar --> endCalendar:$endCalendar")
+            Log.i(TAG, "startCalendar:$startCalendar --> endCalendar:$endCalendar")
 
             if (startCalendar != null && endCalendar != null) {
-                scheduleService(context, alarmManager, startCalendar, true)
-                scheduleService(context, alarmManager, endCalendar, false)
+                scheduleService(context, startCalendar, true)
+                scheduleService(context, endCalendar, false)
             }
         } else {
             Log.i(TAG, "No shift found for today.")
         }
 
-        // 🔹 Also Start 5-Minute API Calls
+        // ✅ Schedule WorkManager for API Calls
         scheduleApiWorker(context)
     }
+    private fun scheduleService(context: Context, calendar: Calendar, isStart: Boolean) {
+        Log.i(TAG, "Scheduling Service at ${calendar.time}, isStart: $isStart")
 
+        try {
+            val intent = Intent(context, MyService::class.java).apply {
+                action = if (isStart) "START_SERVICE" else "STOP_SERVICE"
+            }
+
+            val pendingIntent = PendingIntent.getService(
+                context,
+                calendar[Calendar.DAY_OF_YEAR] + (if (isStart) 0 else 1),
+                intent,
+                PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+
+            Log.i(TAG, "Scheduled ${if (isStart) "start" else "stop"} service at: ${calendar.time}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error scheduling service", e)
+        }
+    }
 
     fun scheduleApiWorker(context: Context) {
-        Log.i(TAG, "scheduleApiWorker: ")
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, AlarmReceiver::class.java)
-        val pendingIntent = PendingIntent.getBroadcast(
-            context, 0, intent, PendingIntent.FLAG_IMMUTABLE
+        Log.i(TAG, "Scheduling API Worker")
+
+        val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
+            .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES) // Customize the delay as ne1eded
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "API_WORK",
+            ExistingWorkPolicy.REPLACE, // Replaces any existing work with the same name
+            oneTimeRequest
         )
 
-        alarmManager.setExactAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            System.currentTimeMillis() + 1 * 60 * 1000L, // 🔹 Every 5 Minutes
-            pendingIntent
-        )
 
-        Log.d(TAG, "API Call Scheduled Every 5 Minutes")
+        Log.i(TAG, "API Worker Scheduled")
     }
 
     private fun getCalendarForShift(day: String?, time: String?, hourOffset: Int): Calendar? {
@@ -96,48 +124,6 @@ object AlarmScheduler {
             null
         }
     }
-
-    private fun scheduleService(
-        context: Context,
-        alarmManager: AlarmManager,
-        calendar: Calendar,
-        isStart: Boolean
-    ) {
-        Log.i(TAG, "scheduleService: calander:${calendar.time}-->isStart:${isStart} ")
-
-        Log.i(TAG, "scheduleService: 109")
-        try {
-
-            val intent = Intent(context, MyService::class.java).apply {
-                action = if (isStart) "START_SERVICE" else "STOP_SERVICE"
-            }
-
-            val pendingIntent = PendingIntent.getService(
-                context,
-                calendar[Calendar.DAY_OF_YEAR] + (if (isStart) 0 else 1),
-                intent,
-                PendingIntent.FLAG_IMMUTABLE // ✅ Fix applied
-            )
-
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                calendar.timeInMillis,
-                pendingIntent
-            )
-
-            Log.i(
-                TAG,
-                "Scheduled " + (if (isStart) "start" else "stop") + " service at: " + calendar.time
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "scheduleService: Error creating PendingIntent", e)
-            return
-        }
-
-    }
-
-
-
     private fun getCurrentDayName(): String {
         val calendar = Calendar.getInstance()
         return SimpleDateFormat("EEEE", Locale.getDefault()).format(calendar.time)

@@ -1,4 +1,8 @@
 package com.shiftsmart.plus.models
+
+import android.os.Parcel
+import android.os.Parcelable
+
 /**
  * Created by Usman Liaqat on 28,Jan,2025
  * usmanliaqat@codecoytechnologies.com,
@@ -31,5 +35,32 @@ data class WifiModel(
     val ssid: String = "",
     val bssid: String = "",
     val strength:Int
-)
+):Parcelable {
+    constructor(parcel: Parcel) : this(
+        parcel.toString(),
+        parcel.toString(),
+        parcel.readInt()
+    ) {
+    }
+
+    override fun writeToParcel(parcel: Parcel, flags: Int) {
+        parcel.writeString(ssid)
+        parcel.writeString(bssid)
+        parcel.writeInt(strength)
+    }
+
+    override fun describeContents(): Int {
+        return 0
+    }
+
+    companion object CREATOR : Parcelable.Creator<WifiModel> {
+        override fun createFromParcel(parcel: Parcel): WifiModel {
+            return WifiModel(parcel)
+        }
+
+        override fun newArray(size: Int): Array<WifiModel?> {
+            return arrayOfNulls(size)
+        }
+    }
+}
 

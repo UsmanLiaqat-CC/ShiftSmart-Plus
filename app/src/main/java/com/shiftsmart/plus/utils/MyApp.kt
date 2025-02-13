@@ -5,29 +5,30 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import androidx.work.Configuration
-import androidx.work.WorkManager
 import com.shiftsmart.plus.R
 
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
+
+import androidx.work.WorkManager
+
 
 @HiltAndroidApp
-class MyApp : Application(){
-
-
+class MyApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
 
+        // Create notification channels
         createChannel(
             applicationContext,
             getString(R.string.breakfast_notification_channel_id),
             getString(R.string.breakfast_notification_channel_name)
         )
-//        FirebaseApp.initializeApp(applicationContext)
-//        FirebaseCrashlytics.getInstance()
 
+        // Initialize WorkManager
+        WorkManager.initialize(this, workManagerConfiguration)
     }
-
 
     private fun createChannel(context: Context, channelId: String, channelName: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -37,4 +38,12 @@ class MyApp : Application(){
             notificationManager.createNotificationChannel(channel)
         }
     }
+
+
+    override val workManagerConfiguration: Configuration
+        get() =
+             Configuration.Builder()
+                .setMinimumLoggingLevel(android.util.Log.INFO) // Optional: Set minimum logging level for WorkManager
+                .build()
+
 }

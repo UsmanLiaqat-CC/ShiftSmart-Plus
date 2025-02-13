@@ -13,6 +13,7 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
@@ -20,19 +21,16 @@ import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
-import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import com.google.gson.Gson
 import com.shiftsmart.plus.R
-import com.shiftsmart.plus.databinding.CustomAlertDialogBinding
 import com.shiftsmart.plus.databinding.FragmentLoginBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
-import com.shiftsmart.plus.utils.Constants.MY_PERMISSIONS_REQUEST_LOCATION
-import com.shiftsmart.plus.utils.LocationTrack
+import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.utils.PasswordToggleHandler
 import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
@@ -71,34 +69,17 @@ class LoginFragment : Fragment() {
 
     }
 
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-        mBinding.loginBtn.isEnabled = false
 
-
-        val passwordToggleHandler =
-            PasswordToggleHandler(mBinding.passwordEdittext, mBinding.passwordToggle)
-        passwordToggleHandler.setupPasswordToggle()
-        mBinding.loginBtn.setOnClickListener {
-
-            if (checkAndRequestPermissions())
-            {
-               doLoginOperations()
+    fun requestIgnoreBatteryOptimization(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(context.packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                intent.data = Uri.parse("package:${context.packageName}")
+                context.startActivity(intent)
             }
-
-
-        }
-        mBinding.acceptPolicyCheckbox.setOnCheckedChangeListener { _, isChecked ->
-            // Enable the login button if the checkbox is checked
-            mBinding.loginBtn.isEnabled = isChecked
-        }
-
-        // Open privacy policy link in browser
-        mBinding.privacyPolicyText.setOnClickListener {
-            Utils.showPrivacy(requireContext())
         }
     }
-
     private fun doLoginOperations() {
         if (isValid()) {
             if (Utils.isInternetAvailable(requireContext())) {
@@ -188,7 +169,36 @@ class LoginFragment : Fragment() {
             }
         }
     }
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        mBinding.loginBtn.isEnabled = false
 
+
+        val passwordToggleHandler =
+            PasswordToggleHandler(mBinding.passwordEdittext, mBinding.passwordToggle)
+        passwordToggleHandler.setupPasswordToggle()
+
+        mBinding.loginBtn.setOnClickListener {
+
+            if (!Utils.isIgnoringBatteryOptimizations(requireContext())) {
+                requestIgnoreBatteryOptimization(requireContext())
+            }else{
+                if (checkAndRequestPermissions())
+                {
+                    doLoginOperations()
+                }
+            }
+        }
+        mBinding.acceptPolicyCheckbox.setOnCheckedChangeListener { _, isChecked ->
+            // Enable the login button if the checkbox is checked
+            mBinding.loginBtn.isEnabled = isChecked
+        }
+
+        // Open privacy policy link in browser
+        mBinding.privacyPolicyText.setOnClickListener {
+            Utils.showPrivacy(requireContext())
+        }
+    }
 
     private fun isValid(): Boolean {
         var result = true
@@ -202,6 +212,8 @@ class LoginFragment : Fragment() {
         return result
     }
     private fun checkAndRequestPermissions(): Boolean {
+        Log.i(TAG, "checkAndRequestPermissions: Checking permissions...")
+
         // 🔹 First, Check Exact Alarm Permission (Android 12+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = requireContext().getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -231,33 +243,70 @@ class LoginFragment : Fragment() {
         }
 
         // 🔹 Check Location Permissions
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             permissionsNeeded.add(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
+
+        // 🔹 Check Background Location Permission (Android 10+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionsNeeded.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+
+        Log.i(TAG, "checkAndRequestPermissions: Permissions to request: $permissionsNeeded")
 
         return if (permissionsNeeded.isNotEmpty()) {
             requestPermissions(permissionsNeeded.toTypedArray(), 100)
             false
         } else {
+            Log.i(TAG, "checkAndRequestPermissions: All permissions already granted.")
             true  // ✅ All permissions granted
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        Log.i(TAG, "onRequestPermissionsResult: requestCode = $requestCode, permissions = ${permissions.joinToString()}, grantResults = ${grantResults.joinToString()}")
+
         if (requestCode == 100) {
-            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                doLoginOperations() // ✅ All permissions granted, proceed with login
-            } else {
-                Utils.showSnackBar(
-                    "Permissions are required to proceed!",
-                    mBinding.root
-                )
+            if (grantResults.isNotEmpty()) {
+                var fineLocationGranted = false
+                var backgroundLocationGranted = false
+
+                for (i in permissions.indices) {
+                    when (permissions[i]) {
+                        Manifest.permission.ACCESS_FINE_LOCATION -> fineLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
+                        Manifest.permission.ACCESS_BACKGROUND_LOCATION -> backgroundLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
+                    }
+                }
+
+                Log.i(TAG, "onRequestPermissionsResult: Fine Location = $fineLocationGranted, Background Location = $backgroundLocationGranted")
+
+                if (fineLocationGranted && backgroundLocationGranted) {
+                    Log.i(TAG, "onRequestPermissionsResult: ✅ All required permissions granted. Proceeding with login.")
+                    doLoginOperations()
+                } else if (fineLocationGranted && !backgroundLocationGranted) {
+                    Log.i(TAG, "onRequestPermissionsResult: ❌ Background Location permission missing. Prompting user.")
+                    Toast.makeText(requireContext(), "Background location permission is required for full functionality.", Toast.LENGTH_SHORT).show()
+                    openAppSettings()
+                } else {
+                    Log.i(TAG, "onRequestPermissionsResult: ❌ Permissions denied. Cannot proceed.")
+                    Toast.makeText(requireContext(), "Permissions are required to proceed.", Toast.LENGTH_SHORT).show()
+                }
             }
         }
+    }
+
+    private fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        val uri = Uri.fromParts("package", requireContext().packageName, null)
+        intent.data = uri
+        startActivity(intent)
     }
 
 }
