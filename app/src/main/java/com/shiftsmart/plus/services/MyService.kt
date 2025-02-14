@@ -34,6 +34,7 @@ import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
+import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.periodicAction.WifiScanWorker
@@ -265,8 +266,13 @@ class MyService : Service() {
                     }
 
                     // Request fresh location updates
+//                    locationManager.requestLocationUpdates(
+//                        LocationManager.GPS_PROVIDER,
+//                        0L, 0f, locationListener
+//                    )
+
                     locationManager.requestLocationUpdates(
-                        LocationManager.GPS_PROVIDER,
+                        LocationManager.NETWORK_PROVIDER,
                         0L, 0f, locationListener
                     )
 
@@ -298,25 +304,15 @@ class MyService : Service() {
     }
 
     // Function to make API call only once
+    @SuppressLint("SuspiciousIndentation")
     private fun makeApiCallOnce(lat: Double, lon: Double) {
-               CoroutineScope(Dispatchers.IO).launch {
-                  callApi(lat, lon)
-              delay(20000) // Reset flag after 20 seconds
-                 apiCallInProgress = false
-         }
-    }
 
-
-
-    @SuppressLint("MissingPermission")
-    private suspend fun callApi(lat: Double, lan: Double) {
-        Log.i(TAG, "MRcallApi: at ${Utils.getCurrentDateTime()} with location:${lat},${lan}")
         val user = SharedPref.getInstance(applicationContext)?.getUser()
         val record = RecordModel(
             uuid = Utils.generateRandomFourDigitUuid(),
             user_id = user?.id.toString(),
             lat = lat,
-            lng = lan,
+            lng = lon,
             localTime = Utils.getCurrent24HourTime(),
             time = Utils.getCurrentUtcTime(),
             attendanceType = StatusEnum.default.name,
@@ -330,6 +326,20 @@ class MyService : Service() {
             batteryOptimization = Utils.isBatteryOptimizationOff(applicationContext),
             wifi_list = wifiScanResults
         )
+               CoroutineScope(Dispatchers.IO).launch {
+                   dao.insertRecord(record)
+                  callApi(lat, lon,record,user)
+                  delay(20000) // Reset flag after 20 seconds
+                 apiCallInProgress = false
+         }
+    }
+
+
+
+    @SuppressLint("MissingPermission")
+    private suspend fun callApi(lat: Double, lan: Double, record: RecordModel, user: UserModel?) {
+        Log.i(TAG, "MRcallApi: at ${Utils.getCurrentDateTime()} with location:${lat},${lan}")
+
         try
         {
 
@@ -346,7 +356,6 @@ class MyService : Service() {
                     val response = callServerApi(records, token)
                     if (response.isSuccessful) {
                         Log.i(TAG, "MRcallApi: record successfully sent to admin panal")
-
                         handleSuccessfulResponse(record, response.body())
                         sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
                     } else {

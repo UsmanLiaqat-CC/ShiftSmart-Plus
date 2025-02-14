@@ -83,5 +83,8 @@
     <string name="service_will_run_from_to">Service will run from %1$s to %2$s</string>
     <string name="Arrival">Arrival</string>
     <string name="departure">Departure</string>
+    <string name="sync_date">Sync Data</string>
+    <string name="syncing_date">Syncing Data ...</string>
+    <string name="data_sync_successfully_to_server">Data sync successfully to server</string>
 
 </resources>
