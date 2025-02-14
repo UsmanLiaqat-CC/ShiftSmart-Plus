@@ -87,7 +87,7 @@
                     android:orientation="vertical"
                     android:layout_alignParentTop="true"
                     android:padding="16dp"
-                    android:layout_above="@id/check_in_button">
+                    android:layout_above="@id/bottom_ll">
 
 
                     <!-- Greeting Text -->
@@ -369,7 +369,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1.5"
-                                android:text=""
+                                android:text="This is a very long scrolling marquee text example!"
                                 android:paddingStart="@dimen/_10sdp"
                                 android:paddingEnd="@dimen/_10sdp"
                                 android:maxLines="1"
@@ -380,7 +380,8 @@
                                 android:singleLine="true"
                                 android:focusable="true"
                                 android:focusableInTouchMode="true"
-                                android:scrollHorizontally="true"/>
+                                android:scrollHorizontally="true"
+                               /> <!-- 🔹 This makes marquee work -->
 
                         </LinearLayout>
 
@@ -450,16 +451,66 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <!-- Check-in Button -->
-                <Button
-                    android:id="@+id/check_in_button"
+
+                <LinearLayout
+                    android:id="@+id/bottom_ll"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/check_in"
-                    android:backgroundTint="@color/primary_color"
-                    android:textColor="@color/white"
+                    android:orientation="vertical"
                     android:layout_alignParentBottom="true"
-                    android:layout_margin="16dp"/>
+                    android:layout_marginStart="16dp"
+                    android:layout_marginEnd="16dp"
+                    android:layout_marginBottom="16dp"
+
+                    >
+                    <LinearLayout
+                        android:id="@+id/btns_ll"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+
+                        android:weightSum="2"
+
+                        >
+                        <!-- Check-in Button -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/arrival_btn"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="@string/Arrival"
+                            android:backgroundTint="@color/primary_color"
+                            android:textColor="@color/white"
+                            android:layout_marginEnd="@dimen/_5sdp"
+                            />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/depart_btn"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:text="@string/departure"
+                            android:backgroundTint="@color/primary_color"
+                            android:textColor="@color/white"
+                            android:layout_marginStart="@dimen/_5sdp"
+
+                            />
+
+                    </LinearLayout>
+
+                    <!-- Check-in Button -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/sync_button"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/check_in"
+                        android:backgroundTint="@color/primary_color"
+                        android:textColor="@color/white"
+                        android:visibility="gone"
+                        />
+
+                </LinearLayout>
+
+
             </RelativeLayout>
         </androidx.cardview.widget.CardView>
 

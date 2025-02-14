@@ -39,7 +39,7 @@ class WifiScanner @Inject constructor(private val context: Context) {
             // Request permission if not granted
             return
         }
-
+        registerWifiReceiver()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             // For Android 8.0+, use WorkManager to handle WiFi scan in the background
             startWifiScanWork()

@@ -10,6 +10,7 @@ package com.shiftsmart.plus.enums
 enum class StatusEnum {
     default,
     arrival,
+    departure,
 }
 enum class ActiveStatusEnum {
     online,

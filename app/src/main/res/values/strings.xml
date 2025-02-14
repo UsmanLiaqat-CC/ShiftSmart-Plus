@@ -81,5 +81,7 @@
     <string name="saving_data_to_database">Saving data to database</string>
     <string name="hi">Hi</string>
     <string name="service_will_run_from_to">Service will run from %1$s to %2$s</string>
+    <string name="Arrival">Arrival</string>
+    <string name="departure">Departure</string>
 
 </resources>

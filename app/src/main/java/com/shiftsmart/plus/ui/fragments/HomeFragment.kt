@@ -22,8 +22,10 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import com.google.android.gms.maps.model.LatLng
 import com.google.android.material.snackbar.Snackbar
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.database.DBDao
@@ -91,6 +93,8 @@ class HomeFragment : Fragment() {
     private val mMsgInterval=5000L
     private lateinit var permissionHandler: PermissionHandler
 
+    private var btnStatus:String="";
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -116,10 +120,25 @@ class HomeFragment : Fragment() {
         permissionHandler = PermissionHandler(requireContext(), requireActivity()) {
             onPermissionsGranted() // Call this method when all permissions are granted
         }
-
         permissionHandler.registerPermissionLauncher(permissionLauncher)
         permissionHandler.checkPermissions()
 
+        val user = SharedPref.getInstance(requireContext())?.getUser()
+        user?.let {
+            dao.getAllLiveRecords(it.id.toString()).observe(viewLifecycleOwner, Observer { records ->
+                if (records.isNotEmpty())
+                {
+                    mBinding.cacheStatusTv.text=records.size.toString()
+                    mBinding.syncButton.visibility=View.VISIBLE
+
+                }else{
+                    mBinding.cacheStatusTv.text="0"
+
+                    mBinding.syncButton.visibility=View.GONE
+
+                }
+            })
+        }
         setUpProgressDialog()
         setUpClickListeners()
         setUpObserver()
@@ -130,6 +149,8 @@ class HomeFragment : Fragment() {
 
     private fun setChecksData() {
 
+
+        mBinding.statusTv.isSelected=true
         val user=SharedPref.getInstance(requireContext())?.getUser()
 
         user?.let {
@@ -158,15 +179,15 @@ class HomeFragment : Fragment() {
             if (!Utils.isBatteryOptimizationOff(requireContext())) R.drawable.ic_not_check else R.drawable.ic_check
         )
 
-        Utils.checkCacheDataAvailability(requireContext(),mBinding.cacheStatusTv)
     }
 
     // This method is called once all permissions are granted
     private fun onPermissionsGranted() {
         setChecksData()
         // Proceed with the next step after all permissions are granted
-        Toast.makeText(requireContext(), getString(R.string.all_permissions_granted), Toast.LENGTH_SHORT).show()
+//        Toast.makeText(requireContext(), getString(R.string.all_permissions_granted), Toast.LENGTH_SHORT).show()
     }
+
     private fun setUpProgressDialog(
     ) {
         if (mProgressDialog != null && mProgressDialog!!.isShowing) {
@@ -189,10 +210,43 @@ class HomeFragment : Fragment() {
            showLogoutDialog()
         }
 
-        mBinding.checkInButton.setOnClickListener {
+        mBinding.arrivalBtn.setOnClickListener {
+            btnStatus=StatusEnum.arrival.name
+            setChecksData()
+
+            if (locationTrack.checkLocationPermissions())
+            {
+                fetchLocationData()
+            }else{
+                checkandGrantLocationPermission()
+            }
+
+//            if (Utils.isInternetAvailable(requireContext()))
+//            {
+//                if (locationTrack.checkLocationPermissions())
+//                {
+//                    fetchLocationData()
+//                }else{
+//                    checkandGrantLocationPermission()
+//                }
+//            }else{
+//                showProgressDialog(getString(R.string.saving_data_to_database))
+//                // handle offline case
+//                callApiData(lat = 0.0, lan = 0.0)
+//            }
+        }
+        mBinding.departBtn.setOnClickListener {
+            btnStatus=StatusEnum.departure.name
 
             setChecksData()
 
+            if (locationTrack.checkLocationPermissions())
+            {
+                fetchLocationData()
+            }else{
+                checkandGrantLocationPermission()
+            }
+/*
             if (Utils.isInternetAvailable(requireContext()))
             {
                 if (locationTrack.checkLocationPermissions())
@@ -205,9 +259,10 @@ class HomeFragment : Fragment() {
                 showProgressDialog(getString(R.string.saving_data_to_database))
                 // handle offline case
                 callApiData(lat = 0.0, lan = 0.0)
-            }
+            }*/
         }
     }
+
     private fun checkandGrantLocationPermission() {
 
         val dialog = Dialog(requireActivity())
@@ -322,21 +377,24 @@ class HomeFragment : Fragment() {
     }
 
     private fun showMessage(message: String) {
-        currentMessageRunnable?.let {
-            handler.removeCallbacks(it)
-        }
-        
-        // Update the error message
+
         mBinding.statusTv.text = message
 
-        // Create a new runnable to clear the message after 5 seconds
-        currentMessageRunnable = Runnable {
-
-            mBinding.statusTv.text = ""
-//            enableButtons()
-        }
-        // Post the new runnable
-        handler.postDelayed(currentMessageRunnable!!, mMsgInterval)
+//        currentMessageRunnable?.let {
+//            handler.removeCallbacks(it)
+//        }
+//
+//        // Update the error message
+//        mBinding.statusTv.text = message
+//
+//        // Create a new runnable to clear the message after 5 seconds
+//        currentMessageRunnable = Runnable {
+//
+//            mBinding.statusTv.text = ""
+////            enableButtons()
+//        }
+//        // Post the new runnable
+//        handler.postDelayed(currentMessageRunnable!!, mMsgInterval)
     }
 
     private fun showSnackBarMessage(message: String) {
@@ -352,6 +410,8 @@ class HomeFragment : Fragment() {
                 }
                 is Resource.Success -> {
                     val attendanceResponse = resource.data as AttendaceResponseModel
+
+                    Log.i(TAG, "setUpObserver: successResponse:${attendanceResponse}")
                     CoroutineScope(Dispatchers.Main).launch {
                         dismissProgressDialog()
 
@@ -362,19 +422,19 @@ class HomeFragment : Fragment() {
                                 "online" -> {
                                     // If status is "online", show the message or store info
                                     withContext(Dispatchers.Main) {
-                                        if (attendance.store.isNotEmpty()) {
-                                            showMessage(attendance.store)
-                                        } else {
-                                            showMessage(attendance.message)
-                                        }
+//                                        if (attendance.store.isNotEmpty()) {
+//                                            showMessage(attendance.message)
+//                                            showMessage(attendance.store)
+//                                        } else {
+//                                            showMessage(attendance.message)
+//                                        }
+                                        showMessage(attendance.message)
                                     }
                                     CoroutineScope(Dispatchers.IO).launch {
                                         val uuid = attendance.UUID // Get UUID from response
                                         // Find and delete records with this UUID
                                         db.dbDao().deleteRecordByUuid(uuid)
-
                                     }
-                                  
                                 }
                                 "offline" -> {
                                     // If status is "offline", delete corresponding record from database
@@ -383,9 +443,6 @@ class HomeFragment : Fragment() {
                                         // Find and delete records with this UUID
                                         db.dbDao().deleteRecordByUuid(uuid)
 
-//                                        withContext(Dispatchers.Main) {
-//                                            showMessage("Record with UUID $uuid deleted.")
-//                                        }
                                     }
                                 }
                             }
@@ -458,6 +515,13 @@ class HomeFragment : Fragment() {
         }
     }
 
+    fun updateProgressDialogMessage(message:String) {
+        progressDialogBinding.titleTv.text = message
+        if (mProgressDialog != null && mProgressDialog?.isShowing == false) {
+            mProgressDialog?.show()
+        }
+    }
+
     fun dismissProgressDialog() {
         if (mProgressDialog != null && mProgressDialog?.isShowing == true) {
             mProgressDialog?.dismiss()
@@ -491,19 +555,19 @@ class HomeFragment : Fragment() {
             val mLocationManager = requireActivity().getSystemService(Context.LOCATION_SERVICE) as LocationManager
             showProgressDialog(getString(R.string.fetching_location))
 
-            // Timeout handler to stop fetching if it takes too long
-            val handler = Handler(Looper.getMainLooper())
-            val timeoutRunnable = Runnable {
-                dismissProgressDialog()
-                locationTrack.stopListener() // Stop location updates
-                showMessage(getString(R.string.unable_to_fetch_location_please_try_again_later))
-            }
-
-            handler.postDelayed(timeoutRunnable, 30000) // Set timeout for 30 seconds
+//            // Timeout handler to stop fetching if it takes too long
+//            val handler = Handler(Looper.getMainLooper())
+//            val timeoutRunnable = Runnable {
+//                dismissProgressDialog()
+//                locationTrack.stopListener() // Stop location updates
+//                showMessage(getString(R.string.unable_to_fetch_location_please_try_again_later))
+//            }
+//
+//            handler.postDelayed(timeoutRunnable, 30000) // Set timeout for 30 seconds
 
 
             locationTrack.getLocation(mLocationManager) { location ->
-                handler.removeCallbacks(timeoutRunnable) // Cancel the timeout if location is retrieved
+//                handler.removeCallbacks(timeoutRunnable) // Cancel the timeout if location is retrieved
 
 //                dismissProgressDialog() // Dismiss the loading indicator
                 Log.i(TAG, "fetchLocationData: location: ${location?.latitude}-->${location?.longitude}")
@@ -516,7 +580,8 @@ class HomeFragment : Fragment() {
                     mBinding.coordsStatusTv.text = "${it.latitude} , ${it.longitude}"
                     val dateInString = getCurrentDateTime().toString()
                     mBinding.lastUpdateStatusTv.text = dateInString
-                    progressDialogBinding.titleTv.text = getString(R.string.saving_datato_server)
+                    updateProgressDialogMessage(getString(R.string.saving_datato_server))
+
                     callApiData(it.latitude, it.longitude)
                     Log.i(TAG, "fetchLocationData: location not null: $it")
                 } ?: run {
@@ -531,93 +596,102 @@ class HomeFragment : Fragment() {
     }
 
     private fun callApiData(lat:Double,lan:Double) {
-        Log.i(TAG, "callApiData: ")
-        var wifiList= listOf<WifiModel>()
-        val wifiScanner = WifiScanner(requireContext())
-        wifiScanner.scanWifiNetworks { scanResults ->
-
-            wifiList = if (scanResults.isNotEmpty()) {
-                scanResults.map { result ->
-                    WifiModel(ssid = result.SSID, bssid = result.BSSID, strength = Utils.rssiToPercentage(result.level) )
+        Log.i(TAG, "callApiData: 577 ")
+        mBinding.statusTv.text=""
+        try {
+            var wifiList= listOf<WifiModel>()
+//            val wifiScanner = WifiScanner(requireContext())
+            wifiScanner.scanWifiNetworks { scanResults ->
+                wifiList = if (scanResults.isNotEmpty()) {
+                    scanResults.map { result ->
+                        WifiModel(ssid = result.SSID, bssid = result.BSSID, strength = Utils.rssiToPercentage(result.level) )
+                    }
+                } else{
+                    arrayListOf()
                 }
-            } else{
-                arrayListOf()
-            }
+                Log.i(TAG, "callApiData: 588 wifiList:${wifiList}")
 
-            val user=SharedPref.getInstance(requireContext())?.getUser()
+                val user=SharedPref.getInstance(requireContext())?.getUser()
 
-            user?.let {itit->
+                user?.let {itit->
 
-                val randomUid=Utils.generateRandomFourDigitUuid()
-                val record=RecordModel(
-                    uuid=randomUid,
-                    user_id = itit?.id.toString(),
-                    lat = lat,
-                    lng = lan,
-                    localTime = Utils.getCurrent24HourTime(),
-                    time = Utils.getCurrentUtcTime(),
-                    attendanceType =StatusEnum.arrival.name,
-                    attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
-                    isForceAttendance = false,
-                    isLocation = locationTrack.checkLocationPermissions(),
-                    wifiService = wifiScanner.isWifiEnabled(),
-                    dataService = Utils.isMobileDataEnabled(requireContext()),
-                    notification = Utils.isNotificationPermissionGranted(requireContext()),
-                    batterySaver = Utils.isBatterySaverOn(requireContext()),
-                    batteryOptimization = Utils.isBatteryOptimizationOff(requireContext()),
-                    wifi_list = wifiList
-                )
+                    Log.i(TAG, "callApiData: 594user found")
+                    val randomUid=Utils.generateRandomFourDigitUuid()
+                    val record=RecordModel(
+                        uuid=randomUid,
+                        user_id = itit?.id.toString(),
+                        lat = lat,
+                        lng = lan,
+                        localTime = Utils.getCurrent24HourTime(),
+                        time = Utils.getCurrentUtcTime(),
+                        attendanceType =btnStatus,
+                        attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
+                        isForceAttendance = false,
+                        isLocation = locationTrack.checkLocationPermissions(),
+                        wifiService = wifiScanner.isWifiEnabled(),
+                        dataService = Utils.isMobileDataEnabled(requireContext()),
+                        notification = Utils.isNotificationPermissionGranted(requireContext()),
+                        batterySaver = Utils.isBatterySaverOn(requireContext()),
+                        batteryOptimization = Utils.isBatteryOptimizationOff(requireContext()),
+                        wifi_list = wifiList
+                    )
 
-                if (Utils.isInternetAvailable(requireContext())) {
+                    if (Utils.isInternetAvailable(requireContext())) {
 
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            // Step 1: Fetch all records from the database
-                            val records = dao.getAllRecords(itit?.id.toString())
+                        Log.i(TAG, "callApiData: 617 internet available")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                // Step 1: Fetch all records from the database
+                                val records = dao.getAllRecords(itit?.id.toString())
 
-                            // Step 2: Convert each record into a DataRequest model
-                            val listDataRequest = records.map { it.toDataRequest() }.toMutableList()
-                            Log.i(TAG, "callApiData: listDataRequest from db: ${listDataRequest.size}")
+                                // Step 2: Convert each record into a DataRequest model
+                                val listDataRequest = records.map { it.toDataRequest() }.toMutableList()
+                                Log.i(TAG, "callApiData: 625 lat ${LatLng(lat,lan)} \n WifiList:${wifiList}")
+                                Log.i(TAG, "callApiData: 626 listDataRequest from db: ${listDataRequest.size}")
 
-                            // Step 3: Add the new record to the list
-                            listDataRequest.add(record.toDataRequest())
+                                // Step 3: Add the new record to the list
+                                listDataRequest.add(record.toDataRequest())
 
-                            // Step 4: Log the final list
-                            Log.i(TAG, "callApiData: listDataRequest after adding object: ${listDataRequest.size}")
+                                // Step 4: Log the final list
+                                Log.i(TAG, "callApiData: listDataRequest after adding object: ${listDataRequest.size}")
 
-                            // Step 5: Get the auth token
-                            val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
+                                // Step 5: Get the auth token
+                                val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
 
-                            // **Step 6: Switch to Main thread before updating LiveData**
-                            withContext(Dispatchers.Main) {
-                                mainViewModel.sendAppData(listDataRequest, token)
+                                // **Step 6: Switch to Main thread before updating LiveData**
+                                withContext(Dispatchers.Main) {
+                                    mainViewModel.sendAppData(listDataRequest, token)
+                                }
+                            } catch (e: Exception) {
+                                dismissProgressDialog()
+                                Log.e(TAG, "Error fetching records: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error fetching records: ${e.message}")
+                        }
+
+                    } else {
+                        Log.i(TAG, "callApiData: internet not available saving to database: ${record}")
+
+                        dismissProgressDialog()
+
+                        // Ensure database insertion runs in a background thread
+                        CoroutineScope(Dispatchers.IO).launch {
+                            dao.insertRecord(record)
+
+                            // Show message on Main thread after database insertion
+                            withContext(Dispatchers.Main) {
+                                showMessage(getString(R.string.offile_alert_message))
+                            }
                         }
                     }
 
-                } else {
-                    Log.i(TAG, "callApiData: saving to database: ${record}")
-
-                    dismissProgressDialog()
-
-                    // Ensure database insertion runs in a background thread
-                    CoroutineScope(Dispatchers.IO).launch {
-                        dao.insertRecord(record)
-
-                        // Show message on Main thread after database insertion
-                        withContext(Dispatchers.Main) {
-                            showMessage(getString(R.string.offile_alert_message))
-                        }
-                    }
                 }
 
-            }?.run { 
-                dismissProgressDialog()
-                Log.i(TAG, "callApiData: user not found")
             }
 
+        }catch (e:Exception)
+        {
+            dismissProgressDialog()
+            Log.i(TAG, "callApiData: 672 exception:${e.printStackTrace()}")
         }
 
     }

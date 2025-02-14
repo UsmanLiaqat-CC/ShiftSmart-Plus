@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.fragment.findNavController
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import dagger.hilt.android.AndroidEntryPoint
@@ -168,7 +169,15 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun startMyService() {
-        Log.i(TAG, "startMyService: Starting the service or WorkManager task")
+
+
+        Log.i(TAG, "startMyService: Checking if MyService is already running")
+
+        if (Utils.isServiceRunning(this, MyService::class.java)) {
+            Log.i(TAG, "startMyService: MyService is already running, skipping restart")
+            return
+        }
+
 
         val user = SharedPref.getInstance(this)?.getUser()
         Log.i(TAG, "startMyService: Retrieved user info = $user")

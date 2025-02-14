@@ -26,8 +26,8 @@ interface DBDao {
     @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time ASC")
     fun getAllRecords(uId: String): List<RecordModel>
 
-//    @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time DESC ")
-//    fun getAllRecords(uId: String): LiveData<List<RecordModel>>
+    @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time ASC ")
+    fun getAllLiveRecords(uId: String): LiveData<List<RecordModel>>
 
     @Query("DELETE FROM record")
     suspend fun deleteAllRecords()

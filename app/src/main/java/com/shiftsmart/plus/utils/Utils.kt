@@ -38,6 +38,9 @@ import java.util.regex.Pattern
  * Lahore, Pakistan.
  */
 object Utils {
+
+
+
     fun isServiceRunning(context: Context,serviceClass: Class<out Service>): Boolean {
         val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         for (service in manager.getRunningServices(Int.MAX_VALUE)) {

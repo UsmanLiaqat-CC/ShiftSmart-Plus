@@ -12,6 +12,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.shiftsmart.plus.R
@@ -21,7 +22,7 @@ import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.SharedPref
 import java.util.concurrent.TimeUnit
 
-class ApiWorker(context: Context, workerParams: WorkerParameters) : CoroutineWorker(context, workerParams) {
+/*class ApiWorker(context: Context, workerParams: WorkerParameters) : CoroutineWorker(context, workerParams) {
 
     override suspend fun doWork(): Result {
 
@@ -77,4 +78,83 @@ class ApiWorker(context: Context, workerParams: WorkerParameters) : CoroutineWor
         return manager.getRunningServices(Int.MAX_VALUE).any { it.service.className == serviceClass.name }
     }
 
+    // ✅ Check if the WorkManager task is already scheduled
+    private fun isWorkAlreadyScheduled(): Boolean {
+        val workManager = WorkManager.getInstance(applicationContext)
+        val workInfos = workManager.getWorkInfosForUniqueWork("API_WORK").get()
+        return workInfos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+    }
+
+}*/
+
+class ApiWorker(context: Context, workerParams: WorkerParameters) : CoroutineWorker(context, workerParams) {
+
+    override suspend fun doWork(): Result {
+        try {
+            val user = SharedPref.getInstance(applicationContext)?.getUser()
+
+            user?.let {
+                Log.i("ApiWorker", "User Info: $user")
+
+                if (user.isActive == true) {
+                    Log.i("ApiWorker", "API Worker Triggered")
+
+                    // ✅ Check if another work is already scheduled
+                    if (!isWorkAlreadyScheduled()) {
+                        Log.i("ApiWorker", "Scheduling next API Worker execution")
+
+                        val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
+                            .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES) // Delay as needed
+                            .build()
+
+                        WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+                            "API_WORK",
+                            ExistingWorkPolicy.KEEP, // ✅ Keeps existing work instead of replacing it
+                            oneTimeRequest
+                        )
+                    } else {
+                        Log.i("ApiWorker", "WorkManager task is already scheduled. Skipping duplicate.")
+                    }
+
+                    // ✅ Start MyService only if it's NOT already running
+                    if (!isServiceRunning(MyService::class.java)) {
+                        Log.i("ApiWorker", "Service not running. Starting now.")
+
+                        val serviceIntent = Intent(applicationContext, MyService::class.java)
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            applicationContext.startForegroundService(serviceIntent)
+                        } else {
+                            applicationContext.startService(serviceIntent)
+                        }
+                    } else {
+                        Log.i("ApiWorker", "Service already running. Sending notification update.")
+                        val updateIntent = Intent("UPDATE_NOTIFICATION").apply {
+                            putExtra("message", "API Worker executed.")
+                        }
+                        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(updateIntent)
+                    }
+                }
+            }
+            return Result.success()
+
+        } catch (e: Exception) {
+            Log.e("ApiWorker", "Error in API Worker", e)
+            return Result.failure()
+        }
+    }
+
+    // ✅ Check if MyService is already running
+    private fun isServiceRunning(serviceClass: Class<*>): Boolean {
+        val manager = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return manager.getRunningServices(Int.MAX_VALUE).any { it.service.className == serviceClass.name }
+    }
+
+    // ✅ Check if the WorkManager task is already scheduled
+    private fun isWorkAlreadyScheduled(): Boolean {
+        val workManager = WorkManager.getInstance(applicationContext)
+        val workInfos = workManager.getWorkInfosForUniqueWork("API_WORK").get()
+        return workInfos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+    }
 }
+

@@ -72,8 +72,6 @@ class MyService : Service() {
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
 
-
-
     private val notificationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val message = intent?.getStringExtra("message") ?: return
@@ -116,20 +114,16 @@ class MyService : Service() {
             createNotificationChannel()
             notificationManager = getSystemService(NotificationManager::class.java)
             registerWifiScanReceiver()
-
             val filter = IntentFilter("UPDATE_NOTIFICATION")
             LocalBroadcastManager.getInstance(applicationContext).registerReceiver(notificationReceiver, filter)
-
             Log.i(TAG, "onCreate: service oncreate")
             startForeground(1, createNotification("Initializing Service..."))
         }
-
 
     }
 
     private fun addWifiScanner() {
         wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-
 
         // Use WorkManager to perform WiFi scan
         startWifiScanWork()
@@ -158,7 +152,7 @@ class MyService : Service() {
 
             }
         }
-        return super.onStartCommand(intent, flags, startId)
+          return START_STICKY // Ensures the service restarts if killed
     }
 
     private fun createNotificationChannel() {
@@ -167,7 +161,7 @@ class MyService : Service() {
             val serviceChannel = NotificationChannel(
                 getString(R.string.breakfast_notification_channel_id),
                 getString(R.string.breakfast_notification_channel_name),
-                NotificationManager.IMPORTANCE_UNSPECIFIED
+                NotificationManager.IMPORTANCE_HIGH
             )
             if (notificationManager != null) {
                 notificationManager!!.createNotificationChannel(serviceChannel)
@@ -317,60 +311,67 @@ class MyService : Service() {
     @SuppressLint("MissingPermission")
     private suspend fun callApi(lat: Double, lan: Double) {
         Log.i(TAG, "MRcallApi: at ${Utils.getCurrentDateTime()} with location:${lat},${lan}")
-
-        try {
+        val user = SharedPref.getInstance(applicationContext)?.getUser()
+        val record = RecordModel(
+            uuid = Utils.generateRandomFourDigitUuid(),
+            user_id = user?.id.toString(),
+            lat = lat,
+            lng = lan,
+            localTime = Utils.getCurrent24HourTime(),
+            time = Utils.getCurrentUtcTime(),
+            attendanceType = StatusEnum.default.name,
+            attendanceStatus = Utils.checkInternetAndSetStatus(applicationContext),
+            isForceAttendance = false,
+            isLocation = track.checkLocationPermissions(),
+            wifiService =wifiManager.isWifiEnabled(),
+            dataService = Utils.isMobileDataEnabled(applicationContext),
+            notification = Utils.isNotificationPermissionGranted(applicationContext),
+            batterySaver = Utils.isBatterySaverOn(applicationContext),
+            batteryOptimization = Utils.isBatteryOptimizationOff(applicationContext),
+            wifi_list = wifiScanResults
+        )
+        try
+        {
 
              // Start Wi-Fi scan service
-            val user = SharedPref.getInstance(applicationContext)?.getUser()
-            val record = RecordModel(
-                uuid = Utils.generateRandomFourDigitUuid(),
-                user_id = user?.id.toString(),
-                lat = lat,
-                lng = lan,
-                localTime = Utils.getCurrent24HourTime(),
-                time = Utils.getCurrentUtcTime(),
-                attendanceType = StatusEnum.default.name,
-                attendanceStatus = Utils.checkInternetAndSetStatus(applicationContext),
-                isForceAttendance = false,
-                isLocation = track.checkLocationPermissions(),
-                wifiService =wifiManager.isWifiEnabled(),
-                dataService = Utils.isMobileDataEnabled(applicationContext),
-                notification = Utils.isNotificationPermissionGranted(applicationContext),
-                batterySaver = Utils.isBatterySaverOn(applicationContext),
-                batteryOptimization = Utils.isBatteryOptimizationOff(applicationContext),
-                wifi_list = wifiScanResults
-            )
-
             Log.i(TAG, "MRcallApi: model:${record}")
-
 //             Handle the data and API call based on internet availability
             if (Utils.isInternetAvailable(applicationContext)) {
                 val records = dao.getAllRecords(user?.id.toString()).map { it.toDataRequest() }.toMutableList()
                 records.add(record.toDataRequest())
-                Log.i(TAG, "callApi: networkAvailable recordModel:${records}")
+                Log.i(TAG, "MRcallApi: networkAvailable recordModel:${records}")
 
                 val token = SharedPref.getInstance(applicationContext)?.getToken() ?: ""
                 CoroutineScope(Dispatchers.IO).launch {
                     val response = callServerApi(records, token)
                     if (response.isSuccessful) {
+                        Log.i(TAG, "MRcallApi: record successfully sent to admin panal")
+
                         handleSuccessfulResponse(record, response.body())
                         sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
                     } else {
+                        Log.i(TAG, "MRcallApi: api calls failed error:${response}")
+
                         handleUnsuccessfulResponse(record,response)
                     }
                 }
             }
             else {
-                Log.i(TAG, "callApi: network not available recordModel:${record}")
+                Log.i(TAG, "MRcallApi: network not available recordModel:${record}")
 
                 CoroutineScope(Dispatchers.IO).launch {
                     dao.insertRecord(record)
                     sendNotificationUpdate("Data saved in database at ${Utils.getCurrentDateTime()}")
                 }
             }
-        }catch (e:Exception)
+        }
+        catch (e:Exception)
         {
-            Log.i(TAG, "callApi: exception:${e.printStackTrace()}")
+            CoroutineScope(Dispatchers.IO).launch {
+                dao.insertRecord(record)
+                sendNotificationUpdate("Data saved in database at ${Utils.getCurrentDateTime()}")
+            }
+            Log.i(TAG, "MRcallApi: exception:${e.printStackTrace()}")
         }
 
     }
@@ -417,7 +418,13 @@ class MyService : Service() {
                         dao.deleteAllRecords()
                         SharedPref.getInstance(applicationContext)?.clearPrefrence()
                     }
+                }else{
+                    CoroutineScope(Dispatchers.IO).launch {
+                        dao.insertRecord(record)
+                        sendNotificationUpdate("Data saved in database at ${Utils.getCurrentDateTime()}")
+                    }
                 }
+
             }
         }
     }

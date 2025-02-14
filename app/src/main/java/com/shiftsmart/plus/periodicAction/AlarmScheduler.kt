@@ -7,6 +7,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.shiftsmart.plus.database.DbConstants.RECORD_INTERVAL
 import com.shiftsmart.plus.models.TimeRange
@@ -73,7 +74,7 @@ object AlarmScheduler {
         }
     }
 
-    fun scheduleApiWorker(context: Context) {
+    /*fun scheduleApiWorker(context: Context) {
         Log.i(TAG, "Scheduling API Worker")
 
         val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
@@ -88,7 +89,33 @@ object AlarmScheduler {
 
 
         Log.i(TAG, "API Worker Scheduled")
+    }*/
+    fun scheduleApiWorker(context: Context) {
+        Log.i(TAG, "Scheduling API Worker")
+
+        val workManager = WorkManager.getInstance(context)
+        workManager.getWorkInfosForUniqueWorkLiveData("API_WORK").observeForever { workInfos ->
+            val isAlreadyScheduled = workInfos.any {
+                it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING
+            }
+
+            if (!isAlreadyScheduled) {
+                val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
+                    .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES)
+                    .build()
+
+                workManager.enqueueUniqueWork(
+                    "API_WORK",
+                    ExistingWorkPolicy.KEEP, // Keep the existing work instead of replacing
+                    oneTimeRequest
+                )
+                Log.i(TAG, "API Worker Scheduled")
+            } else {
+                Log.i(TAG, "API Worker is already scheduled, skipping duplicate scheduling")
+            }
+        }
     }
+
 
     private fun getCalendarForShift(day: String?, time: String?, hourOffset: Int): Calendar? {
         val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
