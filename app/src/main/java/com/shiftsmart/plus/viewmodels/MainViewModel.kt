@@ -80,13 +80,12 @@ class MainViewModel @Inject constructor(
                         if (attendaceResponseModel.errors?.isNotEmpty() == true) {
                             Log.i(TAG, "sendAppData: response inner errors: ${attendaceResponseModel}")
 
-                            if (attendaceResponseModel.errors[0].code==401||attendaceResponseModel.errors[0].code==422)
+                            if (attendaceResponseModel.errors[0].code==401||attendaceResponseModel.errors[0].code==422 ||attendaceResponseModel.errors[0].code==500)
                             {
                                 _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
                             }else{
                                 _sendDataResponse.value = Resource.Error(attendaceResponseModel.errors[0].detail)
                             }
-
                         }
                         else {
                             Log.i(TAG, "sendAppData: response inner success: ${attendaceResponseModel}")
@@ -98,7 +97,7 @@ class MainViewModel @Inject constructor(
                         val errorResponse = response.parseErrorBody()
                         Log.i(TAG, "sendAppData: response not success: ${errorResponse}")
                         if (errorResponse != null && errorResponse.errors?.isNotEmpty() == true) {
-                            if (errorResponse.errors[0].code==401 ||errorResponse.errors[0].code==422)
+                            if (errorResponse.errors[0].code==401 ||errorResponse.errors[0].code==422 || errorResponse.errors[0].code==500)
                             {
                                 _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
                             }else{
@@ -106,13 +105,12 @@ class MainViewModel @Inject constructor(
                             }
                         }
                         else {
-                            if (response.code()==401 || response.code()==422)
+                            if (response.code()==401 || response.code()==422 ||response.code()==500)
                             {
                                 _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
                             }else{
                                 _sendDataResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
                             }
-
 
                         }
 

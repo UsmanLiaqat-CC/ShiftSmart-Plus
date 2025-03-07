@@ -1,10 +1,10 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.ShiftSmartPlus" parent="Theme.Material3.Light.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
-        <!-- Change the status bar color -->
-        <item name="android:statusBarColor">@color/primary_color</item>
+
+        <item name="android:statusBarColor">@color/status_bar_color</item>
+        <item name="android:windowLightStatusBar">true</item> <!-- Enables dark icons -->
+
     </style>
 
     <style name="Theme.ShiftSmartPlus" parent="Base.Theme.ShiftSmartPlus" />

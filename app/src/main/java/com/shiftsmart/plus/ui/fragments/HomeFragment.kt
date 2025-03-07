@@ -2,11 +2,14 @@ package com.shiftsmart.plus.ui.fragments
 
 import android.Manifest
 import android.app.Dialog
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.location.Location
 import android.location.LocationManager
+import android.net.wifi.ScanResult
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -52,6 +55,7 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCurrentDateTime
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
+import com.shiftsmart.plus.utils.Utils.rssiToPercentage
 import com.shiftsmart.plus.utils.WifiScanner
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -176,11 +180,15 @@ class HomeFragment : Fragment() {
         mBinding.notificationStatusIcon.setImageResource(
             if (!Utils.isNotificationPermissionGranted(requireContext())) R.drawable.ic_not_check else R.drawable.ic_check
         )
+        // battery saver should turn off
+
         mBinding.batterySaverStatusIcon.setImageResource(
-            if (!Utils.isBatterySaverOn(requireContext())) R.drawable.ic_not_check else R.drawable.ic_check
+            if (!Utils.isBatterySaverOn(requireContext())) R.drawable.ic_check else R.drawable.ic_not_check
         )
+
+        // battery optimization should turn off
         mBinding.batteryOptimiztionStatusIcon.setImageResource(
-            if (!Utils.isBatteryOptimizationOff(requireContext())) R.drawable.ic_not_check else R.drawable.ic_check
+            if (!Utils.isBatteryOptimizationOff(requireContext())) R.drawable.ic_check else R.drawable.ic_not_check
         )
 
     }
@@ -265,19 +273,6 @@ class HomeFragment : Fragment() {
                 checkandGrantLocationPermission()
             }
 
-//            if (Utils.isInternetAvailable(requireContext()))
-//            {
-//                if (locationTrack.checkLocationPermissions())
-//                {
-//                    fetchLocationData()
-//                }else{
-//                    checkandGrantLocationPermission()
-//                }
-//            }else{
-//                showProgressDialog(getString(R.string.saving_data_to_database))
-//                // handle offline case
-//                callApiData(lat = 0.0, lan = 0.0)
-//            }
         }
         mBinding.departBtn.setOnClickListener {
             btnStatus = StatusEnum.departure.name
@@ -291,20 +286,6 @@ class HomeFragment : Fragment() {
             } else {
                 checkandGrantLocationPermission()
             }
-            /*
-            if (Utils.isInternetAvailable(requireContext()))
-            {
-                if (locationTrack.checkLocationPermissions())
-                {
-                    fetchLocationData()
-                }else{
-                    checkandGrantLocationPermission()
-                }
-            }else{
-                showProgressDialog(getString(R.string.saving_data_to_database))
-                // handle offline case
-                callApiData(lat = 0.0, lan = 0.0)
-            }*/
         }
     }
 
@@ -421,21 +402,6 @@ class HomeFragment : Fragment() {
 
         mBinding.statusTv.text = message
 
-//        currentMessageRunnable?.let {
-//            handler.removeCallbacks(it)
-//        }
-//
-//        // Update the error message
-//        mBinding.statusTv.text = message
-//
-//        // Create a new runnable to clear the message after 5 seconds
-//        currentMessageRunnable = Runnable {
-//
-//            mBinding.statusTv.text = ""
-////            enableButtons()
-//        }
-//        // Post the new runnable
-//        handler.postDelayed(currentMessageRunnable!!, mMsgInterval)
     }
 
     private fun showSnackBarMessage(message: String) {
@@ -467,12 +433,7 @@ class HomeFragment : Fragment() {
                                 "online" -> {
                                     // If status is "online", show the message or store info
                                     withContext(Dispatchers.Main) {
-//                                        if (attendance.store.isNotEmpty()) {
-//                                            showMessage(attendance.message)
-//                                            showMessage(attendance.store)
-//                                        } else {
-//                                            showMessage(attendance.message)
-//                                        }
+
                                         showMessage(attendance.message)
 
                                     }
@@ -576,8 +537,11 @@ class HomeFragment : Fragment() {
 
         lifecycleScope.launch {
             locationTrack.stopListener()
-            dao.deleteAllRecords()
+//            dao.deleteAllRecords()
             if (isServiceRunning(requireContext(), MyService::class.java)) {
+                // Clear Notifications
+                val notificationManager = requireActivity().getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.cancelAll()
                 Log.i("Service", "Service is running. Stopping it now.")
                 requireContext().stopService(Intent(requireContext(), MyService::class.java))
             }
@@ -600,21 +564,9 @@ class HomeFragment : Fragment() {
                 requireActivity().getSystemService(Context.LOCATION_SERVICE) as LocationManager
             showProgressDialog(getString(R.string.fetching_location))
 
-//            // Timeout handler to stop fetching if it takes too long
-//            val handler = Handler(Looper.getMainLooper())
-//            val timeoutRunnable = Runnable {
-//                dismissProgressDialog()
-//                locationTrack.stopListener() // Stop location updates
-//                showMessage(getString(R.string.unable_to_fetch_location_please_try_again_later))
-//            }
-//
-//            handler.postDelayed(timeoutRunnable, 30000) // Set timeout for 30 seconds
-
 
             locationTrack.getLocation(mLocationManager) { location ->
-//                handler.removeCallbacks(timeoutRunnable) // Cancel the timeout if location is retrieved
 
-//                dismissProgressDialog() // Dismiss the loading indicator
                 Log.i(
                     TAG,
                     "fetchLocationData: location: ${location?.latitude}-->${location?.longitude}"
@@ -654,6 +606,7 @@ class HomeFragment : Fragment() {
                 var wifiList = listOf<WifiModel>()
                 wifiScanner.scanWifiNetworks { scanResults ->
                     wifiList = if (scanResults.isNotEmpty()) {
+                        displayWifiNetworks(scanResults)
                         scanResults.map { result ->
                             WifiModel(
                                 ssid = result.SSID,
@@ -664,10 +617,11 @@ class HomeFragment : Fragment() {
                     } else {
                         arrayListOf()
                     }
+
                     if (!isLocationFetched)
                     {
 
-                        Log.i(TAG, "callApiData: 588 wifiList:${wifiList}")
+                        Log.i(TAG, "callApiData: 588 wifiList${wifiList}-->batterySAver:${ Utils.isBatterySaverOn(requireContext())}--->optimization:${Utils.isBatteryOptimizationOff(requireContext())}")
                         if (isLocationFetched) {
                             Log.i(TAG, "callApiData: already in progress, exiting.")
                             return@scanWifiNetworks
@@ -692,12 +646,11 @@ class HomeFragment : Fragment() {
                                 wifiService = wifiScanner.isWifiEnabled(),
                                 dataService = Utils.isMobileDataEnabled(requireContext()),
                                 notification = Utils.isNotificationPermissionGranted(requireContext()),
-                                batterySaver = Utils.isBatterySaverOn(requireContext()),
-                                batteryOptimization = Utils.isBatteryOptimizationOff(requireContext()),
+                                batterySaver = !Utils.isBatterySaverOn(requireContext()),
+                                batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
                                 wifi_list = wifiList
                             )
                             if (Utils.isInternetAvailable(requireContext())) {
-
 
                                 // Handle saving or API call
                                 updateProgressDialogMessage(getString(R.string.saving_datato_server))
@@ -756,7 +709,43 @@ class HomeFragment : Fragment() {
 
         }
 
+    private var clearTextHandler: Handler? = null
+    private var clearTextRunnable: Runnable? = null
 
+    private fun displayWifiNetworks(scanResults: List<ScanResult>) {
+        val wifiInfo = StringBuilder()
+
+        for (result in scanResults) {
+            if (result.SSID.isNotEmpty()) { // Check if SSID is not empty
+                val signalStrengthPercentage = rssiToPercentage(result.level)
+                wifiInfo.append("SSID: ${result.SSID}, BSSID: ${result.BSSID}, Signal Strength: $signalStrengthPercentage%\n")
+            }
+        }
+
+        mBinding.ssidTv.text = wifiInfo.toString()
+        Log.i(TAG, "displayWifiNetworks: $wifiInfo")
+
+        // Cancel the previous runnable if it exists
+        clearTextRunnable?.let { clearTextHandler?.removeCallbacks(it) }
+
+        // Create new Handler and Runnable
+        clearTextHandler = Handler(Looper.getMainLooper())
+        clearTextRunnable = Runnable {
+            mBinding.ssidTv.text = "" // Clear the text after 5 seconds
+        }
+
+        // Post the runnable with a 5-second delay
+        clearTextHandler?.postDelayed(clearTextRunnable!!, 5000)
+    }
+
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Remove any pending handler callbacks
+        clearTextRunnable?.let { clearTextHandler?.removeCallbacks(it) }
+        clearTextHandler = null
+        clearTextRunnable = null
+    }
     fun showAlert(type:String) {
 
         val dialog = Dialog(requireActivity())

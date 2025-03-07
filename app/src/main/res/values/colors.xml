@@ -5,4 +5,5 @@
     <color name="red">#FF1919</color>
 
     <color name="primary_color">#133C8B</color>
+    <color name="status_bar_color">#FFFFFFFF</color>
 </resources>

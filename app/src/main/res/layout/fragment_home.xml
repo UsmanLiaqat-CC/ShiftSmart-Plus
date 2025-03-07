@@ -5,7 +5,7 @@
     <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/primary_color">
+        android:background="@color/white">
 
         <!-- Header Section -->
         <RelativeLayout
@@ -25,7 +25,7 @@
                 android:layout_height="@dimen/_40sdp"
                 android:layout_alignParentStart="true"
                 android:src="@drawable/ic_power_off"
-                app:tint="@color/white"
+                app:tint="@color/black"
                 android:backgroundTint="@android:color/transparent"
                 />
 
@@ -35,10 +35,10 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_centerInParent="true"
-                android:text="@string/home"
+                android:text="@string/spoor"
                 android:textSize="18sp"
                 android:textStyle="bold"
-                android:textColor="@color/white" />
+                android:textColor="@color/black" />
 
             <!-- Profile Button -->
             <ImageButton
@@ -47,22 +47,70 @@
                 android:layout_height="@dimen/_40sdp"
                 android:layout_alignParentEnd="true"
                 android:src="@drawable/ic_profile"
-                app:tint="@color/white"
+                app:tint="@color/black"
                 android:backgroundTint="@android:color/transparent"
                 />
         </RelativeLayout>
 
-        <!-- Location Icon -->
-        <ImageView
+      <!--  &lt;!&ndash; Location Icon &ndash;&gt;
+     -->
+
+
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/location_pin"
             android:layout_width="0dp"
             android:layout_height="0dp"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/header_layout"
-            app:layout_constraintDimensionRatio="4:1"
-            android:src="@drawable/ic_location"
-            android:contentDescription="Location" />
+
+            app:layout_constraintDimensionRatio="4:2"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="@dimen/_4sdp"
+            app:strokeColor="@android:color/transparent"
+            app:cardBackgroundColor="#3E646363"
+            app:layout_constraintTop_toBottomOf="@id/header_layout">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_gravity="center"
+                android:gravity="center">
+
+                <ImageView
+                    android:layout_width="100dp"
+                    android:layout_height="100dp"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/header_layout"
+                    android:src="@drawable/ic_location"
+                    android:contentDescription="Location" />
+                <!-- Greeting Text -->
+                <TextView
+                android:id="@+id/greeting_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/black" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/everything_looks_good"
+                    android:textSize="14sp"
+                    android:padding="@dimen/_4sdp"
+                    android:textColor="#615F5F" />
+
+
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- Status Card -->
         <androidx.cardview.widget.CardView
@@ -81,376 +129,388 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent">
 
-                <LinearLayout
+
+                <ScrollView
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
+                    android:layout_height="match_parent"
+                    android:layout_above="@id/bottom_ll"
                     android:layout_alignParentTop="true"
-                    android:padding="16dp"
-                    android:layout_above="@id/bottom_ll">
-
-
-                    <!-- Greeting Text -->
-                    <TextView
-                        android:id="@+id/greeting_text"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text=""
-                        android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/black" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/everything_looks_good"
-                        android:textSize="14sp"
-                        android:textColor="@color/black" />
-
-                    <!-- Status List -->
+                    android:fillViewport="true">
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="vertical"
-                        android:layout_marginTop="8dp">
+                        android:padding="16dp"
+                      >
 
-                        <!-- Internet Connection -->
+
+
+                        <!-- Status List -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
+                            android:orientation="vertical"
+                            android:layout_marginTop="8dp">
 
-                            <TextView
-                                android:layout_width="0dp"
+                            <!-- Internet Connection -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="@string/internet_connection"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/internet_connection"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <ImageView
+                                    android:id="@+id/internet_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_not_check" />
+                            </LinearLayout>
+
+                            <!-- WiFi Connection -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:text="@string/wifi_connection"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/black" />
+
+                                <ImageView
+                                    android:id="@+id/wifi_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_not_check" />
+                            </LinearLayout>
+
+                            <!-- Mobile Data -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:text="@string/mobile_data"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/black" />
+
+                                <ImageView
+                                    android:id="@+id/mobile_data_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_not_check" />
+                            </LinearLayout>
+
+                            <!-- Location Service -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/location_service"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <ImageView
+                                    android:id="@+id/location_service_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_not_check" />
+                            </LinearLayout>
+
+                            <!-- Notification Enabled -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/notification_enabled"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <ImageView
+                                    android:id="@+id/notification_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_not_check" />
+                            </LinearLayout>
+
+                            <!-- Batter Saver Mode -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/battery_saver_mode"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <ImageView
+                                    android:id="@+id/battery_saver_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_not_check" />
+                            </LinearLayout>
+
+                            <!-- Batter Optimization-->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/battery_optimization"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <ImageView
+                                    android:id="@+id/battery_optimiztion_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_not_check" />
+                            </LinearLayout>
+
+                            <!-- Last Updated-->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:weightSum="2"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="0.5"
+                                    android:text="@string/last_updated"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <TextView
+                                    android:id="@+id/last_update_status_tv"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1.5"
+                                    android:text=""
+                                    android:paddingStart="@dimen/_10sdp"
+                                    android:paddingEnd="@dimen/_10sdp"
+                                    android:maxLines="1"
+                                    android:textSize="14sp"
+                                    android:textColor="#5D5C5C" />
+
+                            </LinearLayout>
+
+                            <!-- Coordinates-->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:weightSum="2"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="0.5"
+                                    android:text="@string/coords"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <TextView
+                                    android:id="@+id/coords_status_tv"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1.5"
+                                    android:text=""
+                                    android:paddingStart="@dimen/_10sdp"
+                                    android:paddingEnd="@dimen/_10sdp"
+                                    android:maxLines="1"
+                                    android:textSize="14sp"
+                                    android:textColor="#5D5C5C" />
+
+                            </LinearLayout>
+
+                            <!-- Status-->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:weightSum="2"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="0.5"
+                                    android:text="@string/status"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <TextView
+                                    android:id="@+id/status_tv"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1.5"
+                                    android:text=""
+                                    android:paddingStart="@dimen/_10sdp"
+                                    android:paddingEnd="@dimen/_10sdp"
+                                    android:maxLines="1"
+                                    android:textSize="14sp"
+                                    android:textColor="#D30F0F"
+                                    android:ellipsize="marquee"
+                                    android:marqueeRepeatLimit="marquee_forever"
+                                    android:singleLine="true"
+                                    android:focusable="true"
+                                    android:focusableInTouchMode="true"
+                                    android:scrollHorizontally="true"
+                                    /> <!-- 🔹 This makes marquee work -->
+
+                            </LinearLayout>
+
+                            <!-- Tardiness-->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:weightSum="2"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="0.5"
+                                    android:text="@string/tardiness"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <TextView
+                                    android:id="@+id/tardiness_status_tv"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1.5"
+                                    android:text=""
+                                    android:paddingStart="@dimen/_10sdp"
+                                    android:paddingEnd="@dimen/_10sdp"
+                                    android:maxLines="1"
+                                    android:textSize="14sp"
+                                    android:textColor="#D30F0F" />
+
+                            </LinearLayout>
+                            <!-- Cache Status-->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:weightSum="2"
+                                android:gravity="center_vertical">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="0.5"
+                                    android:text="@string/cache_status"
+                                    android:textSize="14sp"
+                                    android:paddingTop="@dimen/_5sdp"
+                                    android:paddingBottom="@dimen/_5sdp"
+                                    android:textColor="@color/black" />
+
+                                <TextView
+                                    android:id="@+id/cache_status_tv"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1.5"
+                                    android:text=""
+                                    android:paddingStart="@dimen/_10sdp"
+                                    android:paddingEnd="@dimen/_10sdp"
+                                    android:maxLines="1"
+                                    android:textSize="14sp"
+                                    android:textColor="#5D5C5C" />
+
+                            </LinearLayout>
+                            <!-- SSID-->
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+
+                                android:text="@string/ssid"
                                 android:textSize="14sp"
                                 android:paddingTop="@dimen/_5sdp"
                                 android:paddingBottom="@dimen/_5sdp"
                                 android:textColor="@color/black" />
 
-                            <ImageView
-                                android:id="@+id/internet_status_icon"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_not_check" />
-                        </LinearLayout>
-
-                        <!-- WiFi Connection -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
-
                             <TextView
-                                android:layout_width="0dp"
+                                android:id="@+id/ssid_tv"
+                                android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:text="@string/wifi_connection"
-                                android:textSize="14sp"
-                                android:textColor="@color/black" />
-
-                            <ImageView
-                                android:id="@+id/wifi_status_icon"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_not_check" />
-                        </LinearLayout>
-
-                        <!-- Mobile Data -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:text="@string/mobile_data"
-                                android:textSize="14sp"
-                                android:textColor="@color/black" />
-
-                            <ImageView
-                                android:id="@+id/mobile_data_status_icon"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_not_check" />
-                        </LinearLayout>
-
-                        <!-- Location Service -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="@string/location_service"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <ImageView
-                                android:id="@+id/location_service_status_icon"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_not_check" />
-                        </LinearLayout>
-
-                        <!-- Notification Enabled -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="@string/notification_enabled"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <ImageView
-                                android:id="@+id/notification_status_icon"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_not_check" />
-                        </LinearLayout>
-
-                        <!-- Batter Saver Mode -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="@string/battery_saver_mode"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <ImageView
-                                android:id="@+id/battery_saver_status_icon"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_not_check" />
-                        </LinearLayout>
-
-                        <!-- Batter Optimization-->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="@string/battery_optimization"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <ImageView
-                                android:id="@+id/battery_optimiztion_status_icon"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_not_check" />
-                        </LinearLayout>
-
-                        <!-- Last Updated-->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:weightSum="2"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="0.5"
-                                android:text="@string/last_updated"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <TextView
-                                android:id="@+id/last_update_status_tv"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1.5"
                                 android:text=""
+                                android:gravity="center"
                                 android:paddingStart="@dimen/_10sdp"
                                 android:paddingEnd="@dimen/_10sdp"
-                                android:maxLines="1"
-                                android:textSize="14sp"
-                                android:textColor="#5D5C5C" />
-
-                        </LinearLayout>
-
-                        <!-- Coordinates-->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:weightSum="2"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="0.5"
-                                android:text="@string/coords"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <TextView
-                                android:id="@+id/coords_status_tv"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1.5"
-                                android:text=""
-                                android:paddingStart="@dimen/_10sdp"
-                                android:paddingEnd="@dimen/_10sdp"
-                                android:maxLines="1"
-                                android:textSize="14sp"
-                                android:textColor="#5D5C5C" />
-
-                        </LinearLayout>
-
-                        <!-- Status-->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:weightSum="2"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="0.5"
-                                android:text="@string/status"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <TextView
-                                android:id="@+id/status_tv"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1.5"
-                                android:text=""
-                                android:paddingStart="@dimen/_10sdp"
-                                android:paddingEnd="@dimen/_10sdp"
-                                android:maxLines="1"
-                                android:textSize="14sp"
-                                android:textColor="#D30F0F"
-                                android:ellipsize="marquee"
-                                android:marqueeRepeatLimit="marquee_forever"
-                                android:singleLine="true"
-                                android:focusable="true"
-                                android:focusableInTouchMode="true"
-                                android:scrollHorizontally="true"
-                               /> <!-- 🔹 This makes marquee work -->
-
-                        </LinearLayout>
-
-                        <!-- Tardiness-->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:weightSum="2"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="0.5"
-                                android:text="@string/tardiness"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <TextView
-                                android:id="@+id/tardiness_status_tv"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1.5"
-                                android:text=""
-                                android:paddingStart="@dimen/_10sdp"
-                                android:paddingEnd="@dimen/_10sdp"
-                                android:maxLines="1"
-                                android:textSize="14sp"
-                                android:textColor="#D30F0F" />
-
-                        </LinearLayout>
-
-                        <!-- Cache Status-->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:weightSum="2"
-                            android:gravity="center_vertical">
-
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="0.5"
-                                android:text="@string/cache_status"
-                                android:textSize="14sp"
-                                android:paddingTop="@dimen/_5sdp"
-                                android:paddingBottom="@dimen/_5sdp"
-                                android:textColor="@color/black" />
-
-                            <TextView
-                                android:id="@+id/cache_status_tv"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1.5"
-                                android:text=""
-                                android:paddingStart="@dimen/_10sdp"
-                                android:paddingEnd="@dimen/_10sdp"
-                                android:maxLines="1"
                                 android:textSize="14sp"
                                 android:textColor="#5D5C5C" />
 
                         </LinearLayout>
                     </LinearLayout>
-                </LinearLayout>
 
+                </ScrollView>
 
                 <LinearLayout
                     android:id="@+id/bottom_ll"
@@ -512,6 +572,8 @@
 
 
             </RelativeLayout>
+
+
         </androidx.cardview.widget.CardView>
 
 

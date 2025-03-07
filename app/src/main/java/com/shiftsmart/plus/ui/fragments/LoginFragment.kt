@@ -1,7 +1,6 @@
 package com.shiftsmart.plus.ui.fragments
 
 import android.Manifest
-import android.app.AlarmManager
 import com.shiftsmart.plus.models.LoginRequest
 import android.app.Dialog
 import android.content.Context
@@ -22,6 +21,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
@@ -54,6 +54,9 @@ class LoginFragment : Fragment() {
 
     @Inject
     lateinit var locationManager: LocationManager
+
+    var permissionsNeeded = mutableListOf<String>()
+
 
     private lateinit var progressDialogBinding: LoadingDialogBinding
     override fun onCreateView(
@@ -169,6 +172,28 @@ class LoginFragment : Fragment() {
             }
         }
     }
+
+
+
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+
+        val fineLocationGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val coarseLocationGranted = result[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+//        val backgroundLocationGranted = result[Manifest.permission.ACCESS_BACKGROUND_LOCATION] ?: false
+        Log.i(TAG, "Permissions Result: $result-->FineLoaction:${fineLocationGranted}-->coraseLocation:${coarseLocationGranted}")
+
+        if (fineLocationGranted && coarseLocationGranted) {
+            Log.i(TAG, "✅ All required permissions granted. Proceeding with login. Launcher")
+            doLoginOperations()
+        } else if (fineLocationGranted) {
+            Log.i(TAG, "❌ Background Location permission missing. Prompting user.Launcher")
+            Toast.makeText(requireContext(), "Background location permission is required for full functionality.", Toast.LENGTH_SHORT).show()
+            openAppSettings()
+        } else {
+            Log.i(TAG, "❌ Permissions denied. Cannot proceed. Launcher")
+            Toast.makeText(requireContext(), "Permissions are required to proceed.", Toast.LENGTH_SHORT).show()
+        }
+    }
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         mBinding.loginBtn.isEnabled = false
@@ -183,7 +208,11 @@ class LoginFragment : Fragment() {
             if (!Utils.isIgnoringBatteryOptimizations(requireContext())) {
                 requestIgnoreBatteryOptimization(requireContext())
             }else{
-                if (checkAndRequestPermissions())
+                
+                val result=checkAndRequestPermissions()
+
+                Log.i(TAG, "onViewCreated: login button pressed : permission:${result}")
+                if (result)
                 {
                     doLoginOperations()
                 }
@@ -211,7 +240,7 @@ class LoginFragment : Fragment() {
         }
         return result
     }
-    private fun checkAndRequestPermissions(): Boolean {
+   /* private fun checkAndRequestPermissions(): Boolean {
         Log.i(TAG, "checkAndRequestPermissions: Checking permissions...")
 
         // 🔹 First, Check Exact Alarm Permission (Android 12+)
@@ -259,14 +288,69 @@ class LoginFragment : Fragment() {
 
         Log.i(TAG, "checkAndRequestPermissions: Permissions to request: $permissionsNeeded")
 
+//        return if (permissionsNeeded.isNotEmpty()) {
+//            requestPermissions(permissionsNeeded.toTypedArray(), 100)
+//            false
+//        } else {
+//            Log.i(TAG, "checkAndRequestPermissions: All permissions already granted.")
+//            true  // ✅ All permissions granted
+//        }
+
         return if (permissionsNeeded.isNotEmpty()) {
-            requestPermissions(permissionsNeeded.toTypedArray(), 100)
+            permissionLauncher.launch(permissionsNeeded.toTypedArray())
             false
         } else {
-            Log.i(TAG, "checkAndRequestPermissions: All permissions already granted.")
-            true  // ✅ All permissions granted
+            Log.i(TAG, "✅ All permissions already granted.")
+            true
         }
     }
+*/
+
+
+    private fun checkAndRequestPermissions(): Boolean {
+        Log.i(TAG, "checkAndRequestPermissions: Checking permissions...")
+
+        // Clear permissionsNeeded list before adding new permissions
+        permissionsNeeded.clear()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsNeeded.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+//            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+//                permissionsNeeded.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+//            }
+//        }
+
+        if (permissionsNeeded.isEmpty()) {
+            Log.i(TAG, "✅ All permissions already granted.")
+            return true
+        }
+
+        Log.i(TAG, "⏳ Requesting permissions: $permissionsNeeded")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionLauncher.launch(permissionsNeeded.toTypedArray())  // ✅ Correctly launching the permission request
+        } else {
+            requestPermissions(permissionsNeeded.toTypedArray(), 100)  // ✅ For Android 12 and below
+        }
+
+        return false
+    }
+
+
+
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -276,21 +360,22 @@ class LoginFragment : Fragment() {
         if (requestCode == 100) {
             if (grantResults.isNotEmpty()) {
                 var fineLocationGranted = false
-                var backgroundLocationGranted = false
+                var coarseLocationGranted = false
 
                 for (i in permissions.indices) {
                     when (permissions[i]) {
                         Manifest.permission.ACCESS_FINE_LOCATION -> fineLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
-                        Manifest.permission.ACCESS_BACKGROUND_LOCATION -> backgroundLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
+                        Manifest.permission.ACCESS_COARSE_LOCATION -> coarseLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
+//                        Manifest.permission.ACCESS_BACKGROUND_LOCATION -> backgroundLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
                     }
                 }
 
-                Log.i(TAG, "onRequestPermissionsResult: Fine Location = $fineLocationGranted, Background Location = $backgroundLocationGranted")
+                Log.i(TAG, "onRequestPermissionsResult: Fine Location = $fineLocationGranted, Background Location = $coarseLocationGranted")
 
-                if (fineLocationGranted && backgroundLocationGranted) {
+                if (fineLocationGranted && coarseLocationGranted) {
                     Log.i(TAG, "onRequestPermissionsResult: ✅ All required permissions granted. Proceeding with login.")
                     doLoginOperations()
-                } else if (fineLocationGranted && !backgroundLocationGranted) {
+                } else if (fineLocationGranted && !coarseLocationGranted) {
                     Log.i(TAG, "onRequestPermissionsResult: ❌ Background Location permission missing. Prompting user.")
                     Toast.makeText(requireContext(), "Background location permission is required for full functionality.", Toast.LENGTH_SHORT).show()
                     openAppSettings()

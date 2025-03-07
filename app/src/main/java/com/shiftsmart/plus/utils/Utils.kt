@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.widget.TextView
 import androidx.core.app.NotificationManagerCompat
@@ -22,6 +23,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.enums.ActiveStatusEnum
 import com.shiftsmart.plus.models.DataRequest
+import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -39,16 +41,17 @@ import java.util.regex.Pattern
  */
 object Utils {
 
+ // ✅ Check if MyService is already running
+// fun isServiceRunning(context: Context,serviceClass: Class<*>): Boolean {
+//     val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+//     return activityManager.runningAppProcesses.any { it.processName == serviceClass.name }
+// }
 
-
-    fun isServiceRunning(context: Context,serviceClass: Class<out Service>): Boolean {
-        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        for (service in manager.getRunningServices(Int.MAX_VALUE)) {
-            if (serviceClass.name == service.service.className) {
-                return true
-            }
+     fun isServiceRunning(context: Context,serviceClass: Class<*>): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return activityManager.getRunningServices(Integer.MAX_VALUE).any {
+            it.service.className == serviceClass.name
         }
-        return false
     }
 
 
@@ -111,19 +114,7 @@ object Utils {
         }
         return true // Battery optimization check not needed for lower API levels
     }
-    // Method to check if cache data is available
-    fun checkCacheDataAvailability(context: Context,textView: TextView) {
-        val cacheDir = context.cacheDir
-        val files = cacheDir.listFiles()
 
-        if (files != null && files.isNotEmpty()) {
-            // If cache data is available, write 1 to the TextView
-            textView.text = "1"
-        } else {
-            // If no cache data is available, write 0 to the TextView
-            textView.text = "0"
-        }
-    }
     fun getCurrentDateTime(): Date {
         return Calendar.getInstance().time
     }
@@ -141,30 +132,6 @@ object Utils {
         return ((clampedRssi - minRssi) * 100 / (maxRssi - minRssi)).coerceIn(0, 100)
     }
 
-    fun getCurrentDay(): String {
-        return SimpleDateFormat("EEEE", Locale.getDefault()).format(Date())
-    }
-
-
-    fun convertToMillis(time: String): Long {
-        val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
-        formatter.timeZone = TimeZone.getDefault() // Ensure timezone is correct
-
-        val calendar = Calendar.getInstance()
-        val date = formatter.parse(time)
-
-        if (date != null) {
-            calendar.time = date
-            // Set current date
-            val now = Calendar.getInstance()
-            calendar.set(Calendar.YEAR, now.get(Calendar.YEAR))
-            calendar.set(Calendar.MONTH, now.get(Calendar.MONTH))
-            calendar.set(Calendar.DAY_OF_MONTH, now.get(Calendar.DAY_OF_MONTH))
-
-            return calendar.timeInMillis
-        }
-        return 0L // Return 0 if parsing fails
-    }
     // Check if the app is ignoring battery optimization
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -175,5 +142,56 @@ object Utils {
     }
 
 
+     fun getCalendarForShift(day: String?, time: String?, hourOffset: Int): Calendar? {
+        val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        return try {
+            val parsedTime = sdf.parse(time) ?: return null
+
+            val now = Calendar.getInstance()
+            val shiftCalendar = Calendar.getInstance()
+
+            // Set the correct hour, minute, and second
+            shiftCalendar.time = parsedTime
+            shiftCalendar.set(Calendar.YEAR, now.get(Calendar.YEAR))
+            shiftCalendar.set(Calendar.MONTH, now.get(Calendar.MONTH))
+            shiftCalendar.set(Calendar.DAY_OF_MONTH, now.get(Calendar.DAY_OF_MONTH)) // Set to today
+            shiftCalendar.set(Calendar.SECOND, 0)
+            shiftCalendar.set(Calendar.MILLISECOND, 0)
+
+            // Ensure we are scheduling for the correct weekday
+            val targetDay = getDayOfWeek(day)
+            while (shiftCalendar.get(Calendar.DAY_OF_WEEK) != targetDay) {
+                shiftCalendar.add(Calendar.DAY_OF_YEAR, 1) // Move to the correct day
+            }
+
+            // Apply hour offset (after setting the correct day)
+            shiftCalendar.add(Calendar.HOUR_OF_DAY, hourOffset)
+
+            Log.i("getCalendarForShift", "Shift Time: ${shiftCalendar.time}")
+            shiftCalendar
+
+        } catch (e: ParseException) {
+            Log.e("getCalendarForShift", "Invalid time format", e)
+            null
+        }
+    }
+     fun getCurrentDayName(): String {
+        val calendar = Calendar.getInstance()
+        return SimpleDateFormat("EEEE", Locale.getDefault()).format(calendar.time)
+    }
+     fun getDayOfWeek(day: String?): Int {
+
+        return when (day!!.lowercase(Locale.getDefault())) {
+            "monday" -> Calendar.MONDAY
+            "tuesday" -> Calendar.TUESDAY
+            "wednesday" -> Calendar.WEDNESDAY
+            "thursday" -> Calendar.THURSDAY
+            "friday" -> Calendar.FRIDAY
+            "saturday" -> Calendar.SATURDAY
+            "sunday" -> Calendar.SUNDAY
+            else -> -1
+        }
+    }
 
 }

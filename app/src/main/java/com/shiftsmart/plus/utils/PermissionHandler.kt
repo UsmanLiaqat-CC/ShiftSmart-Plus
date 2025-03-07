@@ -31,9 +31,9 @@ class PermissionHandler(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
-//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-//            add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-//        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
     }
 
     fun registerPermissionLauncher(launcher: ActivityResultLauncher<Array<String>>) {
@@ -112,14 +112,27 @@ class PermissionHandler(
             }
 
             if (showRationale) {
-                showPermissionDeniedDialog()
+                // Only show rationale if necessary, otherwise request permissions
+                showPermissionRationaleDialog(deniedPermissions)
             } else {
                 permissionLauncher.launch(deniedPermissions.toTypedArray())
             }
         } else {
-            checkForegroundServicePermission()
+            checkForegroundServicePermission() // If all permissions are granted, continue
         }
     }
+
+    private fun showPermissionRationaleDialog(deniedPermissions: List<String>) {
+        AlertDialog.Builder(context)
+            .setTitle("Permissions Required")
+            .setMessage("This app needs background location permissions to work correctly. Please allow them to all the time.")
+            .setPositiveButton("Grant") { _, _ ->
+                permissionLauncher.launch(deniedPermissions.toTypedArray())
+            }
+            .setNegativeButton("Cancel") { _, _ -> }
+            .show()
+    }
+
 
     // Step 6: Handle Foreground Service Permission Separately
     private fun checkForegroundServicePermission() {
@@ -133,16 +146,6 @@ class PermissionHandler(
         } else {
             onPermissionsGranted()
         }
-    }
-
-    // Handle permission results
-    private fun showPermissionDeniedDialog() {
-        AlertDialog.Builder(context)
-            .setTitle("Permissions Required")
-            .setMessage("Some permissions were denied. Please grant them for the app to function properly.")
-            .setPositiveButton("Grant") { _, _ -> requestPermissions() }
-            .setNegativeButton("Exit") { _, _ -> activity.finish() }
-            .show()
     }
 
     private fun showSettingsDialog(missingPermission: String) {
@@ -191,30 +194,25 @@ class PermissionHandler(
         val deniedPermissions = grantResults.filterValues { !it }.keys.toList()
 
         if (deniedPermissions.isEmpty()) {
-            onPermissionsGranted()
+            onPermissionsGranted() // All permissions granted
         } else {
             val permanentlyDenied = deniedPermissions.firstOrNull {
                 !ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
             }
 
             if (permanentlyDenied != null) {
-                showSettingsDialog(permanentlyDenied) // Open specific settings page
+                // Open settings only if the user has permanently denied a permission
+                showSettingsDialog(permanentlyDenied)
             } else {
-                showPermissionDeniedDialog()
+                // Ask for permissions again only if they can still be requested
+                showPermissionRationaleDialog(deniedPermissions)
             }
         }
     }
+
 
     private fun onPermissionsGranted() {
         onAllPermissionsGranted.invoke()
     }
 
-
-    private fun isForegroundServiceRunning(): Boolean {
-        return false // Implement foreground service check logic
-    }
-
-    private fun isInternetAvailable(): Boolean {
-        return false // Implement internet check logic
-    }
 }

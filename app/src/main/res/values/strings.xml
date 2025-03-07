@@ -86,5 +86,7 @@
     <string name="sync_date">Sync Data</string>
     <string name="syncing_date">Syncing Data ...</string>
     <string name="data_sync_successfully_to_server">Data sync successfully to server</string>
+    <string name="ssid">SSID:</string>
+    <string name="spoor">Spoor</string>
 
 </resources>

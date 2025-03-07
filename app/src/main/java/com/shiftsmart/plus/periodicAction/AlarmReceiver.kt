@@ -17,8 +17,8 @@ class AlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context?, intent: Intent?) {
         context?.let {
-
-            val user= SharedPref.getInstance(context = it)?.getUser()
+            Log.i("AlarmReceiver", "onReceive: ")
+          /*  val user= SharedPref.getInstance(context = it)?.getUser()
             user?.let {user1->
                 Log.i("AlarmReceiver", "onReceive: user1:${user1}")
                 if (user1?.isActive == true) {
@@ -26,16 +26,13 @@ class AlarmReceiver : BroadcastReceiver() {
                     // 🔹 Schedule WorkManager for periodic API calls
                     Log.d("AlarmReceiver", "Alarm Triggered, API Call Started")
 
+                    val serviceIntent = Intent(it, MyService::class.java)
 
-//                    val serviceIntent = Intent(it, WiFiScanService::class.java)
-//                    // For Android 8.0+ devices, use startForegroundService()
-//                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-//                        Log.i("AlarmReceiver", "Starting Wi-Fi scan service for Android 8.0+")
-//                        it.startForegroundService(serviceIntent) // Use startForegroundService for Android 8+
-//                    } else {
-//                        Log.i("AlarmReceiver", "Starting Wi-Fi scan service for lower versions")
-//                        it.startService(serviceIntent) // For lower versions
-//                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent) // 🔹 Use startForegroundService for Android 8+
+                    } else {
+                        context.startService(serviceIntent) // 🔹 For lower versions
+                    }
 
                     // Check if the service is running
                     if (!isServiceRunning(it, MyService::class.java)) {
@@ -64,6 +61,14 @@ class AlarmReceiver : BroadcastReceiver() {
                         it.startService(serviceIntent) // Use startService instead of startForegroundService
                     }
                 }
+            }*/
+
+            val serviceIntent = Intent(it, MyService::class.java)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent) // 🔹 Use startForegroundService for Android 8+
+            } else {
+                context.startService(serviceIntent) // 🔹 For lower versions
             }
 
 

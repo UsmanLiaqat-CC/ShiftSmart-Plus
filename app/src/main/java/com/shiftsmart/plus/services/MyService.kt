@@ -2,6 +2,7 @@ package com.shiftsmart.plus.services
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -34,14 +35,18 @@ import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
+import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.periodicAction.AlarmScheduler.scheduleApiWorker
 import com.shiftsmart.plus.periodicAction.WifiScanWorker
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.ui.activities.MainActivity
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
+import com.shiftsmart.plus.utils.Utils.getCalendarForShift
+import com.shiftsmart.plus.utils.Utils.getCurrentDayName
 import com.shiftsmart.plus.utils.parseErrorBody
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +55,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import retrofit2.Response
+import java.text.ParseException
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -100,28 +109,47 @@ class MyService : Service() {
         LocalBroadcastManager.getInstance(this).unregisterReceiver(wifiScanReceiver)
     }
 
-
     override fun onCreate() {
         super.onCreate()
 
-         dao=db.dbDao()
+        Log.i(TAG, "onCreate: Service is being created")
 
-        addWifiScanner()
+        // ✅ Initialize database DAO
+        dao = db.dbDao()
 
+        // ✅ Initialize FusedLocationProviderClient
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
-        CoroutineScope(Dispatchers.Main).launch {
-            delay(2000) // Delay for 2 seconds (2000 milliseconds)
-            createNotificationChannel()
-            notificationManager = getSystemService(NotificationManager::class.java)
-            registerWifiScanReceiver()
-            val filter = IntentFilter("UPDATE_NOTIFICATION")
-            LocalBroadcastManager.getInstance(applicationContext).registerReceiver(notificationReceiver, filter)
-            Log.i(TAG, "onCreate: service oncreate")
-            startForeground(1, createNotification("Initializing Service..."))
+        // ✅ Register Wi-Fi scan receiver
+        registerWifiScanReceiver()
+
+        // ✅ Create notification channel (but don’t start foreground service yet)
+        createNotificationChannel()
+
+        // ✅ Register for local broadcast updates (notification updates, etc.)
+        val filter = IntentFilter("UPDATE_NOTIFICATION")
+        LocalBroadcastManager.getInstance(applicationContext).registerReceiver(notificationReceiver, filter)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "onStartCommand: Service restarted")
+
+        addWifiScanner() // Restart Wi-Fi scanning
+
+        // ✅ Ensure `fusedLocationClient` is initialized
+        if (!::fusedLocationClient.isInitialized) {
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         }
 
+        startNewService()
+
+        // ✅ Re-register the broadcast receiver for notification updates
+        val filter = IntentFilter("UPDATE_NOTIFICATION")
+        LocalBroadcastManager.getInstance(applicationContext).registerReceiver(notificationReceiver, filter)
+
+        return START_STICKY // Ensures the service restarts if killed
     }
+
 
     private fun addWifiScanner() {
         wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -140,21 +168,6 @@ class MyService : Service() {
         WorkManager.getInstance(this).enqueue(wifiScanWorkRequest)
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        addWifiScanner()
-        intent?.let {
-            Log.i(
-                TAG,
-                "onStartCommand: before intent :${it.hasExtra("action")} at ${Utils.getCurrentDateTime()}"
-            )
-            if (it.hasExtra("action") && it.getStringExtra("action") == "STOP_SERVICE") {
-                Log.i(TAG, "onStartCommand: after action")
-                finishAllData()
-
-            }
-        }
-          return START_STICKY // Ensures the service restarts if killed
-    }
 
     private fun createNotificationChannel() {
         Log.i("MyService", "createNotificationChannel: ")
@@ -176,7 +189,10 @@ class MyService : Service() {
         startWifiScanWork()
 
         if (!message.contains("Data synced to admin panel at", ignoreCase = true) &&
-            !message.contains("Data saved in database at", ignoreCase = true)) {
+            !message.contains("Data saved in database at", ignoreCase = true) &&
+            !message.contains("Data stored at", ignoreCase = true) &&
+            !message.contains("Initializing Service", ignoreCase = true)
+            ) {
             CoroutineScope(Dispatchers.IO).launch {
                 callApiData()
             }
@@ -196,31 +212,64 @@ class MyService : Service() {
     }
 
     fun updateNotification(message: String) {
-        Log.i(TAG, "updateNotification: at ${Utils.getCurrentDateTime()}")
-
         if (notificationManager != null) {
             notificationManager!!.notify(1, createNotification(message))
         }
+        Log.i(TAG, "updateNotification: message${message} at ${Utils.getCurrentDateTime()}")
+
+
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.i("MyService", "onDestroy: ")
-
         finishAllData()
 
     }
 
     private fun finishAllData() {
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(notificationReceiver)
-        WorkManager.getInstance(this).cancelAllWorkByTag(WORK_TAG)
-        AlarmScheduler.cancelAlarms(this)  // Stop future alarms
+        Log.i(TAG, "finishAllData: Attempting to stop the service and all scheduled tasks.")
 
-        // Clear all notifications posted by your app
+        // Stop Foreground Service Properly
+        stopForeground(true) // Removes the notification
+        stopSelf() // Stops the service
+
+        // Unregister Receivers
+        try {
+            LocalBroadcastManager.getInstance(this).unregisterReceiver(notificationReceiver)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Notification receiver was not registered or already unregistered.")
+        }
+
+        unregisterWifiScanReceiver()
+
+////        // Cancel All WorkManager Tasks
+//        WorkManager.getInstance(this).cancelAllWorkByTag(WORK_TAG)
+//        WorkManager.getInstance(this).cancelUniqueWork("API_WORK") // Ensure unique work is stopped
+//
+//        // Cancel All Scheduled Alarms
+//        AlarmScheduler.cancelAlarms(this)
+
+
+        val user = SharedPref.getInstance(applicationContext)?.getUser()
+        Log.i(TAG, "startMyService: Retrieved user info = $user")
+
+        if (user != null && user.isActive == true) {
+            // Re-fetch shift data and reschedule alarms
+            user.timetable?.range?.let {
+                AlarmScheduler.scheduleAlarms(applicationContext, it)
+                Log.i(TAG, "startMyService: Alarms scheduled with range = ${it}")
+            }
+        }
+
+
+        // Clear Notifications
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancelAll()
-        unregisterWifiScanReceiver()  // Unregister the Wi-Fi scan receiver
+
+        Log.i(TAG, "finishAllData: Service and tasks should now be completely stopped.")
     }
+
 
     override fun onBind(intent: Intent): IBinder? {
         return null
@@ -293,7 +342,8 @@ class MyService : Service() {
                         }
                     }
                 }
-            } else {
+            }
+            else {
                 Log.i(TAG, "callApiData:Permissions not granted")
                 makeApiCallOnce(0.0, 0.0)
             }
@@ -308,33 +358,35 @@ class MyService : Service() {
     private fun makeApiCallOnce(lat: Double, lon: Double) {
 
         val user = SharedPref.getInstance(applicationContext)?.getUser()
-        val record = RecordModel(
-            uuid = Utils.generateRandomFourDigitUuid(),
-            user_id = user?.id.toString(),
-            lat = lat,
-            lng = lon,
-            localTime = Utils.getCurrent24HourTime(),
-            time = Utils.getCurrentUtcTime(),
-            attendanceType = StatusEnum.default.name,
-            attendanceStatus = Utils.checkInternetAndSetStatus(applicationContext),
-            isForceAttendance = false,
-            isLocation = track.checkLocationPermissions(),
-            wifiService =wifiManager.isWifiEnabled(),
-            dataService = Utils.isMobileDataEnabled(applicationContext),
-            notification = Utils.isNotificationPermissionGranted(applicationContext),
-            batterySaver = Utils.isBatterySaverOn(applicationContext),
-            batteryOptimization = Utils.isBatteryOptimizationOff(applicationContext),
-            wifi_list = wifiScanResults
-        )
-               CoroutineScope(Dispatchers.IO).launch {
-                   dao.insertRecord(record)
-                  callApi(lat, lon,record,user)
-                  delay(20000) // Reset flag after 20 seconds
-                 apiCallInProgress = false
-         }
+        user?.let {it1->
+            val record = RecordModel(
+                uuid = Utils.generateRandomFourDigitUuid(),
+                user_id = user?.id.toString(),
+                lat = lat,
+                lng = lon,
+                localTime = Utils.getCurrent24HourTime(),
+                time = Utils.getCurrentUtcTime(),
+                attendanceType = StatusEnum.default.name,
+                attendanceStatus = Utils.checkInternetAndSetStatus(applicationContext),
+                isForceAttendance = false,
+                isLocation = track.checkLocationPermissions(),
+                wifiService =wifiManager.isWifiEnabled(),
+                dataService = Utils.isMobileDataEnabled(applicationContext),
+                notification = Utils.isNotificationPermissionGranted(applicationContext),
+                batterySaver = !Utils.isBatterySaverOn(applicationContext),
+                batteryOptimization = !Utils.isBatteryOptimizationOff(applicationContext),
+                wifi_list = wifiScanResults
+            )
+            CoroutineScope(Dispatchers.IO).launch {
+                it1.timetable?.range?.let { saveDataLocally(record, it) }
+
+                callApi(lat, lon,record,user)
+                delay(20000) // Reset flag after 20 seconds
+                apiCallInProgress = false
+            }
+        }
+
     }
-
-
 
     @SuppressLint("MissingPermission")
     private suspend fun callApi(lat: Double, lan: Double, record: RecordModel, user: UserModel?) {
@@ -342,44 +394,48 @@ class MyService : Service() {
 
         try
         {
-
              // Start Wi-Fi scan service
             Log.i(TAG, "MRcallApi: model:${record}")
 //             Handle the data and API call based on internet availability
             if (Utils.isInternetAvailable(applicationContext)) {
                 val records = dao.getAllRecords(user?.id.toString()).map { it.toDataRequest() }.toMutableList()
-                records.add(record.toDataRequest())
+//                records.add(record.toDataRequest())
                 Log.i(TAG, "MRcallApi: networkAvailable recordModel:${records}")
 
                 val token = SharedPref.getInstance(applicationContext)?.getToken() ?: ""
                 CoroutineScope(Dispatchers.IO).launch {
                     val response = callServerApi(records, token)
                     if (response.isSuccessful) {
-                        Log.i(TAG, "MRcallApi: record successfully sent to admin panal")
-                        handleSuccessfulResponse(record, response.body())
-                        sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
+                        val attendanceResponse = response.body() as AttendaceResponseModel
+
+                        if (attendanceResponse.data.isNotEmpty())
+                        {
+                            if (attendanceResponse.data[0].status == "error")
+                            {
+//                           handleSuccessfulResponse(record, response.body())
+                                finishAllData()
+                                return@launch
+                            }
+
+                            Log.i(TAG, "MRcallApi: record successfully sent to admin panal")
+                            handleSuccessfulResponse(record, response.body())
+                            sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
+                        }
+
+                        Log.i(TAG, "MRcallApi: attendacneResponse:${attendanceResponse}")
+
                     } else {
                         Log.i(TAG, "MRcallApi: api calls failed error:${response}")
-
                         handleUnsuccessfulResponse(record,response)
                     }
                 }
             }
             else {
                 Log.i(TAG, "MRcallApi: network not available recordModel:${record}")
-
-                CoroutineScope(Dispatchers.IO).launch {
-                    dao.insertRecord(record)
-                    sendNotificationUpdate("Data saved in database at ${Utils.getCurrentDateTime()}")
-                }
             }
         }
         catch (e:Exception)
         {
-            CoroutineScope(Dispatchers.IO).launch {
-                dao.insertRecord(record)
-                sendNotificationUpdate("Data saved in database at ${Utils.getCurrentDateTime()}")
-            }
             Log.i(TAG, "MRcallApi: exception:${e.printStackTrace()}")
         }
 
@@ -419,21 +475,21 @@ class MyService : Service() {
         record: RecordModel,
         response: Response<AttendaceResponseModel>
     ) {
+
         response.errorBody()?.let {
             val errorResponse = response.parseErrorBody()
+            Log.i(TAG, "handleUnsuccessfulResponse: response errorbody:${errorResponse}")
+
             errorResponse?.errors?.firstOrNull()?.let { error ->
-                if (error.detail == "LOGOUT" || error.code in listOf(401, 422)) {
+                if (error.detail == "LOGOUT" || error.code in listOf(401, 422,500)) {
                     withContext(Dispatchers.IO) {
-                        dao.deleteAllRecords()
+//                        dao.deleteAllRecords()
                         SharedPref.getInstance(applicationContext)?.clearPrefrence()
-                    }
-                }else{
-                    CoroutineScope(Dispatchers.IO).launch {
-                        dao.insertRecord(record)
-                        sendNotificationUpdate("Data saved in database at ${Utils.getCurrentDateTime()}")
                     }
                 }
 
+            }?.run {
+                Log.i(TAG, "handleUnsuccessfulResponse: response run error:${response}")
             }
         }
     }
@@ -441,10 +497,131 @@ class MyService : Service() {
         Log.i(TAG, "sendNotificationUpdate: on${Utils.getCurrentDateTime()}")
         val intent = Intent("UPDATE_NOTIFICATION")
         intent.putExtra("message", message)
-
-
         LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
     }
 
+/////////////////////////////////////////////////
+
+
+    fun startNewService() {
+
+        val user=SharedPref.getInstance(applicationContext)?.getUser()
+
+        Log.i(TAG, "startNewService: Retrieved at ${Utils.getCurrentDateTime()}")
+
+        if (user != null && user.isActive == true) {
+            // Re-fetch shift data and reschedule alarms
+            user.timetable?.range?.let {
+
+                val today = getCurrentDayName() // Get today's name, e.g., "Tuesday"
+                Log.i("TAG", "startNewService: Today's Day: $today")
+
+                val todayShift = it.find { it.day.equals(today, ignoreCase = true) }
+
+                if (todayShift != null && todayShift.start != null && todayShift.end != null) {
+                    Log.i(TAG, "startNewService:Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
+
+                    val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
+                    val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
+
+                    Log.i(TAG, "startNewService:startCalendar: ${startCalendar?.time} --> endCalendar: ${endCalendar?.time}")
+
+                    val currentTime = Calendar.getInstance()
+
+                    if (startCalendar != null && endCalendar != null) {
+
+                        // ✅ Schedule API Worker ONLY IF current time is between shift start & end
+                        if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
+                            Log.i(TAG, "startNewService:Current time is within shift period, scheduling API Worker.")
+                            // ✅ Ensure notification channel & foreground service starts
+                            scheduleApiWorker(applicationContext)
+                            CoroutineScope(Dispatchers.Main).launch {
+                                createNotificationChannel()
+                                notificationManager = getSystemService(NotificationManager::class.java)
+                                startForeground(1, createNotification("Service Restarted")) // Restart foreground service
+                            }
+                        } else {
+                            scheduleService(applicationContext, startCalendar, true)
+                            scheduleService(applicationContext, endCalendar, false)
+                            Log.i(TAG, "startNewService:Current time is outside shift period, NOT scheduling API Worker.")
+                        }
+                    } else {
+
+                    }
+                } else {
+                    Log.i(TAG, "startNewService:No shift found for today.")
+                }
+            }
+        }
+    }
+    private fun scheduleService(context: Context, calendar: Calendar, isStart: Boolean) {
+        Log.i(TAG, "scheduleServiceService:Scheduling Service at ${calendar.time}, isStart: $isStart")
+
+        try {
+            val intent = Intent(context, MyService::class.java).apply {
+                action = if (isStart) "START_SERVICE" else "STOP_SERVICE"
+            }
+            val requestCode = if (isStart) 1001 else 1002
+            val pendingIntent = PendingIntent.getService(
+                context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE
+            )
+
+//            val pendingIntent = PendingIntent.getService(
+//                context,
+//                calendar[Calendar.DAY_OF_YEAR] + (if (isStart) 0 else 1),
+//                intent,
+//                PendingIntent.FLAG_IMMUTABLE
+//            )
+
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+            if (!alarmManager.canScheduleExactAlarms()) {
+                Log.e(TAG, "scheduleServiceService:Device does not allow exact alarms! Request permission.")
+            }
+
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+
+            Log.i(TAG, "scheduleServiceService:Scheduled ${if (isStart) "start" else "stop"} service at: ${calendar.time}")
+            // ✅ Ensure device wakes up for the alarm (Important!)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "scheduleServiceService:Error scheduling service", e)
+        }
+    }
+
+    fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>) {
+        Log.i(TAG, "saveDataLocally:scheduleAlarms: ${Utils.getCurrentDateTime()}")
+
+        val today = getCurrentDayName() // Get today's name, e.g., "Tuesday"
+        Log.i(TAG, "saveDataLocally:Today's Day: $today")
+
+        val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
+
+        if (todayShift != null && todayShift.start != null && todayShift.end != null) {
+            Log.i(TAG, "saveDataLocally:Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
+
+            val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
+            val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
+
+            Log.i(TAG, "saveDataLocally:startCalendar: ${startCalendar?.time} --> endCalendar: ${endCalendar?.time}")
+
+            val currentTime = Calendar.getInstance()
+
+            if (startCalendar != null && endCalendar != null) {
+
+                // ✅ Schedule API Worker ONLY IF current time is between shift start & end
+                if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
+                    Log.i(TAG, "saveDataLocally:Current time is within shift period, scheduling API Worker.")
+                    dao.insertRecord(record)
+                    sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+                } else {
+                    finishAllData()
+                    Log.i(TAG, "saveDataLocally: Current time is outside shift period, NOT scheduling API Worker.")
+                }
+            }
+        } else {
+            Log.i(TAG, "saveDataLocally:No shift found for today.")
+        }
+    }
 
 }
