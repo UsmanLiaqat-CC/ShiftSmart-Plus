@@ -1,14 +1,12 @@
 plugins {
-//    alias(libs.plugins.android.application)
-//    alias(libs.plugins.jetbrains.kotlin.android)
 
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
     id ("dagger.hilt.android.plugin")
     id ("kotlin-kapt")
-//    id("com.google.firebase.crashlytics")
-//    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -93,5 +91,10 @@ dependencies {
 
     kapt (libs.androidx.room.compiler)
     implementation (libs.androidx.room.ktx)
+    // Import BoM
+    implementation(platform(libs.firebase.bom))
 
+    // Firebase components without version
+    implementation("com.google.firebase:firebase-crashlytics")
+    implementation("com.google.firebase:firebase-analytics-ktx")
 }

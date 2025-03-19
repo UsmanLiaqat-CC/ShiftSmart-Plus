@@ -39,22 +39,22 @@ class ApiWorker(context: Context, workerParams: WorkerParameters) : CoroutineWor
                 if (user.isActive == true) {
                     Log.i("ApiWorker", "API Worker Triggered")
 
-                    // ✅ Check if another work is already scheduled
-                    if (!isWorkAlreadyScheduled()) {
-                        Log.i("ApiWorker", "Scheduling next API Worker execution")
-
-                        val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
-                            .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES) // Delay as needed
-                            .build()
-
-                        WorkManager.getInstance(applicationContext).enqueueUniqueWork(
-                            "API_WORK",
-                            ExistingWorkPolicy.REPLACE, // ✅ This ensures that every trigger request schedules the API worker immediately.
-                            oneTimeRequest
-                        )
-                    } else {
-                        Log.i("ApiWorker", "WorkManager task is already scheduled. Skipping duplicate.")
-                    }
+//                    // ✅ Check if another work is already scheduled
+//                    if (!isWorkAlreadyScheduled()) {
+//                        Log.i("ApiWorker", "Scheduling next API Worker execution")
+//
+//                        val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
+//                            .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES) // Delay as needed
+//                            .build()
+//
+//                        WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+//                            "API_WORK",
+//                            ExistingWorkPolicy.REPLACE, // ✅ This ensures that every trigger request schedules the API worker immediately.
+//                            oneTimeRequest
+//                        )
+//                    } else {
+//                        Log.i("ApiWorker", "WorkManager task is already scheduled. Skipping duplicate.")
+//                    }
                     Log.i("ApiWorker", "Service not running. Starting now.")
                     val serviceIntent = Intent(applicationContext, MyService::class.java)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -62,23 +62,6 @@ class ApiWorker(context: Context, workerParams: WorkerParameters) : CoroutineWor
                     } else {
                         applicationContext.startService(serviceIntent)
                     }
-
-                    // ✅ Start MyService only if it's NOT already running
-//                    if (!isServiceRunning(MyService::class.java)) {
-//                        Log.i("ApiWorker", "Service not running. Starting now.")
-//                        val serviceIntent = Intent(applicationContext, MyService::class.java)
-//                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-//                            applicationContext.startForegroundService(serviceIntent)
-//                        } else {
-//                            applicationContext.startService(serviceIntent)
-//                        }
-//                    } else {
-//                        Log.i("ApiWorker", "Service already running. Sending notification update.")
-//                        val updateIntent = Intent("UPDATE_NOTIFICATION").apply {
-//                            putExtra("message", "API Worker executed.")
-//                        }
-//                        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(updateIntent)
-//                    }
                 }
             }
             return Result.success()
@@ -89,11 +72,6 @@ class ApiWorker(context: Context, workerParams: WorkerParameters) : CoroutineWor
         }
     }
 
-    // ✅ Check if MyService is already running
-    private fun isServiceRunning(serviceClass: Class<*>): Boolean {
-        val activityManager = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        return activityManager.runningAppProcesses.any { it.processName == serviceClass.name }
-    }
 
     private val executor: Executor = Executors.newSingleThreadExecutor()
 

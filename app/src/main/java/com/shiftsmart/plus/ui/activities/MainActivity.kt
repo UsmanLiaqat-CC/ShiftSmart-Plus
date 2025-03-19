@@ -247,8 +247,6 @@ class MainActivity : AppCompatActivity() {
                 AlarmScheduler.scheduleAlarms(this, it)
                 Log.i(TAG, "startMyService: Alarms scheduled with range = ${it}")
             }
-        } else {
-            Log.i(TAG, "startMyService: User is inactive or not found")
         }
     }
     fun openAutoStartSettings(context: Context) {

@@ -1,0 +1,105 @@
+{
+  "project_info": {
+    "project_number": "224861025242",
+    "project_id": "iseeyou-e329d",
+    "storage_bucket": "iseeyou-e329d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:224861025242:android:dba4eac6480ee6701e46e3",
+        "android_client_info": {
+          "package_name": "com.shiftsmart.plus"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSNvEBXhyUTpiGQtAWzAddyNfMfOy_-LU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:224861025242:android:ed95a024c24ba4aa1e46e3",
+        "android_client_info": {
+          "package_name": "com.swifttech.reta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSNvEBXhyUTpiGQtAWzAddyNfMfOy_-LU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:224861025242:android:50cb449c958f5c651e46e3",
+        "android_client_info": {
+          "package_name": "com.swifttechglobix.reta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSNvEBXhyUTpiGQtAWzAddyNfMfOy_-LU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:224861025242:android:3ee18da1810fcfac1e46e3",
+        "android_client_info": {
+          "package_name": "com.swifttechglobix.shiftsmart"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSNvEBXhyUTpiGQtAWzAddyNfMfOy_-LU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:224861025242:android:94043f1e2e8a7f921e46e3",
+        "android_client_info": {
+          "package_name": "com.swifttechglobix.swiftattend"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSNvEBXhyUTpiGQtAWzAddyNfMfOy_-LU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

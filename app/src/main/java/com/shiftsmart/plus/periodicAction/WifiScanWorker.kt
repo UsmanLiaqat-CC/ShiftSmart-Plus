@@ -62,7 +62,11 @@ class WifiScanWorker(appContext: Context, workerParams: WorkerParameters) : Work
 
     override fun onStopped() {
         super.onStopped()
-        applicationContext.unregisterReceiver(wifiScanReceiver)
-    }
+        // Ensure the receiver is initialized before unregistering
+        if (::wifiScanReceiver.isInitialized) {
+            applicationContext.unregisterReceiver(wifiScanReceiver)
+        } else {
+            Log.e("YourActivity", "wifiScanReceiver not initialized")
+        }    }
 }
 

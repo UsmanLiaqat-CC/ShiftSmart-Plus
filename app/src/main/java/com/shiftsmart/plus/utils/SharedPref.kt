@@ -14,6 +14,8 @@ class SharedPref(private val ctx: Context) {
 
     private val USER = "user"
     private val TOKEN = "token"
+    private val LAST_API_CALL_TIME = "last_api_call_time" // <-- New Key for 5-minute check
+
     // Save Token
     fun saveToken(token: String?) {
         sharedPreferences.edit().apply {
@@ -44,6 +46,17 @@ class SharedPref(private val ctx: Context) {
             null
         }
 
+    }
+    // ✅ Save Last API Call Time
+    fun saveLastApiCallTime(time: Long) {
+        sharedPreferences.edit().apply {
+            putLong(LAST_API_CALL_TIME, time)
+        }.apply()
+    }
+
+    // ✅ Get Last API Call Time
+    fun getLastApiCallTime(): Long {
+        return sharedPreferences.getLong(LAST_API_CALL_TIME, 0L)
     }
 
     fun clearPrefrence() {

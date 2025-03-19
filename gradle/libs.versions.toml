@@ -1,5 +1,6 @@
 [versions]
 compiler = "1.1.1"
+firebaseBom = "33.10.0"
 gson = "2.10.1"
 hiltAndroid = "2.49"
 hiltCompiler = "2.49"
@@ -38,6 +39,9 @@ androidx-room-testing = { module = "androidx.room:room-testing", version.ref = "
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workRuntimeKtx" }
 compiler = { module = "android.arch.persistence.room:compiler", version.ref = "compiler" }
 converter-gson = { module = "com.squareup.retrofit2:converter-gson", version.ref = "retrofit" }
+firebase-analytics-ktx = { module = "com.google.firebase:firebase-analytics-ktx" }
+
+firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }

@@ -462,14 +462,12 @@ class HomeFragment : Fragment() {
                 is Resource.Error -> {
                     CoroutineScope(Dispatchers.Main).launch {
                         dismissProgressDialog()
-
                     }
                     Log.i(TAG, "setUpObserver: error:${resource.message}")
 
-                    if (resource.message == "LOGOUT" || resource.message == getString(R.string.unauthorize)) {
+                    if (resource.message == "LOGOUT") {
                         deleteUserDataAndLogout()
                     } else {
-
                         if (resource.message.contains("No address associated with hostname")) {
                             showMessage(getString(R.string.unable_to_connect_internet_right_now_please_try_again))
                         } else {

@@ -47,13 +47,13 @@ object AlarmScheduler {
                 scheduleService(context, startCalendar, true)
                 scheduleService(context, endCalendar, false)
 
-                // ✅ Schedule API Worker ONLY IF current time is between shift start & end
-                if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
-                    Log.i(TAG, "Current time is within shift period, scheduling API Worker.")
-                    scheduleApiWorker(context)
-                } else {
-                    Log.i(TAG, "Current time is outside shift period, NOT scheduling API Worker.")
-                }
+//                // ✅ Schedule API Worker ONLY IF current time is between shift start & end
+//                if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
+//                    Log.i(TAG, "Current time is within shift period, scheduling API Worker.")
+//                    scheduleApiWorker(context)
+//                } else {
+//                    Log.i(TAG, "Current time is outside shift period, NOT scheduling API Worker.")
+//                }
             }
         } else {
             Log.i(TAG, "No shift found for today.")
@@ -72,18 +72,8 @@ object AlarmScheduler {
                 context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE
             )
 
-//            val pendingIntent = PendingIntent.getService(
-//                context,
-//                calendar[Calendar.DAY_OF_YEAR] + (if (isStart) 0 else 1),
-//                intent,
-//                PendingIntent.FLAG_IMMUTABLE
-//            )
-
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-            if (!alarmManager.canScheduleExactAlarms()) {
-                Log.e("AlarmReceiver", "Device does not allow exact alarms! Request permission.")
-            }
 
             alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
 
@@ -106,50 +96,8 @@ object AlarmScheduler {
     fun scheduleApiWorker(context: Context) {
         Log.i(TAG, "Scheduling API Worker at ${Utils.getCurrentDateTime()}")
 
-//        val workManager = WorkManager.getInstance(context)
-//        workManager.getWorkInfosForUniqueWorkLiveData("API_WORK").observeForever { workInfos ->
-//            val isAlreadyScheduled = workInfos.any {
-//                it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING
-//            }
-//
-//            if (!isAlreadyScheduled) {
-//                val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
-//                    .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES)
-//                    .build()
-//
-//                workManager.enqueueUniqueWork(
-//                    "API_WORK",
-//                    ExistingWorkPolicy.REPLACE, // ✅ This ensures that every trigger request schedules the API worker immediately.
-//                    oneTimeRequest
-//                )
-//                Log.i(TAG, "API Worker Scheduled")
-//            } else {
-//                Log.i(TAG, "API Worker is already scheduled, skipping duplicate scheduling")
-//            }
-//        }
 
         val workManager = WorkManager.getInstance(context)
-        val workInfos = workManager.getWorkInfosByTag("API_WORK").get()
-
-        val isAlreadyScheduled = workInfos.any {
-            it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING
-        }
-
-//        if (!isAlreadyScheduled) {
-//            val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
-//                .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES)
-//                .addTag("API_WORK") // Add a tag for easy retrieval
-//                .build()
-//
-//            workManager.enqueueUniqueWork(
-//                "API_WORK",
-//                ExistingWorkPolicy.REPLACE,
-//                oneTimeRequest
-//            )
-//            Log.i(TAG, "API Worker Scheduled")
-//        }else {
-//                Log.i(TAG, "API Worker is already scheduled, skipping duplicate scheduling")
-//            }
 
         val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
             .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES)
