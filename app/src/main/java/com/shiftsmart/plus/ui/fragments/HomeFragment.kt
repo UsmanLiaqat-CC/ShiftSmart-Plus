@@ -133,7 +133,7 @@ class HomeFragment : Fragment() {
 
         val user = SharedPref.getInstance(requireContext())?.getUser()
         user?.let {
-            dao.getAllLiveRecords(it.id.toString())
+            dao.getAllLiveRecords(it._id.toString())
                 .observe(viewLifecycleOwner, Observer { records ->
                     if (records.isNotEmpty()) {
                         mBinding.cacheStatusTv.text = records.size.toString()
@@ -234,7 +234,7 @@ class HomeFragment : Fragment() {
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             // Step 1: Fetch all records from the database
-                            val records = dao.getAllRecords(itit?.id.toString())
+                            val records = dao.getAllRecords(itit?._id.toString())
 
                             // Step 2: Convert each record into a DataRequest model
                             val listDataRequest = records.map { it.toDataRequest() }.toMutableList()
@@ -388,7 +388,7 @@ class HomeFragment : Fragment() {
             val token = SharedPref.getInstance(requireContext())?.getToken()
             user?.let {
                 if (Utils.isInternetAvailable(requireContext())) {
-                    mainViewModel.logoutUser(user_token = token ?: "", id = it.id ?: "")
+                    mainViewModel.logoutUser(user_token = token ?: "", id = it._id ?: "")
 
                 } else {
                     showMessage(getString(R.string.no_network_connection))
@@ -632,7 +632,7 @@ class HomeFragment : Fragment() {
                             val randomUid = Utils.generateRandomFourDigitUuid()
                             val record = RecordModel(
                                 uuid = randomUid,
-                                user_id = itit?.id.toString(),
+                                user_id = itit?._id.toString(),
                                 lat = lat,
                                 lng = lan,
                                 localTime = Utils.getCurrent24HourTime(),
@@ -655,7 +655,7 @@ class HomeFragment : Fragment() {
                                 CoroutineScope(Dispatchers.IO).launch {
                                     try {
                                         // Fetch records from DB
-                                        val records = dao.getAllRecords(itit.id.toString())
+                                        val records = dao.getAllRecords(itit._id)
                                         val listDataRequest =
                                             records.map { it.toDataRequest() }.toMutableList()
 

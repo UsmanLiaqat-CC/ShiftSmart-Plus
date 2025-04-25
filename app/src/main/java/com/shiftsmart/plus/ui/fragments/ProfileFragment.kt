@@ -43,7 +43,7 @@ class ProfileFragment : Fragment() {
             mBinding.nameTv.text=it.name+" "+it.surName
             mBinding.orgTv.text=it.organization?.name?:""
             mBinding.administatorTv.text=it.administrator?.name?:""
-            mBinding.businessUnitTv.text=it.businessUnit?.name?:""
+            mBinding.businessUnitTv.text = it.businessUnit.joinToString(", ") { bu -> bu.name }
             mBinding.generalManagerTv.text=it.generalManager?.name?:""
             mBinding.reginoalManagerTv.text=it.regionalManager?.name?:""
             mBinding.supervisorTv.text=it.managerID?.name?:""

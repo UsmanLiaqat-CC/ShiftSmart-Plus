@@ -173,8 +173,6 @@ class LoginFragment : Fragment() {
         }
     }
 
-
-
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
 
         val fineLocationGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
@@ -240,71 +238,6 @@ class LoginFragment : Fragment() {
         }
         return result
     }
-   /* private fun checkAndRequestPermissions(): Boolean {
-        Log.i(TAG, "checkAndRequestPermissions: Checking permissions...")
-
-        // 🔹 First, Check Exact Alarm Permission (Android 12+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val alarmManager = requireContext().getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            if (!alarmManager.canScheduleExactAlarms()) {
-                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                    data = Uri.parse("package:${requireContext().packageName}")
-                }
-                startActivity(intent)
-                return false
-            }
-        }
-
-        val permissionsNeeded = mutableListOf<String>()
-
-        // 🔹 Check Post Notification Permission (Android 13+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionsNeeded.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
-        // 🔹 Check Foreground Service Permission (Android 14+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.FOREGROUND_SERVICE) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionsNeeded.add(Manifest.permission.FOREGROUND_SERVICE)
-        }
-
-        // 🔹 Check Location Permissions
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            permissionsNeeded.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
-
-        // 🔹 Check Background Location Permission (Android 10+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionsNeeded.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-        }
-
-        Log.i(TAG, "checkAndRequestPermissions: Permissions to request: $permissionsNeeded")
-
-//        return if (permissionsNeeded.isNotEmpty()) {
-//            requestPermissions(permissionsNeeded.toTypedArray(), 100)
-//            false
-//        } else {
-//            Log.i(TAG, "checkAndRequestPermissions: All permissions already granted.")
-//            true  // ✅ All permissions granted
-//        }
-
-        return if (permissionsNeeded.isNotEmpty()) {
-            permissionLauncher.launch(permissionsNeeded.toTypedArray())
-            false
-        } else {
-            Log.i(TAG, "✅ All permissions already granted.")
-            true
-        }
-    }
-*/
 
 
     private fun checkAndRequestPermissions(): Boolean {

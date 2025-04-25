@@ -93,45 +93,4 @@ object AlarmScheduler {
         wakeLock.acquire(10 * 60 * 1000L) // Hold for 10 minutes (enough for alarm trigger)
     }
 
-    fun scheduleApiWorker(context: Context) {
-        Log.i(TAG, "Scheduling API Worker at ${Utils.getCurrentDateTime()}")
-
-
-        val workManager = WorkManager.getInstance(context)
-
-        val oneTimeRequest = OneTimeWorkRequestBuilder<ApiWorker>()
-            .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES)
-            .addTag("API_WORK") // Add a tag for easy retrieval
-            .build()
-
-        workManager.enqueueUniqueWork(
-            "API_WORK",
-            ExistingWorkPolicy.REPLACE,
-            oneTimeRequest
-        )
-        Log.i(TAG, "API Worker Scheduled")
-    }
-
-    fun cancelAlarms(context: Context) {
-        Log.i(TAG, "cancelAlarms: ")
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-        // Cancel Start Service Alarm
-        val startIntent = Intent(context, MyService::class.java).apply { action = "START_SERVICE" }
-        val startPendingIntent = PendingIntent.getService(context, 0, startIntent,  PendingIntent.FLAG_IMMUTABLE)
-        alarmManager.cancel(startPendingIntent)
-
-        // Cancel Stop Service Alarm
-        val stopIntent = Intent(context, MyService::class.java).apply { action = "STOP_SERVICE" }
-        val stopPendingIntent = PendingIntent.getService(context, 1, stopIntent,  PendingIntent.FLAG_IMMUTABLE)
-        alarmManager.cancel(stopPendingIntent)
-
-        // Cancel API Worker Alarm
-        val apiIntent = Intent(context, AlarmReceiver::class.java)
-        val apiPendingIntent = PendingIntent.getBroadcast(context, 0, apiIntent,  PendingIntent.FLAG_IMMUTABLE)
-        alarmManager.cancel(apiPendingIntent)
-
-        Log.d(TAG, "All alarms canceled.")
-    }
-
 }

@@ -156,6 +156,8 @@ class MainViewModel @Inject constructor(
                     repository.loginUser(loginRequest = loginRequest)
                 }
 
+                Log.i(TAG, "loginUser: url:${response}")
+
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful)
                     {
@@ -172,7 +174,8 @@ class MainViewModel @Inject constructor(
                             Log.i(TAG, "loginUser: Model:${userResponseModel}")
                             _loginResponse.value=(Resource.Success(userResponseModel!!))
                         }
-                    } else {
+                    } 
+                    else {
                         val errorResponse = response.parseErrorBody()
 
                         Log.i(TAG, "loginUser: not successfull:${errorResponse}")

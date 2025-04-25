@@ -21,6 +21,7 @@ class TimeChangeReceiver : BroadcastReceiver() {
         if (Intent.ACTION_TIME_TICK == intent.action) {
 
             // Use existing SharedPref class
+
             val sharedPref = SharedPref.getInstance(context)
 
             // Get last execution time, store as string and parse to Long (default to 0)
