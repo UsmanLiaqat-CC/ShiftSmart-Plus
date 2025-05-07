@@ -31,4 +31,7 @@ interface DBDao {
 
     @Query("DELETE FROM record")
     suspend fun deleteAllRecords()
+
+    @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time DESC LIMIT 1")
+    fun getLatestRecord(uId: String): RecordModel?
 }

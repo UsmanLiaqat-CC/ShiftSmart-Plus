@@ -75,8 +75,6 @@ class LocationTrack @Inject constructor(private val mContext: Context) : Service
                 MIN_DISTANCE_CHANGE_FOR_UPDATES.toFloat(),
                 locationListener!!
             )
-
-
         }
         else {
             callback(null)

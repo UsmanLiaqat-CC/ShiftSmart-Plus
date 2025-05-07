@@ -95,7 +95,7 @@ class MainViewModel @Inject constructor(
                     }
                     else {
                         val errorResponse = response.parseErrorBody()
-                        Log.i(TAG, "sendAppData: response not success: ${errorResponse}")
+                        Log.i(TAG, "sendAppData: response not success: ${errorResponse}-->responseBody:${response.body()}")
                         if (errorResponse != null && errorResponse.errors?.isNotEmpty() == true) {
                             if (errorResponse.errors[0].code==401 ||errorResponse.errors[0].code==422 || errorResponse.errors[0].code==500)
                             {
@@ -113,8 +113,6 @@ class MainViewModel @Inject constructor(
                             }
 
                         }
-
-
                     }
                 }
             } catch (exception: Exception) {

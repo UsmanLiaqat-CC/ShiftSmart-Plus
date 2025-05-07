@@ -2,13 +2,18 @@ package com.shiftsmart.plus.di
 import android.app.Service
 import android.content.Context
 import android.location.LocationManager
+import android.net.wifi.WifiManager
 
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.shiftsmart.plus.database.DBDao
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
+import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.retrofit.ApiService
 import com.shiftsmart.plus.services.LocationTrack
+import com.shiftsmart.plus.utils.AttendanceSyncManager
+import com.shiftsmart.plus.utils.LocationHelper
 import com.shiftsmart.plus.utils.WifiScanner
 import dagger.Module
 import dagger.Provides
@@ -64,11 +69,6 @@ object NetworkModule {
                 .create()
         }
 
-    @Provides
-    @Singleton
-    fun provideDatabase(@ApplicationContext context: Context): ShiftSmartPlusDatabase {
-        return ShiftSmartPlusDatabase.getInstance(context)
-    }
 
     @Provides
     @Singleton
@@ -86,6 +86,42 @@ object NetworkModule {
     @Singleton
     fun provideWifiScanner(@ApplicationContext context: Context): WifiScanner {
         return WifiScanner(context)
+    }
+    @Provides
+    fun provideLocationHelper(@ApplicationContext context: Context): LocationHelper {
+        return LocationHelper(context)
+    }
+    @Provides
+    @Singleton
+    fun provideAttendanceSyncManager(
+        context: Context,
+        repository: MainRepository,
+        dao: DBDao,
+        locationHelper: LocationHelper,
+        wifiManager: WifiManager
+    ): AttendanceSyncManager {
+        return AttendanceSyncManager(
+            context,
+            repository,
+            dao,
+            locationHelper,
+            wifiManager
+        )
+    }
+    @Provides
+    @Singleton
+    fun provideDatabase(@ApplicationContext context: Context): ShiftSmartPlusDatabase {
+        return ShiftSmartPlusDatabase.getInstance(context)
+    }
+
+    @Provides
+    fun provideDbDao(database: ShiftSmartPlusDatabase): DBDao {
+        return database.dbDao()
+    }
+    @Provides
+    @Singleton
+    fun provideWifiManager(@ApplicationContext context: Context): WifiManager {
+        return context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     }
 
 }

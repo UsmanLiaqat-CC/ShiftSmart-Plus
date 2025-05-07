@@ -13,7 +13,6 @@ data class AttendaceResponseModel(
     @SerializedName("message" )  val message: String,
     @SerializedName("data" )val data: List<AttendanceData>,
     @SerializedName("errors" ) val errors: List<ErrorDetail> ?=null,
-
 )
 
 data class AttendanceData(

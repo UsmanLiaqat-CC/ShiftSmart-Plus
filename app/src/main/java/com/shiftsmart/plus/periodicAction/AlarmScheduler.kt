@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.work.ExistingWorkPolicy
@@ -26,7 +27,7 @@ import java.util.concurrent.TimeUnit
 object AlarmScheduler {
     private const val TAG = "AlarmScheduler"
     fun scheduleAlarms(context: Context, shifts: List<TimeRange>) {
-        Log.i(TAG, "scheduleAlarms: ${Utils.getCurrentDateTime()}")
+        Log.i(TAG, "scheduleAlarms: ${Utils.getCurrentDateTime()}\nshift:${shifts}")
 
         val today = getCurrentDayName() // Get today's name, e.g., "Tuesday"
         Log.i(TAG, "Today's Day: $today")
@@ -41,22 +42,39 @@ object AlarmScheduler {
 
             Log.i(TAG, "startCalendar: ${startCalendar?.time} --> endCalendar: ${endCalendar?.time}")
 
-            val currentTime = Calendar.getInstance()
-
             if (startCalendar != null && endCalendar != null) {
+                schedulePeriodicAlarm(context)
                 scheduleService(context, startCalendar, true)
                 scheduleService(context, endCalendar, false)
-
-//                // ✅ Schedule API Worker ONLY IF current time is between shift start & end
-//                if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
-//                    Log.i(TAG, "Current time is within shift period, scheduling API Worker.")
-//                    scheduleApiWorker(context)
-//                } else {
-//                    Log.i(TAG, "Current time is outside shift period, NOT scheduling API Worker.")
-//                }
             }
         } else {
             Log.i(TAG, "No shift found for today.")
+        }
+    }
+
+    // This will schedule an alarm that runs every 30 seconds
+    fun schedulePeriodicAlarm(context: Context) {
+        Log.i(TAG, "Scheduling periodic alarm every 30 seconds")
+
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, AlarmReceiver::class.java).apply {
+                action = "CHECK_SERVICE"
+            }
+            val pendingIntent = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+
+            // Setting the alarm to trigger every 30 seconds
+            val triggerTime = SystemClock.elapsedRealtime() + 30000 // 30 seconds in milliseconds
+            alarmManager.setRepeating(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                triggerTime,
+                30000, // Interval of 30 seconds
+                pendingIntent
+            )
+
+            Log.i(TAG, "Alarm scheduled to run every 30 seconds.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error scheduling periodic alarm", e)
         }
     }
 
@@ -73,8 +91,6 @@ object AlarmScheduler {
             )
 
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-
             alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
 
             Log.i(TAG, "Scheduled ${if (isStart) "start" else "stop"} service at: ${calendar.time}")
@@ -84,13 +100,19 @@ object AlarmScheduler {
             Log.e(TAG, "Error scheduling service", e)
         }
     }
+
+
     private fun acquireWakeLock(context: Context) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "MyApp::AlarmWakeLock"
+            PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+            "MyApp::AlarmFullWakeLock"
         )
-        wakeLock.acquire(10 * 60 * 1000L) // Hold for 10 minutes (enough for alarm trigger)
+
+        if (!wakeLock.isHeld) {
+            wakeLock.acquire(10 * 1000L) // Wake screen for 10 seconds
+            Log.i("AlarmScheduler", "Wake lock acquired and screen turned on.")
+        }
     }
 
 }

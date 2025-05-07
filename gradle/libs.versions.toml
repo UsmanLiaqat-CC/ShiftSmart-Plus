@@ -25,6 +25,8 @@ sdpAndroid = "1.1.0"
 workRuntimeKtx = "2.10.0"
 hiltWork = "1.1.0"
 playServicesLocation = "21.3.0"
+activityVersion = "1.10.1"
+kotlin = "2.0.0"
 
 [libraries]
 adapter-rxjava2 = { module = "com.squareup.retrofit2:adapter-rxjava2", version.ref = "retrofit" }
@@ -63,4 +65,7 @@ hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hil
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hiltAndroid" }
 androidx-hilt-navigation-fragment = { module = "androidx.hilt:hilt-navigation-fragment", version.ref = "hiltNavigationFragment" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activityVersion" }
+[plugins]
+jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 

@@ -63,6 +63,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Duration
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -93,10 +96,7 @@ class HomeFragment : Fragment() {
     @Inject
     lateinit var wifiScanner: WifiScanner
 
-    private var currentMessageRunnable: Runnable? = null
-    private val handler = Handler(Looper.getMainLooper())
 
-    private val mMsgInterval = 5000L
     private lateinit var permissionHandler: PermissionHandler
 
     private var btnStatus: String = "";
@@ -196,8 +196,7 @@ class HomeFragment : Fragment() {
     // This method is called once all permissions are granted
     private fun onPermissionsGranted() {
         setChecksData()
-        // Proceed with the next step after all permissions are granted
-//        Toast.makeText(requireContext(), getString(R.string.all_permissions_granted), Toast.LENGTH_SHORT).show()
+
     }
 
     private fun setUpProgressDialog(
@@ -239,12 +238,11 @@ class HomeFragment : Fragment() {
                             // Step 2: Convert each record into a DataRequest model
                             val listDataRequest = records.map { it.toDataRequest() }.toMutableList()
                             // Step 4: Log the final list
-                            Log.i(
-                                TAG,
-                                "callApiData: listDataRequest after adding object: ${listDataRequest.size}"
-                            )
                             // Step 5: Get the auth token
                             val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
+                            Log.i(TAG, "callApiData: listDataRequest token: ${token}")
+                            Log.i(TAG, "callApiData: listDataRequest after adding object: ${listDataRequest}")
+
                             // **Step 6: Switch to Main thread before updating LiveData**
                             withContext(Dispatchers.Main) {
                                 mainViewModel.sendAppData(listDataRequest, token)
@@ -558,10 +556,8 @@ class HomeFragment : Fragment() {
 
         if (checkGPS) {
             val locationTrack = LocationTrack(requireContext())
-            val mLocationManager =
-                requireActivity().getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val mLocationManager = requireActivity().getSystemService(Context.LOCATION_SERVICE) as LocationManager
             showProgressDialog(getString(R.string.fetching_location))
-
 
             locationTrack.getLocation(mLocationManager) { location ->
 
@@ -661,9 +657,7 @@ class HomeFragment : Fragment() {
 
                                         listDataRequest.add(record.toDataRequest())
 
-                                        val token =
-                                            SharedPref.getInstance(requireContext())?.getToken() ?: ""
-
+                                        val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
                                         withContext(Dispatchers.Main) {
                                             mainViewModel.sendAppData(listDataRequest, token)
                                         }
@@ -684,7 +678,14 @@ class HomeFragment : Fragment() {
 
                                 // Save to database when no internet is available
                                 CoroutineScope(Dispatchers.IO).launch {
-                                    dao.insertRecord(record)
+                                    val latest = dao.getLatestRecord(record.user_id)
+
+                                    if (shouldInsertRecord(latest, record)) {
+                                        dao.insertRecord(record)
+//                                        sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+                                    } else {
+                                        Log.d("DBDao", "saveDataLocally: Record not inserted: Time difference <= 5 minutes")
+                                    }
 
                                     withContext(Dispatchers.Main) {
                                         showMessage(getString(R.string.offile_alert_message))
@@ -707,6 +708,20 @@ class HomeFragment : Fragment() {
 
         }
 
+    fun shouldInsertRecord(
+        latestRecord: RecordModel?,
+        newRecord: RecordModel
+    ): Boolean {
+        if (latestRecord == null) return true // No record yet, so insert
+
+        val formatter = DateTimeFormatter.ofPattern("HH:mm")
+        val latestTime = LocalTime.parse(latestRecord.localTime, formatter)
+        val newTime = LocalTime.parse(newRecord.localTime, formatter)
+
+        val duration = Duration.between(latestTime, newTime).toMinutes()
+
+        return duration > 5
+    }
     private var clearTextHandler: Handler? = null
     private var clearTextRunnable: Runnable? = null
 
