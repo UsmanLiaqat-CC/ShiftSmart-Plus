@@ -53,6 +53,7 @@ import java.util.Calendar
 import javax.inject.Inject
 
 
+/*
 @AndroidEntryPoint
 class MyService : Service() {
 
@@ -155,12 +156,14 @@ class MyService : Service() {
             "START_SERVICE" -> handleServiceStart()
             "STOP_SERVICE" -> handleServiceStop()
             "RESTART_SERVICE" -> handleServiceRestart()
-           /* "PERFORM_API_CALL" -> {
+           */
+/* "PERFORM_API_CALL" -> {
                 val scheduledTime = intent.getLongExtra("scheduled_time", 0)
                 if (scheduledTime > 0 && System.currentTimeMillis() >= scheduledTime - 60_000) {
                     performApiCall()
                 }
-            }*/
+            }*//*
+
             else -> handleRegularStart()
         }
 
@@ -541,6 +544,7 @@ class MyService : Service() {
         const val RECORD_INTERVAL = 5 // minutes
     }
 
+*/
 /*    private fun setupWorkManagerBackup() {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -591,7 +595,582 @@ class MyService : Service() {
             )
         }
 
-    }*/
+    }*//*
+
+
+}
+
+class ServiceReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+        if (intent?.action == "com.shiftsmart.plus.ACTION_FINISH") {
+            (context as? MyService)?.finishAllData()
+        }
+    }
+}
+*/
+
+
+@AndroidEntryPoint
+class MyService : Service() {
+
+    @Inject
+    lateinit var repository: MainRepository
+    @Inject
+    lateinit var track: LocationTrack
+    @Inject
+    lateinit var db: ShiftSmartPlusDatabase
+
+    @Inject
+    lateinit var context: Context
+
+    private lateinit var dao: DBDao
+    private var notificationManager: NotificationManager? = null
+    private val TAG = "MyService"
+
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private lateinit var wifiManager: WifiManager
+    private var isWifiReceiverRegistered = false
+
+//    // Timing control variables
+//    private val handler = Handler(Looper.getMainLooper())
+//
+//    // Keep-alive variables
+//    private val keepAliveInterval = 30 * 1000L // 30 seconds (more frequent checks)
+//    private val keepAliveRunnable = object : Runnable {
+//        override fun run() {
+//            checkAndMaintainService()
+//            handler.postDelayed(this, keepAliveInterval)
+//        }
+//    }
+
+
+    private fun updateForegroundNotification(context: Context, message: String) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = createNotification(message)
+        notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+    // Wake lock
+    private lateinit var wakeLock: PowerManager.WakeLock
+    private var isServiceRunning = false
+
+    private val wifiScanResults = mutableListOf<WifiModel>()
+
+    // Broadcast Receivers
+    private val wifiScanReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false) == true) {
+                wifiScanResults.clear()
+                wifiScanResults.addAll(wifiManager.scanResults.map { WifiModel(it.SSID, it.BSSID, it.level) })
+
+                attendanceSyncManager.setWifiList(wifiScanResults)
+            }
+        }
+    }
+    private var isNotificatoinRegistered = false
+    private val notificationReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val message = intent?.getStringExtra("message")
+            Log.i("NotificationReceiver", "Received notification update: $message")
+            if (context != null) {
+                updateForegroundNotification(context,message.toString())
+            }
+        }
+    }
+
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+    @Inject lateinit var locationHelper: LocationHelper
+
+    @Inject lateinit var attendanceSyncManager: AttendanceSyncManager
+
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.i(TAG, "Service created")
+        isServiceRunning = true
+
+        // Acquire wake lock with proper flags
+        acquireWakeLock()
+
+        initializeComponents()
+        registerReceivers()
+//        startTimingControl()
+        checkBatteryOptimizations()
+
+
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "Service command received")
+
+        // Always start foreground early to avoid crash
+        val notification = createNotification("Service is running...")
+        startForeground(NOTIFICATION_ID, notification)
+
+        when (intent?.action) {
+            "START_SERVICE" -> handleServiceStart()
+            "STOP_SERVICE" -> handleServiceStop()
+            "RESTART_SERVICE" -> handleServiceRestart()
+//            "CHECK_SERVICE"-> updateCheckService()
+            "CALL_API"-> checkAndMaintainService()
+            else -> handleRegularStart()
+        }
+
+//        scheduleRestartAlarm()
+
+        return START_STICKY
+    }
+
+    private fun acquireWakeLock() {
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
+            "MyApp::MyServiceWakelock"
+        ).apply {
+            setReferenceCounted(false)
+            acquire(10 * 60 * 1000L)// 10 minutes
+
+        }
+    }
+
+    private fun checkBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                BatteryOptimizationHelper.checkBatteryOptimizations(this)
+            }
+        }
+    }
+
+    private fun scheduleRestartAlarm() {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(this, AlarmReceiver::class.java).apply {
+            action = "RESTART_SERVICE"
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            this,
+            1234,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val triggerTime = System.currentTimeMillis() + 5 * 60 * 1000 // 5 minutes
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.RTC_WAKEUP,
+            triggerTime,
+            pendingIntent
+        )
+
+        Log.i("MyService", "Restart alarm scheduled after 5 minutes")
+    }
+
+
+    // Public method to trigger finishAllData from other components
+    fun finishServiceOperations() {
+        finishAllData()
+    }
+
+    fun finishAllData() {
+        Log.d(TAG, "Finishing all service operations")
+
+        try {
+
+            // Release wake lock
+            if (::wakeLock.isInitialized && wakeLock.isHeld) {
+                wakeLock.release()
+            }
+            serviceJob.cancel()
+            // Unregister receivers
+            unregisterReceivers()
+
+            // Stop foreground service
+            stopForeground(true)
+            stopSelf()
+
+            Log.d(TAG, "Service stopped successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error while finishing service", e)
+        } finally {
+            isServiceRunning = false
+        }
+    }
+
+    private fun unregisterReceivers() {
+        // Unregister WiFi receiver
+        if (isWifiReceiverRegistered) {
+            try {
+                unregisterReceiver(wifiScanReceiver)
+                isWifiReceiverRegistered = false
+                Log.d(TAG, "WiFi scan receiver unregistered")
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "WiFi receiver already unregistered")
+            }
+        }
+
+        if (isNotificatoinRegistered) {
+            try {
+                unregisterReceiver(notificationReceiver)
+                isNotificatoinRegistered = false
+                Log.d(TAG, "notification receiver unregistered")
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "notification already unregistered")
+            }
+        }
+
+    }
+
+    private fun initializeComponents() {
+        dao = db.dbDao()
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        createNotificationChannel()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val channel = NotificationChannel(
+                getString(R.string.breakfast_notification_channel_id),
+                getString(R.string.breakfast_notification_channel_name),
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Service notifications"
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setSound(null, null)
+                enableVibration(false)
+            }
+
+            notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager?.createNotificationChannel(channel)
+        }
+    }
+    private fun registerReceivers() {
+        registerWifiScanReceiver()
+        registerNotificationReceiver()
+
+    }
+    private fun registerNotificationReceiver() {
+        if (!isNotificatoinRegistered) {
+            try {
+                LocalBroadcastManager.getInstance(this).registerReceiver(notificationReceiver, IntentFilter("UPDATE_NOTIFICATION"))
+                isNotificatoinRegistered = true
+                Log.d(TAG, "Notification receiver registered")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to register notification receiver", e)
+            }
+        }
+
+    }
+
+
+    @SuppressLint("MissingPermission")
+    private fun registerWifiScanReceiver() {
+        if (!isWifiReceiverRegistered) {
+            try {
+                registerReceiver(
+                    wifiScanReceiver,
+                    IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
+                )
+                isWifiReceiverRegistered = true
+                Log.d(TAG, "WiFi scan receiver registered")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to register WiFi receiver", e)
+            }
+        }
+    }
+
+//    private fun startTimingControl() {
+//        // Start the keep-alive checks
+//        handler.post(keepAliveRunnable)
+//    }
+
+    private fun checkAndMaintainService() {
+
+        Log.d(TAG, "checkAndMaintainService: Keep-alive check.${Utils.getCurrentDateTime()}")
+
+        // 1. Check if service should be running based on shift times
+        if (!shouldRunCheck()) {
+            Log.d(TAG, "checkAndMaintainServiceNot in shift time, stopping service")
+            finishServiceOperations()
+            return
+        }
+
+        serviceScope.launch {
+            startLocationFetch()
+        }
+
+    }
+
+    private fun releaseWakeLock() {
+        if (::wakeLock.isInitialized && wakeLock.isHeld) {
+            wakeLock.release()
+        }
+    }
+    private fun shouldRunCheck(): Boolean {
+        val user = SharedPref.getInstance(this)?.getUser() ?: return false
+        val today = getCurrentDayName()
+        val currentTime = Calendar.getInstance()
+
+        return user.timetable?.range?.any { shift ->
+            shift.day.equals(today, ignoreCase = true) &&
+                    shift.start != null &&
+                    shift.end != null &&
+                    ShiftUtils.isTimeWithinBufferRange(currentTime, shift.start, shift.end)
+        } ?: false
+    }
+
+    private fun createNotification(message: String): Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(
+            this,
+            getString(R.string.breakfast_notification_channel_id)
+        )
+            .setContentTitle("ShiftSmart Plus Service")
+            .setContentText(message)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+                }
+            }
+            .build()
+    }
+
+    // Function to make API call only once
+
+    @SuppressLint("MissingPermission")
+    private fun startWifiScanning() {
+        try {
+            if (wifiManager.isWifiEnabled) {
+                wifiManager.startScan()
+                Log.d(TAG, "WiFi scan started")
+            } else {
+                Log.d(TAG, "WiFi is disabled, cannot scan")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start WiFi scan", e)
+        }
+    }
+
+    private fun startLocationFetch() {
+        serviceScope.launch {
+            try {
+                val freshLatLng = locationHelper.fetchFreshLocation()
+
+                Log.i(TAG, "MrXXX: Fresh location obtained: ${freshLatLng.latitude}, ${freshLatLng.longitude} at: ${Utils.getCurrentDateTime()}")
+
+                maybeTriggerApiCall()
+
+            } catch (e: Exception) {
+                maybeTriggerApiCall()
+                Log.e(TAG, "MrXXX: Failed to fetch location", e)
+
+            }
+        }
+    }
+
+
+
+    private fun maybeTriggerApiCall() {
+        CoroutineScope(Dispatchers.IO).launch {
+            attendanceSyncManager.startSyncProcess()
+        }
+    }
+
+    private fun handleServiceStart() {
+        Log.i(TAG, "Starting service")
+        startForegroundService()
+    }
+
+    private fun handleServiceStop() {
+        Log.i(TAG, "Stopping service")
+        finishServiceOperations()
+    }
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun handleServiceRestart() {
+        Log.i(TAG, "Restarting service")
+        if (!isServiceRunning) {
+            startForegroundService()
+            startWifiScanning()
+            checkShiftAndScheduleTasks()
+        }
+    }
+    private fun checkShiftAndScheduleTasks() {
+        val user = SharedPref.getInstance(this)?.getUser() ?: run {
+            Log.w(TAG, "No user found in SharedPref")
+            finishServiceOperations()
+            return
+        }
+
+        user.timetable?.range?.let { shifts ->
+            val today = getCurrentDayName()
+            val currentTime = Calendar.getInstance()
+
+            shifts.find { it.day.equals(today, true) }?.let { todayShift ->
+                if (todayShift.start != null && todayShift.end != null) {
+
+                    if (ShiftUtils.isTimeWithinBufferRange(currentTime, todayShift.start, todayShift.end))
+                    {
+                        Log.i(TAG, "Within shift time (${todayShift.start} - ${todayShift.end}), continuing service")
+//
+//                        checkAndMaintainService()
+                    }else{
+                        finishServiceOperations()
+                    }
+                }
+            } ?: run {
+                Log.i(TAG, "No shift found for today ($today), stopping service")
+                finishServiceOperations()
+            }
+        } ?: run {
+            Log.w(TAG, "No timetable range found, stopping service")
+            finishServiceOperations()
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun startForegroundService() {
+        val notification = createNotification("Service running").apply {
+            flags = flags or Notification.FLAG_NO_CLEAR
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val serviceTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                FOREGROUND_SERVICE_TYPE_LOCATION or
+                        FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                        FOREGROUND_SERVICE_TYPE_MANIFEST
+            } else {
+                FOREGROUND_SERVICE_TYPE_LOCATION
+            }
+            startForeground(NOTIFICATION_ID, notification, serviceTypes)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun handleRegularStart() {
+        startForegroundService()
+        startWifiScanning()
+        checkShiftAndScheduleTasks()
+    }
+    @RequiresApi(Build.VERSION_CODES.Q)
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isServiceRunning = false
+
+        try {
+            // Cancel any pending alarms
+            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+            val intent = Intent(this, AlarmReceiver::class.java)
+            val pendingIntent = PendingIntent.getBroadcast(
+                this, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+
+            // Release resources
+            releaseWakeLock()
+            unregisterReceivers()
+//            handler.removeCallbacks(keepAliveRunnable)
+
+            // Schedule restart if needed
+            if (shouldRunCheck()) {
+                val restartIntent = Intent("RESTART_SERVICE").apply {
+                    `package` = packageName
+                }
+                sendBroadcast(restartIntent)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during onDestroy", e)
+        }
+    }
+
+    override fun onBind(p0: Intent?): IBinder? {
+        return null
+    }
+//    private fun stopTimingControl() {
+//        handler.removeCallbacks(keepAliveRunnable)
+//    }
+
+
+
+    companion object {
+        private const val NOTIFICATION_ID = 1
+        const val RECORD_INTERVAL = 5 // minutes
+    }
+
+    /*    private fun setupWorkManagerBackup() {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(false)
+                .setRequiresCharging(false)
+                .build()
+
+            val workRequest = PeriodicWorkRequestBuilder<ApiWorker>(
+                RECORD_INTERVAL.toLong(), TimeUnit.MINUTES,
+                5, TimeUnit.MINUTES) // Flexible 5-minute window
+                .setConstraints(constraints)
+                .setInitialDelay(RECORD_INTERVAL.toLong(), TimeUnit.MINUTES)
+                .build()
+
+            WorkManager.getInstance(this)
+                .enqueueUniquePeriodicWork(
+                    "api_call_worker",
+                    ExistingPeriodicWorkPolicy.REPLACE,
+                    workRequest
+                )
+        }
+
+
+        private fun setupAlarmManager() {
+            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+            val intent = Intent(this, AlarmReceiver::class.java).apply {
+                action = "PERFORM_API_CALL"
+                putExtra("scheduled_time", nextScheduledTime)
+            }
+
+            val pendingIntent = PendingIntent.getBroadcast(
+                this, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            // Use setExactAndAllowWhileIdle for maximum precision on newer devices
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    nextScheduledTime,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    nextScheduledTime,
+                    pendingIntent
+                )
+            }
+
+        }*/
 
 }
 

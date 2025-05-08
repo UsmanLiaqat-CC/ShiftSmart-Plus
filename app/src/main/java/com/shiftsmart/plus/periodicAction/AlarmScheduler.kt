@@ -43,9 +43,12 @@ object AlarmScheduler {
             Log.i(TAG, "startCalendar: ${startCalendar?.time} --> endCalendar: ${endCalendar?.time}")
 
             if (startCalendar != null && endCalendar != null) {
-                schedulePeriodicAlarm(context)
+
                 scheduleService(context, startCalendar, true)
                 scheduleService(context, endCalendar, false)
+
+                schedulePeriodicAlarm(context)
+                scheduleRestartAlarm(context)
             }
         } else {
             Log.i(TAG, "No shift found for today.")
@@ -76,6 +79,28 @@ object AlarmScheduler {
         } catch (e: Exception) {
             Log.e(TAG, "Error scheduling periodic alarm", e)
         }
+    }
+
+    fun scheduleRestartAlarm(context: Context) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, AlarmReceiver::class.java).apply {
+            action = "CALL_API"
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            1234, // Keep the same ID so it gets replaced
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+//        val triggerTime = System.currentTimeMillis() + 5 * 60 * 1000
+
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.RTC_WAKEUP,
+            System.currentTimeMillis(),
+            pendingIntent
+        )
+
+        Log.i("AlarmScheduler", "Scheduled RESTART_SERVICE alarm in 5 minutes")
     }
 
     private fun scheduleService(context: Context, calendar: Calendar, isStart: Boolean) {

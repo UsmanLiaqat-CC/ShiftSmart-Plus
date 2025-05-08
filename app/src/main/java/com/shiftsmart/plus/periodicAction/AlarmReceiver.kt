@@ -1,6 +1,8 @@
 package com.shiftsmart.plus.periodicAction
 
 import android.app.ActivityManager
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -45,7 +47,6 @@ class AlarmReceiver : BroadcastReceiver() {
 
                     Log.i("AlarmReceiver", "Foreground service started successfully")
                 }
-
                 "STOP_SERVICE" -> {
                     Log.i("AlarmReceiver", "Received STOP_SERVICE_ALARM")
                     val stopIntent = Intent(context, MyService::class.java).apply {
@@ -58,9 +59,61 @@ class AlarmReceiver : BroadcastReceiver() {
                     val shifts = getShiftsFromSharedPreferences(context) // Implement this function to get shifts
                     // Proceed with the logic to handle the service start/stop only if within the shift period
                     handleShiftPeriod(context, shifts)
+                    val stopIntent = Intent(context, MyService::class.java).apply {
+                        action = "CHECK_SERVICE"
+                    }
+                    context.startService(stopIntent)
                 }
+                "CALL_API" -> {
+                    Log.i("AlarmReceiver", "Received CALL_API")
+                    val shifts = getShiftsFromSharedPreferences(context) // Implement this function to get shifts
+                    // Proceed with the logic to handle the service start/stop only if within the shift period
+                    handleShiftPeriod(context, shifts)
+                    val stopIntent = Intent(context, MyService::class.java).apply {
+                        action = "CALL_API"
+                    }
+                    context.startService(stopIntent)
+
+                    // Reschedule the alarm for 5 minutes later
+                    scheduleNextAlarm(context)
+                }
+                "RESTART_SERVICE" -> {
+                    Log.i("AlarmReceiver", "Received RESTART_SERVICE")
+
+                    val serviceIntent = Intent(context, MyService::class.java).apply {
+                        action = "START_SERVICE"
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent)
+                    } else {
+                        context.startService(serviceIntent)
+                    }
+
+                    // Schedule the next 5-min restart
+                    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                    val nextIntent = Intent(context, AlarmReceiver::class.java).apply {
+                        action = "RESTART_SERVICE"
+                    }
+                    val pendingIntent = PendingIntent.getBroadcast(
+                        context,
+                        1234,
+                        nextIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    val triggerTime = System.currentTimeMillis() + 5 * 60 * 1000
+
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerTime,
+                        pendingIntent
+                    )
+
+                    Log.i("AlarmReceiver", "Next RESTART_SERVICE scheduled in 5 minutes")
+                }
+
                 // ... handle CHECK_SERVICE if needed
             }
+
 
         } catch (e: Exception) {
             Log.e("TAG", "Error in AlarmReceiver onReceive", e)
@@ -132,5 +185,28 @@ class AlarmReceiver : BroadcastReceiver() {
             Log.e("TAG", "Error retrieving shifts from SharedPreferences", e)
         }
         return emptyList()
+    }
+
+    private fun scheduleNextAlarm(context: Context?) {
+
+        val alarmManager = context?.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, AlarmReceiver::class.java).apply {
+            action = "CALL_API"
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            1234, // Keep the same ID so it gets replaced
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val triggerTime = System.currentTimeMillis() + 5 * 60 * 1000
+
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.RTC_WAKEUP,
+            triggerTime,
+            pendingIntent
+        )
+
+        Log.d("AlarmReceiver", "Next alarm scheduled at: $triggerTime")
     }
 }

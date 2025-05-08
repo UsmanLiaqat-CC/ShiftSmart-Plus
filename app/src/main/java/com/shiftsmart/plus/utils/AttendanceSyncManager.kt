@@ -56,39 +56,46 @@ class AttendanceSyncManager @Inject constructor(
         maybeTriggerApiCall()
     }
 
+//    private fun maybeTriggerApiCall() {
+//        val now = SystemClock.elapsedRealtime()
+//        val lastApiCallTime = SharedPref.getInstance(context)?.getLastApiCallTime() ?: 0L
+//        val lastMinutes = lastApiCallTime / 1000 / 60
+//        val lastSeconds = (lastApiCallTime / 1000) % 60
+//        Log.i(TAG, "maybeTriggerApiCall: lastApiCallTime = $lastApiCallTime (${lastMinutes}m ${lastSeconds}s)")
+//
+//        if (lastApiCallTime == 0L ) {
+//            Log.d(TAG, "if performing api call at:${Utils.getCurrentDateTime()}")
+//
+//            performApiCall()
+//        } else {
+//
+//            val elapsedMillis = now - lastApiCallTime
+//            val elapsedMinutes = elapsedMillis / 1000 / 60
+//            val elapsedSeconds = (elapsedMillis / 1000) % 60
+//            val checkIntervalMinutes = checkInterval / 1000 / 60
+//
+//            Log.d(TAG, "maybeTriggerApiCall: Time since last call = ${elapsedMinutes}m ${elapsedSeconds}s (Check interval: ${checkIntervalMinutes}m)")
+//
+//            if (elapsedMillis >= checkInterval) {
+//                Log.d(TAG, "maybeTriggerApiCall: Enough time passed, calling performApiCall()")
+//                performApiCall()
+//            } else {
+//                val waitMillis = checkInterval - elapsedMillis
+//                val waitMinutes = waitMillis / 1000 / 60
+//                val waitSeconds = (waitMillis / 1000) % 60
+//
+//                sendNotificationUpdate("Next Data Sync after ${waitMinutes}m ${waitSeconds}s")
+//            }
+//            // Skipped due to interval
+//        }
+//    }
+
+
     private fun maybeTriggerApiCall() {
-        val now = SystemClock.elapsedRealtime()
-        val lastApiCallTime = SharedPref.getInstance(context)?.getLastApiCallTime() ?: 0L
-        val lastMinutes = lastApiCallTime / 1000 / 60
-        val lastSeconds = (lastApiCallTime / 1000) % 60
-        Log.i(TAG, "maybeTriggerApiCall: lastApiCallTime = $lastApiCallTime (${lastMinutes}m ${lastSeconds}s)")
-        
-        if (lastApiCallTime == 0L ) {
-            Log.d(TAG, "if performing api call at:${Utils.getCurrentDateTime()}")
-          
-            performApiCall()
-        } else {
-
-            val elapsedMillis = now - lastApiCallTime
-            val elapsedMinutes = elapsedMillis / 1000 / 60
-            val elapsedSeconds = (elapsedMillis / 1000) % 60
-            val checkIntervalMinutes = checkInterval / 1000 / 60
-
-            Log.d(TAG, "maybeTriggerApiCall: Time since last call = ${elapsedMinutes}m ${elapsedSeconds}s (Check interval: ${checkIntervalMinutes}m)")
-
-            if (elapsedMillis >= checkInterval) {
-                Log.d(TAG, "maybeTriggerApiCall: Enough time passed, calling performApiCall()")
-                performApiCall()
-            } else {
-                val waitMillis = checkInterval - elapsedMillis
-                val waitMinutes = waitMillis / 1000 / 60
-                val waitSeconds = (waitMillis / 1000) % 60
-
-                sendNotificationUpdate("Next Data Sync after ${waitMinutes}m ${waitSeconds}s")
-            }
-            // Skipped due to interval
-        }
+        performApiCall()
     }
+
+
 
     private fun performApiCall() {
         Log.i(TAG, "performApiCall: at:${Utils.getCurrentDateTime()}")
