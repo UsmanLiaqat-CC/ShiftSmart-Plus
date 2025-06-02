@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:app="http://schemas.android.com/apk/res-auto">
+
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/_8sdp"
+        android:layout_marginBottom="@dimen/_8sdp"
+        android:layout_marginStart="@dimen/_3sdp"
+        android:layout_marginEnd="@dimen/_3sdp"
+        app:cardBackgroundColor="@color/white"
+        app:cardCornerRadius="@dimen/_8sdp"
+        app:cardElevation="@dimen/_3sdp"
+        app:strokeColor="@color/white">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_margin="@dimen/_5sdp"
+            >
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:id="@+id/store_name_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:layout_toStartOf="@id/attendace_type_tv"
+                    android:layout_alignParentStart="true"
+                    android:paddingEnd="@dimen/_10sdp"
+
+                    android:textSize="@dimen/_16sdp" />
+                <TextView
+                    android:id="@+id/attendace_type_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:layout_alignParentEnd="true"
+                    android:gravity="center_vertical"
+                    android:paddingEnd="@dimen/_5sdp"
+                    android:layout_alignTop="@id/store_name_tv"
+                    android:layout_alignBottom="@id/store_name_tv"
+                    android:textSize="@dimen/_10sdp" />
+
+
+            </RelativeLayout>
+
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="@dimen/_2sdp"
+                android:paddingBottom="@dimen/_2sdp">
+                <TextView
+                    android:id="@+id/date_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:layout_toStartOf="@id/time_tv"
+                    android:layout_alignParentStart="true"
+                    android:paddingEnd="@dimen/_10sdp"
+                    android:textSize="@dimen/_10sdp" />
+                <TextView
+                    android:id="@+id/time_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:layout_alignParentEnd="true"
+                    android:gravity="center_vertical"
+                    android:paddingEnd="@dimen/_5sdp"
+                    android:layout_alignTop="@id/date_tv"
+                    android:layout_alignBottom="@id/date_tv"
+                    android:textSize="@dimen/_10sdp" />
+
+
+            </RelativeLayout>
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="@dimen/_2sdp"
+                android:paddingBottom="@dimen/_2sdp">
+
+                <TextView
+                    android:id="@+id/_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/attendace_status"
+                    android:layout_toStartOf="@id/attendace_status_tv"
+                    android:layout_alignParentStart="true"
+                    android:paddingEnd="@dimen/_10sdp"
+                    android:textSize="@dimen/_10sdp" />
+                <TextView
+                    android:id="@+id/attendace_status_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:layout_alignParentEnd="true"
+                    android:gravity="center_vertical"
+                    android:paddingEnd="@dimen/_5sdp"
+                    android:layout_alignTop="@id/_tv"
+                    android:layout_alignBottom="@id/_tv"
+                    android:textSize="@dimen/_10sdp" />
+
+
+            </RelativeLayout>
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="@dimen/_2sdp"
+                android:paddingBottom="@dimen/_2sdp">
+
+                <TextView
+                    android:id="@+id/_tv2"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/coordinates"
+                    android:layout_toStartOf="@id/attendace_coordinates_tv"
+                    android:layout_alignParentStart="true"
+                    android:paddingEnd="@dimen/_10sdp"
+                    android:textSize="@dimen/_10sdp" />
+                <TextView
+                    android:id="@+id/attendace_coordinates_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:layout_alignParentEnd="true"
+                    android:gravity="center_vertical"
+                    android:paddingEnd="@dimen/_5sdp"
+                    android:layout_alignTop="@id/_tv2"
+                    android:layout_alignBottom="@id/_tv2"
+                    android:textSize="@dimen/_10sdp" />
+
+
+            </RelativeLayout>
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="@dimen/_2sdp"
+                android:paddingBottom="@dimen/_2sdp">
+
+                <TextView
+                    android:id="@+id/wifi_tv"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentStart="true"
+                    android:paddingEnd="@dimen/_5sdp"
+                    android:layout_alignParentEnd="true"
+                    android:textSize="@dimen/_10sdp" />
+            </RelativeLayout>
+
+
+
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+</RelativeLayout>
+</layout>

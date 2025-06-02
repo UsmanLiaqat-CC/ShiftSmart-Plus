@@ -18,7 +18,8 @@ class PermissionHandler(
     private val context: Context,
     private val activity: Activity,
     private val onAllPermissionsGranted: () -> Unit
-) {
+)
+{
 
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
     private var isForegroundServicePermissionRequested = false
@@ -123,15 +124,24 @@ class PermissionHandler(
     }
 
     private fun showPermissionRationaleDialog(deniedPermissions: List<String>) {
+        if (hasShownRationale) {
+            // If already shown once, do not show again — direct to settings or fail silently
+            showSettingsDialog(deniedPermissions.first())
+            return
+        }
+
+        hasShownRationale = true // Set flag
+
         AlertDialog.Builder(context)
             .setTitle("Permissions Required")
-            .setMessage("This app needs background location permissions to work correctly. Please allow them to all the time.")
+            .setMessage("This app needs background location permissions to work correctly. Please allow them all the time.")
             .setPositiveButton("Grant") { _, _ ->
                 permissionLauncher.launch(deniedPermissions.toTypedArray())
             }
             .setNegativeButton("Cancel") { _, _ -> }
             .show()
     }
+
 
 
     // Step 6: Handle Foreground Service Permission Separately
@@ -189,22 +199,22 @@ class PermissionHandler(
             }
             .show()
     }
+    private var hasShownRationale = false
 
     fun handlePermissionsResult(grantResults: Map<String, Boolean>) {
         val deniedPermissions = grantResults.filterValues { !it }.keys.toList()
 
         if (deniedPermissions.isEmpty()) {
-            onPermissionsGranted() // All permissions granted
+            hasShownRationale = false // reset flag if granted
+            onPermissionsGranted()
         } else {
             val permanentlyDenied = deniedPermissions.firstOrNull {
                 !ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
             }
 
             if (permanentlyDenied != null) {
-                // Open settings only if the user has permanently denied a permission
                 showSettingsDialog(permanentlyDenied)
             } else {
-                // Ask for permissions again only if they can still be requested
                 showPermissionRationaleDialog(deniedPermissions)
             }
         }

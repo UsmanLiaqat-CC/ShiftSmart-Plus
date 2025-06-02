@@ -21,5 +21,4 @@ data class AttendanceData(
     @SerializedName("message" ) val message: String,
     @SerializedName("store" ) val store: String,
     @SerializedName("attendanceStatus" ) val attendanceStatus: String,// enum online , offline
-
 )

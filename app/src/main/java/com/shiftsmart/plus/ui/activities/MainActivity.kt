@@ -1,31 +1,45 @@
 package com.shiftsmart.plus.ui.activities
 
 import android.Manifest
-import android.app.Activity
 import android.app.AlarmManager
-import android.app.AlertDialog
-import android.content.ComponentName
+import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.view.LayoutInflater
 import android.widget.Toast
+import androidx.activity.viewModels
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
+import androidx.drawerlayout.widget.DrawerLayout
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import androidx.navigation.findNavController
 import androidx.navigation.fragment.findNavController
 import com.shiftsmart.plus.R
+import com.shiftsmart.plus.databinding.ActivityMainBinding
+import com.shiftsmart.plus.databinding.LogoutDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.services.MyService
+import com.shiftsmart.plus.utils.FingerprintHelper
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
+import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 @AndroidEntryPoint
@@ -35,11 +49,18 @@ class MainActivity : AppCompatActivity() {
     private  val TAG = "MainActivityPLUS"
     private  val REQUEST_IGNORE_BATTERY_OPTIMIZATIONS = 1001
 
+    lateinit var drawerLayout: DrawerLayout
+    private lateinit var mBinding:ActivityMainBinding
+    private var logoutDialog: Dialog? = null  // Keep reference to avoid multiple dialogs
 
+    val mainViewModel: MainViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
+        mBinding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(mBinding.root)
+
+        drawerLayout = mBinding.drawerLayout
         Log.i(TAG, "onCreate: Activity created")
 
         // Check if the app has the necessary location permissions
@@ -64,12 +85,157 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        // Call this function when the user needs to enable Auto-Start
-//        openAutoStartSettings(this)
+
+        setupDrawer()
 
     }
 
+    private fun setupDrawer() {
+        // Initialize switch from binding
+        val switchFingerprint = mBinding.switchFingerprint
 
+        // Set initial state from SharedPref
+        switchFingerprint.isChecked =FingerprintHelper.isFingerprintEnabled(this) ?: false
+
+        // Handle switch toggle
+        switchFingerprint.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                if (!FingerprintHelper.isFingerprintSupported(this)) {
+                    Utils.showSnackBar(getString(R.string.device_doesn_t_support_fingerprint),mBinding.root)
+
+                    switchFingerprint.isChecked = false
+                    return@setOnCheckedChangeListener
+                }
+
+                if (!FingerprintHelper.isFingerprintAvailable(this)) {
+                    AlertDialog.Builder(this)
+                        .setTitle(getString(R.string.fingerprint_not_enabled))
+                        .setMessage(getString(R.string.please_enable_fingerprint_in_your_device_settings))
+                        .setPositiveButton(getString(R.string.go_to_settings)) { _, _ ->
+                            FingerprintHelper.openSecuritySettings(this)
+                        }
+                        .setNegativeButton(getString(R.string.cancel), null)
+                        .show()
+                    switchFingerprint.isChecked = false
+                    return@setOnCheckedChangeListener
+                }
+
+                FingerprintHelper.setFingerprintEnabled(this, true)
+            } else {
+                FingerprintHelper.setFingerprintEnabled(this, false)
+            }
+        }
+        val user = SharedPref.getInstance(this@MainActivity)?.getUser()
+
+        mBinding.headerLl.userName.text=user?.name?:getString(R.string.app_name)
+        mBinding.headerLl.userDesTv.text="Organization:"+user?.organization?.name
+
+
+        // Handle clicks on menu items using binding
+        mBinding.navProfile.setOnClickListener {
+            navigateToProfile()
+            mBinding.drawerLayout.closeDrawer(GravityCompat.START)
+        }
+
+        mBinding.navAttendance.setOnClickListener {
+            navigateToRecords()
+            mBinding.drawerLayout.closeDrawer(GravityCompat.START)
+        }
+
+        mBinding.navTimeSheet.setOnClickListener {
+            navigateToTimeSheet()
+            mBinding.drawerLayout.closeDrawer(GravityCompat.START)
+        }
+
+        mBinding.navLogout.setOnClickListener {
+            showLogoutDialog()
+            mBinding.drawerLayout.closeDrawer(GravityCompat.START)
+        }
+    }
+
+
+    private fun showLogoutDialog() {
+        if (logoutDialog?.isShowing == true) return  // Prevent duplicate dialog
+
+        val drawerLayout = (this@MainActivity)?.drawerLayout
+        drawerLayout?.let {
+            if (it.isDrawerOpen(GravityCompat.START)) {
+                it.closeDrawer(GravityCompat.START)
+            }
+        }
+
+        val dialogBinding = LogoutDialogBinding.inflate(LayoutInflater.from(this@MainActivity)) // Use ViewBinding
+
+        logoutDialog = Dialog(this@MainActivity).apply {
+            setContentView(dialogBinding.root) // Set root view from binding
+            setCancelable(true)
+            window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+            dialogBinding.btnLogoutConfirm.setOnClickListener {
+                dismiss()  // Close dialog
+                performLogout()  // Call logout function
+            }
+
+            dialogBinding.btnCloseDialog.setOnClickListener {
+                dismiss()  // Close dialog
+            }
+
+            show()
+        }
+    }
+
+    private fun performLogout() {
+        lifecycleScope.launch {
+
+            val user = SharedPref.getInstance(this@MainActivity)?.getUser()
+            val token = SharedPref.getInstance(this@MainActivity)?.getToken()
+            user?.let {
+                if (Utils.isInternetAvailable(this@MainActivity)) {
+                    mainViewModel.logoutUser(user_token = token ?: "", id = it._id ?: "")
+                } else {
+                    Utils.showSnackBar(
+                        getString(R.string.no_network_connection),
+                        mBinding.root
+                    )
+                }
+            }
+        }
+
+    }
+
+    fun navigateToProfile() {
+        val navController = findNavController(R.id.nav_host_fragment)
+        navController.navigate(R.id.profileFragment)
+        drawerLayout.closeDrawer(GravityCompat.START)
+    }
+
+    fun navigateToRecords(){
+        val navController = findNavController(R.id.nav_host_fragment)
+        navController.navigate(R.id.attendanceFragment)
+        drawerLayout.closeDrawer(GravityCompat.START)
+    }
+
+    fun navigateToErrors(){
+        val navController = findNavController(R.id.nav_host_fragment)
+        navController.navigate(R.id.errorsSolutionsFragment)
+        drawerLayout.closeDrawer(GravityCompat.START)
+    }
+
+    fun navigateToTimeSheet(){
+        val navController = findNavController(R.id.nav_host_fragment)
+        navController.navigate(R.id.timeSheetFragment)
+        drawerLayout.closeDrawer(GravityCompat.START)
+    }
+
+
+
+    fun toggleDrawer() {
+        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            drawerLayout.closeDrawer(GravityCompat.START)
+        } else {
+            drawerLayout.openDrawer(GravityCompat.START)
+        }
+    }
     // Step 3: Check if battery optimizations are ignored
     private fun isIgnoringBatteryOptimizations(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -109,7 +275,6 @@ class MainActivity : AppCompatActivity() {
                 restartApp() // Optional: Restart the app for changes to take effect
             } else {
                 Log.w(TAG, "User did NOT ignore battery optimizations.")
-//                showManualBatteryOptimizationDialog()
             }
         }
     }
@@ -124,16 +289,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Step 7: Show a dialog if the user did not grant permission
-    private fun showManualBatteryOptimizationDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("Disable Battery Optimization")
-            .setMessage("For the app to work properly, go to settings and select 'Don't restrict'.")
-            .setPositiveButton("Open Settings") { _, _ -> openBatteryOptimizationSettings() }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
     // Step 8 (Optional): Restart the app after permission is granted
     private fun restartApp() {
         val intent = packageManager.getLaunchIntentForPackage(packageName)
@@ -141,11 +296,11 @@ class MainActivity : AppCompatActivity() {
         startActivity(intent)
         Runtime.getRuntime().exit(0) // Force restart
     }
+
     override fun onResume() {
         super.onResume()
         Log.i(TAG, "onResume: Activity resumed")
     }
-
 
     private fun checkPermissionsAndStartService() {
         Log.i(TAG, "checkPermissionsAndStartService: Checking permissions")
@@ -211,11 +366,6 @@ class MainActivity : AppCompatActivity() {
         {
             if (grantResults.isNotEmpty()) {
                 val fineLocationGranted = grantResults[0] == PackageManager.PERMISSION_GRANTED
-//                val backgroundLocationGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-//                    grantResults.getOrNull(1) == PackageManager.PERMISSION_GRANTED
-//                } else {
-//                    true
-//                }
 
                 Log.i(TAG, "onRequestPermissionsResult: Fine Location permission granted = $fineLocationGranted,")
 
@@ -249,47 +399,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    fun openAutoStartSettings(context: Context) {
-        val intent = Intent()
-        try {
-            val manufacturer = Build.MANUFACTURER.lowercase(Locale.ROOT)
-            when {
-                manufacturer.contains("xiaomi") -> {
-                    intent.component = ComponentName(
-                        "com.miui.securitycenter",
-                        "com.miui.permcenter.autostart.AutoStartManagementActivity"
-                    )
-                }
-                manufacturer.contains("oppo") -> {
-                    intent.component = ComponentName(
-                        "com.coloros.safecenter",
-                        "com.coloros.safecenter.permission.startup.StartupAppListActivity"
-                    )
-                }
-                manufacturer.contains("vivo") -> {
-                    intent.component = ComponentName(
-                        "com.vivo.permissionmanager",
-                        "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"
-                    )
-                }
-                manufacturer.contains("huawei") -> {
-                    intent.component = ComponentName(
-                        "com.huawei.systemmanager",
-                        "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"
-                    )
-                }
-                else -> {
-                    // Open generic settings if manufacturer not recognized
-                    intent.action = Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-                    intent.data = Uri.parse("package:${context.packageName}")
-                }
-            }
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            Log.e("AutoStart", "Failed to open auto-start settings", e)
-            Toast.makeText(context, "Auto-Start settings not available on this device", Toast.LENGTH_SHORT).show()
-        }
-    }
+
 
 
 }

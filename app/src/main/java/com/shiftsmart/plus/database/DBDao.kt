@@ -1,6 +1,7 @@
 package com.shiftsmart.plus.database
 import androidx.lifecycle.LiveData
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -34,4 +35,15 @@ interface DBDao {
 
     @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time DESC LIMIT 1")
     fun getLatestRecord(uId: String): RecordModel?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertIssue(issue: IssueModel)
+
+
+    @Query("DELETE FROM issues WHERE issueKey = :key")
+    suspend fun deleteIssueByKey(key: String)
+
+    @Query("SELECT * FROM issues")
+    suspend fun getAllIssues(): List<IssueModel>
+
 }

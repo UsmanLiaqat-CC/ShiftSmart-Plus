@@ -145,9 +145,7 @@ class LoginFragment : Fragment() {
                             // use here workmanager
                             // 🔹 Schedule WorkManager for periodic API calls
                             it.data?.userModel?.timetable?.range?.let { it1 ->
-                                AlarmScheduler.scheduleAlarms(requireContext(),
-                                    it1
-                                )
+                                AlarmScheduler.scheduleAlarms(requireContext(), it1)
                             }
 
                         } else {

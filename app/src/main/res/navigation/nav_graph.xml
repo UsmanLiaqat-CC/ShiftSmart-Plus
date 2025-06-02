@@ -67,10 +67,34 @@
             app:popEnterAnim="@anim/nav_slide_in_left"
             app:popUpToInclusive="true"
             app:popUpTo="@id/nav_graph"/>
+        <action
+            android:id="@+id/action_homeFragment_to_errorsSolutionsFragment"
+            app:destination="@id/errorsSolutionsFragment"
+            app:enterAnim="@anim/nav_slide_in_right"
+            app:exitAnim="@anim/nav_slide_out_left"
+            app:popExitAnim="@anim/nav_slide_out_right"
+            app:popEnterAnim="@anim/nav_slide_in_left"
+            app:popUpToInclusive="false"
+            app:popUpTo="@id/homeFragment"/>
     </fragment>
     <fragment
         android:id="@+id/profileFragment"
         android:name="com.shiftsmart.plus.ui.fragments.ProfileFragment"
         android:label="fragment_profile"
         tools:layout="@layout/fragment_profile" />
+    <fragment
+        android:id="@+id/attendanceFragment"
+        android:name="com.shiftsmart.plus.ui.fragments.attendace.AttendanceFragment"
+        android:label="fragment_attendance"
+        tools:layout="@layout/fragment_attendance" />
+    <fragment
+        android:id="@+id/errorsSolutionsFragment"
+        android:name="com.shiftsmart.plus.ui.fragments.errors.ErrorsSolutionsFragment"
+        android:label="fragment_errors_solutions"
+        tools:layout="@layout/fragment_errors_solutions" />
+    <fragment
+        android:id="@+id/timeSheetFragment"
+        android:name="com.shiftsmart.plus.ui.fragments.TimeSheetFragment"
+        android:label="fragment_time_sheet"
+        tools:layout="@layout/fragment_time_sheet" />
 </navigation>

@@ -1,6 +1,7 @@
 package com.shiftsmart.plus.ui.fragments
 
 import android.Manifest
+import android.app.Activity
 import android.app.Dialog
 import android.app.NotificationManager
 import android.content.Context
@@ -23,7 +24,10 @@ import android.view.ViewGroup
 import android.view.Window
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
+import androidx.core.view.GravityCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
@@ -32,6 +36,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.material.snackbar.Snackbar
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.database.DBDao
+import com.shiftsmart.plus.database.IssueModel
 import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.databinding.CustomAlertDialogBinding
@@ -45,10 +50,12 @@ import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.services.LocationTrack
+import com.shiftsmart.plus.ui.activities.MainActivity
 import com.shiftsmart.plus.utils.BatteryOptimizationContract
 import com.shiftsmart.plus.utils.ButtonActionEnum
 import com.shiftsmart.plus.utils.Constants.MY_PERMISSIONS_REQUEST_LOCATION
 import com.shiftsmart.plus.utils.Constants.MY_PERMISSIONS_REQUEST_NOTIFICATION
+import com.shiftsmart.plus.utils.FingerprintHelper
 import com.shiftsmart.plus.utils.PermissionHandler
 import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
@@ -74,7 +81,6 @@ class HomeFragment : Fragment() {
 
     private val TAG = "HomeFragment"
     private lateinit var mBinding: FragmentHomeBinding
-    private var logoutDialog: Dialog? = null  // Keep reference to avoid multiple dialogs
 
     private var mProgressDialog: Dialog? = null
     private lateinit var progressDialogBinding: LoadingDialogBinding
@@ -99,7 +105,7 @@ class HomeFragment : Fragment() {
 
     private lateinit var permissionHandler: PermissionHandler
 
-    private var btnStatus: String = "";
+    private var btnStatus: String = ""
 
     private var isSyncPressed: Boolean = false
 
@@ -112,7 +118,7 @@ class HomeFragment : Fragment() {
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
-    ): View? {
+    ): View {
         // Inflate the layout for this fragment
         mBinding = FragmentHomeBinding.inflate(inflater, container, false)
 
@@ -191,12 +197,164 @@ class HomeFragment : Fragment() {
             if (!Utils.isBatteryOptimizationOff(requireContext())) R.drawable.ic_check else R.drawable.ic_not_check
         )
 
+
+        saveIssuesinDB()
+
+
+    }
+    private suspend fun checkAndUpdateIssue(
+        key: String,
+        condition: Boolean,
+        title: String,
+        solution: String,
+        dao: DBDao
+    ) {
+        val user = SharedPref.getInstance(requireContext())?.getUser()
+
+
+        if (condition) {
+            dao.insertIssue(IssueModel(issueKey = key, userId = user?._id.toString(), issueTitle = title, solution = solution))
+        } else {
+            dao.deleteIssueByKey(key)
+        }
+    }
+
+
+    private fun saveIssuesinDB() {
+        lifecycleScope.launch {
+            checkAndUpdateIssue(
+                key = "internet_off",
+                condition = !Utils.isInternetAvailable(requireContext()),
+                title = "No signal or mobile/wifi connectivity",
+                solution = "Move to a better signal area and reopen Shift Smart+ to sync offline data.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "wifi_off",
+                condition = !wifiScanner.isWifiEnabled(),
+                title = "Wi-Fi switched off",
+                solution = "Make sure Wi-Fi is ON in settings > connections.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "mobile_data_off",
+                condition = !Utils.isMobileDataEnabled(requireContext()),
+                title = "Mobile data switched off",
+                solution = "Make sure mobile data is ON in settings > connections.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "location_off",
+                condition = !locationTrack.checkLocationPermissions(),
+                title = "Location switched off",
+                solution = "Go to Settings > Apps > Shift Smart+ > Permissions > location permission.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "notification_off",
+                condition = !Utils.isNotificationPermissionGranted(requireContext()),
+                title = "Notifications not allowed",
+                solution = "Go to Settings > Apps > Shift Smart+ > Notifications > enable all notifications.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "battery_saver_on",
+                condition = Utils.isBatterySaverOn(requireContext()),
+                title = "Battery Saver switched On",
+                solution = "Go to Settings > Battery, disable all battery savers and managers for Shift Smart+.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "battery_optimization_on",
+                condition = Utils.isBatteryOptimizationOff(requireContext()),
+                title = "App optimizer Active",
+                solution = "Go to Settings > Battery > App Standby Optimizer > Shift Smart+ > disable optimization.",
+                dao = dao
+            )
+
+//            checkAndUpdateIssue(
+//                key = "draw_over_apps_disabled",
+//                condition = !Utils.canDrawOverOtherApps(requireContext()),
+//                title = "App not running every 5min - Draw over other Apps",
+//                solution = "Go to Settings > Apps > Shift Smart+ > Advanced > enable 'Display over other apps'.",
+//                dao = dao
+//            )
+            checkAndUpdateIssue(
+                key = "background_restricted",
+                condition = Utils.isAppBackgroundRestricted(requireContext()),
+                title = "App not allowed to run in the Background",
+                solution = "Go to Settings > Apps > Shift Smart+ > Background Usage > disable 'Put unused apps to sleep'.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "auto_launch_disabled",
+                condition = !Utils.isAutoLaunchAllowed(requireContext()),
+                title = "App Auto Launch and App Secondary Launch",
+                solution = "Go to Settings > Battery > Auto Launch Management > disable for Shift Smart+.",
+                dao = dao
+            )
+
+
+            checkAndUpdateIssue(
+                key = "permissions_removed",
+                condition = Utils.isPermissionRemovedIfUnused(requireContext()), // You need to implement this check
+                title = "App not running every 5min - Remove permissions if unused",
+                solution = "Go to Settings > Apps > Shift Smart+ > Permissions > disable 'Remove permissions if unused'.",
+                dao = dao
+            )
+
+            checkAndUpdateIssue(
+                key = "screen_lock_close",
+                condition = Utils.isCloseAppAfterScreenLockEnabled(requireContext()), // Implement this check
+                title = "Close App after screen is locked",
+                solution = "Go to Settings > Battery > Close after screen lock > Shift Smart+ > disable.",
+                dao = dao
+            )
+
+
+            checkAndUpdateIssue(
+                key = "app_cache_issue",
+                condition = isAppCacheIssueDetected(requireContext()), // You need to define this condition logic
+                title = "All settings checked but still offline",
+                solution = "Go to Settings > Apps > Shift Smart+ > Storage > clear cache/data, then relogin.",
+                dao = dao
+            )
+
+            // Repeat for other issues...
+        }
+    }
+
+    fun isAppCacheIssueDetected(context: Context): Boolean {
+        // Example: Check if network is available but app data syncing is failing
+        val isNetworkAvailable = Utils.isInternetAvailable(context)
+        val isSyncError = checkLastSyncStatusFailed() // Your app logic here
+
+        return isNetworkAvailable && isSyncError
+    }
+    fun checkLastSyncStatusFailed(): Boolean {
+        // Implement your logic to check last sync status stored locally
+        // For example, check SharedPreferences flag or DB entry
+        val user=SharedPref.getInstance(requireContext())?.getUser()
+        val list=dao.getAllRecords(user?._id.toString())
+        return list.size>0
     }
 
     // This method is called once all permissions are granted
     private fun onPermissionsGranted() {
         setChecksData()
+    }
 
+    override fun onResume() {
+        super.onResume()
+        Log.i(TAG, "onResume: HomeFragment")
+        setChecksData()
     }
 
     private fun setUpProgressDialog(
@@ -214,11 +372,12 @@ class HomeFragment : Fragment() {
     }
 
     private fun setUpClickListeners() {
-        mBinding.profileBtn.setOnClickListener {
-            findNavController().navigate(R.id.action_homeFragment_to_profileFragment)
+
+        mBinding.menuBtn.setOnClickListener {
+            (activity as? MainActivity)?.toggleDrawer()
         }
-        mBinding.logoutBtn.setOnClickListener {
-            showLogoutDialog()
+        mBinding.errorsBtn.setOnClickListener {
+            findNavController().navigate(R.id.action_homeFragment_to_errorsSolutionsFragment)
         }
 
         mBinding.syncButton.setOnClickListener {
@@ -233,7 +392,7 @@ class HomeFragment : Fragment() {
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             // Step 1: Fetch all records from the database
-                            val records = dao.getAllRecords(itit?._id.toString())
+                            val records = dao.getAllRecords(itit._id.toString())
 
                             // Step 2: Convert each record into a DataRequest model
                             val listDataRequest = records.map { it.toDataRequest() }.toMutableList()
@@ -260,31 +419,78 @@ class HomeFragment : Fragment() {
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-            btnStatus = StatusEnum.arrival.name
-            setChecksData()
-
-            if (locationTrack.checkLocationPermissions()) {
-                locationTrack.stopListener()
-                locationTrack.loc = null
-                fetchLocationData()
-            } else {
-                checkandGrantLocationPermission()
+            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                // Fingerprint passed, proceed with your original code
+               arrivalButtonPressed()
             }
-
         }
+
         mBinding.departBtn.setOnClickListener {
-            btnStatus = StatusEnum.departure.name
-
-            setChecksData()
-
-            if (locationTrack.checkLocationPermissions()) {
-                locationTrack.stopListener()
-                locationTrack.loc = null
-                fetchLocationData()
-            } else {
-                checkandGrantLocationPermission()
+            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                // Fingerprint passed, proceed with your original code
+                departireButtonPressed()
             }
         }
+
+    }
+
+    private fun arrivalButtonPressed() {
+        btnStatus = StatusEnum.arrival.name
+        setChecksData()
+        if (locationTrack.checkLocationPermissions()) {
+            locationTrack.stopListener()
+            locationTrack.loc = null
+            fetchLocationData()
+        } else {
+            checkandGrantLocationPermission()
+        }
+    }
+
+    private fun departireButtonPressed() {
+        btnStatus = StatusEnum.departure.name
+        setChecksData()
+        if (locationTrack.checkLocationPermissions()) {
+            locationTrack.stopListener()
+            locationTrack.loc = null
+            fetchLocationData()
+        } else {
+            checkandGrantLocationPermission()
+        }
+    }
+
+
+    fun performActionWithFingerprintCheck(activity: FragmentActivity, context: Context, buttonActionCall: () -> Unit) {
+        if (!FingerprintHelper.isFingerprintSupported(context)) {
+            buttonActionCall()
+            return
+        }
+
+        if (!FingerprintHelper.isFingerprintEnabled(context)) {
+            Toast.makeText(context,
+                getString(R.string.fingerprint_not_enabled_in_app_settings), Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (!FingerprintHelper.isFingerprintAvailable(context)) {
+            // Show dialog to enable fingerprint in device settings
+            AlertDialog.Builder(context)
+                .setTitle(getString(R.string.fingerprint_not_enabled))
+                .setMessage(getString(R.string.please_enable_fingerprint_in_your_device_settings))
+                .setPositiveButton(getString(R.string.go_to_settings)) { _, _ ->
+                    FingerprintHelper.openSecuritySettings(context)
+                }
+                .setNegativeButton(getString(R.string.cancel)) { dialog, _ ->
+                    dialog.dismiss()  // just dismiss the dialog on cancel
+                }
+                .show()
+            return
+        }
+
+        FingerprintHelper.authenticate(
+            activity,
+            onSuccess = { buttonActionCall() },
+            onError = { err ->Utils.showSnackBar(err, mBinding.root) }
+        )
     }
 
     private fun checkandGrantLocationPermission() {
@@ -355,46 +561,7 @@ class HomeFragment : Fragment() {
         }
     }
 
-    private fun showLogoutDialog() {
-        if (logoutDialog?.isShowing == true) return  // Prevent duplicate dialog
 
-        val dialogBinding =
-            LogoutDialogBinding.inflate(LayoutInflater.from(requireContext())) // Use ViewBinding
-
-        logoutDialog = Dialog(requireContext()).apply {
-            setContentView(dialogBinding.root) // Set root view from binding
-            setCancelable(true)
-            window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-            dialogBinding.btnLogoutConfirm.setOnClickListener {
-                dismiss()  // Close dialog
-                performLogout()  // Call logout function
-            }
-
-            dialogBinding.btnCloseDialog.setOnClickListener {
-                dismiss()  // Close dialog
-            }
-
-            show()
-        }
-    }
-
-    private fun performLogout() {
-        lifecycleScope.launch {
-
-            val user = SharedPref.getInstance(requireContext())?.getUser()
-            val token = SharedPref.getInstance(requireContext())?.getToken()
-            user?.let {
-                if (Utils.isInternetAvailable(requireContext())) {
-                    mainViewModel.logoutUser(user_token = token ?: "", id = it._id ?: "")
-
-                } else {
-                    showMessage(getString(R.string.no_network_connection))
-                }
-            }
-        }
-
-    }
 
     private fun showMessage(message: String) {
 
@@ -414,7 +581,7 @@ class HomeFragment : Fragment() {
                 }
 
                 is Resource.Success -> {
-                    val attendanceResponse = resource.data as AttendaceResponseModel
+                    val attendanceResponse = resource.data
 
                     Log.i(TAG, "setUpObserver: successResponse:${attendanceResponse}")
                     CoroutineScope(Dispatchers.Main).launch {
@@ -588,7 +755,7 @@ class HomeFragment : Fragment() {
         }
     }
 
-    var isLocationFetched = false;
+    var isLocationFetched = false
 
     fun callApiData(lat: Double, lan: Double) {
         isLocationFetched = false
@@ -605,7 +772,7 @@ class HomeFragment : Fragment() {
                             WifiModel(
                                 ssid = result.SSID,
                                 bssid = result.BSSID,
-                                strength = Utils.rssiToPercentage(result.level)
+                                strength = rssiToPercentage(result.level)
                             )
                         }
                     } else {
@@ -628,7 +795,7 @@ class HomeFragment : Fragment() {
                             val randomUid = Utils.generateRandomFourDigitUuid()
                             val record = RecordModel(
                                 uuid = randomUid,
-                                user_id = itit?._id.toString(),
+                                user_id = itit._id.toString(),
                                 lat = lat,
                                 lng = lan,
                                 localTime = Utils.getCurrent24HourTime(),

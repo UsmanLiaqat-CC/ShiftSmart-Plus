@@ -13,7 +13,6 @@ appcompat = "1.7.0"
 kotlinxCoroutinesAndroid = "1.8.0"
 loggingInterceptor = "4.9.0"
 material = "1.12.0"
-activity = "1.10.0"
 constraintlayout = "2.2.0"
 navigationUiKtx = "2.8.5"
 okhttp = "4.10.0"
@@ -27,7 +26,7 @@ hiltWork = "1.1.0"
 playServicesLocation = "21.3.0"
 activityVersion = "1.10.1"
 kotlin = "2.0.0"
-
+biometric = "1.1.0"
 [libraries]
 adapter-rxjava2 = { module = "com.squareup.retrofit2:adapter-rxjava2", version.ref = "retrofit" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,9 +40,13 @@ androidx-room-testing = { module = "androidx.room:room-testing", version.ref = "
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workRuntimeKtx" }
 compiler = { module = "android.arch.persistence.room:compiler", version.ref = "compiler" }
 converter-gson = { module = "com.squareup.retrofit2:converter-gson", version.ref = "retrofit" }
-firebase-analytics-ktx = { module = "com.google.firebase:firebase-analytics-ktx" }
-
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
+firebase-crashlytics = { module = "com.google.firebase:firebase-crashlytics" }
+firebase-analytics = { module = "com.google.firebase:firebase-analytics-ktx" }
+firebase-firestore = { module = "com.google.firebase:firebase-firestore-ktx" }
+
+androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
+
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -66,6 +69,9 @@ hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hiltA
 androidx-hilt-navigation-fragment = { module = "androidx.hilt:hilt-navigation-fragment", version.ref = "hiltNavigationFragment" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activityVersion" }
+
+
+
 [plugins]
 jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 

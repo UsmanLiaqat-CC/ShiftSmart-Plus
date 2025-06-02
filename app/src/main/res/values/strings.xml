@@ -88,5 +88,36 @@
     <string name="data_sync_successfully_to_server">Data sync successfully to server</string>
     <string name="ssid">SSID:</string>
     <string name="spoor">Spoor</string>
+    <string name="attendance">Attendance</string>
+    <string name="start_date">Start Date</string>
+    <string name="end_date">End Date</string>
+    <string name="done">Done</string>
+    <string name="please_wait">Please wait...</string>
+    <string name="please_select_a_start_date">Please select a date</string>
+    <string name="please_select_an_end_date">Please select an end date</string>
+    <string name="store_not_found">Store not found</string>
+    <string name="unknown_date">Unknown Date</string>
+    <string name="unknown_time">Unknown Time</string>
+    <string name="attendace_status">Attendace Status</string>
+    <string name="coordinates">Coordinates</string>
+    <string name="no_record_found">No Records Found</string>
+    <string name="select_date">Select Date</string>
+    <string name="errors_with_solution">Errors With Solutions</string>
+    <string name="time_sheet">Time Sheet</string>
+    <string name="current_day">Current Day</string>
+    <string name="total_hours">Total Hours</string>
+    <string name="attendance_in_min">Attendance in mins</string>
+    <string name="fingerprint_auth">Fingerprint Auth</string>
+    <string name="device_doesn_t_support_fingerprint">Device doesn\'t support fingerprint</string>
+    <string name="fingerprint_not_enabled_in_app_settings">Fingerprint not enabled in app settings</string>
+    <string name="fingerprint_not_enabled">Fingerprint not enabled</string>
+    <string name="please_enable_fingerprint_in_your_device_settings">Please enable fingerprint in your device settings.</string>
+    <string name="go_to_settings">Go to Settings</string>
+    <string name="authentication_failed">Authentication failed</string>
+    <string name="fingerprint_authentication">Fingerprint Authentication</string>
+    <string name="confirm_with_fingerprint_to_continue">Confirm with fingerprint to continue</string>
+    <string name="list_of_errors">List of Errors</string>
+    <string name="app_operation_error">App Operation Error</string>
+    <string name="app_operation_issues">App Operation Issues</string>
 
 </resources>

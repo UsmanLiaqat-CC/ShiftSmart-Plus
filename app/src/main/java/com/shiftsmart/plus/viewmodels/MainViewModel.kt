@@ -8,6 +8,9 @@ import androidx.lifecycle.ViewModel
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
+import com.shiftsmart.plus.models.RecordRequest
+import com.shiftsmart.plus.models.RecordsResponseModel
+import com.shiftsmart.plus.models.TimeSheetModel
 import com.shiftsmart.plus.models.UserResponseModel
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Resource
@@ -37,9 +40,15 @@ class MainViewModel @Inject constructor(
     @ApplicationContext val application: Context,
 ):ViewModel() {
     private  val TAG = "MainViewModel"
+
     private val _sendDataResponse = MutableLiveData<Resource<AttendaceResponseModel>>()
     val sendDataResponse: LiveData<Resource<AttendaceResponseModel>> get() = _sendDataResponse
 
+    private val _timeSheetResponse = MutableLiveData<Resource<TimeSheetModel>>()
+    val timeSheetResponse: LiveData<Resource<TimeSheetModel>> get() = _timeSheetResponse
+
+    private val _attendceRecordResponse = MutableLiveData<Resource<RecordsResponseModel>>()
+    val attendceRecordResponse: LiveData<Resource<RecordsResponseModel>> get() = _attendceRecordResponse
 
     private val _loginResponse = MutableLiveData<Resource<UserResponseModel>>()
     val loginResponse: LiveData<Resource<UserResponseModel>> get() = _loginResponse
@@ -48,7 +57,9 @@ class MainViewModel @Inject constructor(
     val logoutResponse: LiveData<Resource<UserResponseModel>> get() = _logoutResponse
 
     val exceptionHandler = CoroutineExceptionHandler { coroutineContext, throwable ->
+        _attendceRecordResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
         _sendDataResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
+        _timeSheetResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
         _loginResponse.value=(Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}"))
         _logoutResponse.value=(Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}"))
         Log.v("TAG9", application.getString(R.string.exception_handled, throwable.localizedMessage))
@@ -142,6 +153,99 @@ class MainViewModel @Inject constructor(
         }
 
     }
+
+    fun getTimeSheet(userId: String) {
+
+        _timeSheetResponse.value = Resource.Loading(application.getString(R.string.please_wait))
+
+        parentScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    repository.getTimeSheet(userId)
+                }
+
+                Log.i(TAG, "getTimeSheet: response: $response")
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        val recordResponseModel = response.body()!!
+                        Log.i(TAG, "getTimeSheet: success response: $recordResponseModel")
+                        _timeSheetResponse.value = Resource.Success(recordResponseModel)
+                    } else {
+                        val errorResponse = response.parseErrorBody()
+                        Log.i(TAG, "getTimeSheet: failed response: $errorResponse --> ${response.body()}")
+                        if (errorResponse?.errors?.isNotEmpty() == true) {
+                            _timeSheetResponse.value = Resource.Error(errorResponse.errors[0].detail)
+                        } else {
+                            _timeSheetResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
+                        }
+                    }
+                }
+            } catch (exception: Exception) {
+                withContext(Dispatchers.Main) {
+                    Log.i(TAG, "getRecords: exception: $exception")
+                    val errorMessage = when (exception) {
+                        is IOException -> application.getString(R.string.network_error_please_check_your_internet_connection)
+                        is HttpException -> {
+                            when (exception.code()) {
+                                500 -> application.getString(R.string.server_error_please_try_again_later)
+                                404 -> application.getString(R.string.resource_not_found_please_check_the_url)
+                                else -> application.getString(R.string.http_error, exception.message())
+                            }
+                        }
+                        else -> application.getString(R.string.unknown_error, exception.localizedMessage)
+                    }
+                    _timeSheetResponse.value = Resource.Error(errorMessage)
+                }
+            }
+        }
+    }
+    fun getRecords(startDate: String, token: String, userId: String, page: Int = 1, limit: Int = 10) {
+        val request = RecordRequest(startDate,)
+        Log.i(TAG, "getRecords: startDate: $startDate\nToken: $token\nRequest: $request")
+
+        _attendceRecordResponse.value = Resource.Loading(application.getString(R.string.please_wait))
+
+        parentScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    repository.getRecords(userId, page, limit, request, token)
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (response.isSuccessful) {
+                        val recordResponseModel = response.body()!!
+                        Log.i(TAG, "getRecords: success response: $recordResponseModel")
+                        _attendceRecordResponse.value = Resource.Success(recordResponseModel)
+                    } else {
+                        val errorResponse = response.parseErrorBody()
+                        Log.i(TAG, "getRecords: failed response: $errorResponse --> ${response.body()}")
+                        if (errorResponse?.errors?.isNotEmpty() == true) {
+                            _attendceRecordResponse.value = Resource.Error(errorResponse.errors[0].detail)
+                        } else {
+                            _attendceRecordResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
+                        }
+                    }
+                }
+            } catch (exception: Exception) {
+                withContext(Dispatchers.Main) {
+                    Log.i(TAG, "getRecords: exception: $exception")
+                    val errorMessage = when (exception) {
+                        is IOException -> application.getString(R.string.network_error_please_check_your_internet_connection)
+                        is HttpException -> {
+                            when (exception.code()) {
+                                500 -> application.getString(R.string.server_error_please_try_again_later)
+                                404 -> application.getString(R.string.resource_not_found_please_check_the_url)
+                                else -> application.getString(R.string.http_error, exception.message())
+                            }
+                        }
+                        else -> application.getString(R.string.unknown_error, exception.localizedMessage)
+                    }
+                    _attendceRecordResponse.value = Resource.Error(errorMessage)
+                }
+            }
+        }
+    }
+
 
     fun loginUser(loginRequest: LoginRequest) {
         Log.i(TAG, "loginRequest: dataREquest: ${loginRequest}")
@@ -288,7 +392,5 @@ class MainViewModel @Inject constructor(
         }
 
     }
-
-
 
 }

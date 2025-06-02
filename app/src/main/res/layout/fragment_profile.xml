@@ -31,7 +31,7 @@
 
             app:layout_constraintEnd_toEndOf="@id/rightguidline"
             app:layout_constraintStart_toStartOf="@id/leftguidline"
-            app:layout_constraintTop_toTopOf="@id/topguidline">
+            app:layout_constraintTop_toTopOf="parent">
 
             <ImageButton
                 android:id="@+id/back_arrow"

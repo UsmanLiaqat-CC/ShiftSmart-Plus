@@ -36,4 +36,16 @@ class Converters {
         val gson = Gson()
         return gson.toJson(recordModel)
     }
+
+    @TypeConverter
+    fun toIssueModel(value: String?): IssueModel? {
+        val listType = object : TypeToken<IssueModel?>() {}.type
+        return Gson().fromJson(value, listType)
+    }
+
+    @TypeConverter
+    fun fromIssueModel(issueModel:IssueModel?): String? {
+        val gson = Gson()
+        return gson.toJson(issueModel)
+    }
 }

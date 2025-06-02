@@ -5,9 +5,7 @@ import com.google.gson.annotations.SerializedName
 
 data class UserResponseModel(
     @SerializedName("data") val data: Data?,
-
     @SerializedName("errors" ) val errors: List<ErrorDetail> ?=null,
-
 )
 
 data class Data(

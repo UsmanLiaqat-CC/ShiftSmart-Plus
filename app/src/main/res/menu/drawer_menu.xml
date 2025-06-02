@@ -1,0 +1,27 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/nav_profile"
+        android:title="@string/profile" />
+    <item
+        android:id="@+id/nav_attendance"
+        android:title="@string/attendance" />
+    <!--<item
+        android:id="@+id/nav_errors"
+        android:title="@string/errors_with_solution" />-->
+    <item
+        android:id="@+id/nav_time_sheet"
+        android:title="@string/time_sheet" />
+
+    <!-- other items -->
+    <item
+        android:id="@+id/nav_fingerprint_switch"
+        android:title="@string/fingerprint_auth"
+        android:actionLayout="@layout/menu_item_switch"
+
+        />
+    <item
+        android:id="@+id/nav_logout"
+        android:title="@string/logout" />
+
+</menu>

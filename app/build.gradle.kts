@@ -92,10 +92,11 @@ dependencies {
 
     kapt (libs.androidx.room.compiler)
     implementation (libs.androidx.room.ktx)
+
+    implementation(libs.androidx.biometric)
     // Import BoM
     implementation(platform(libs.firebase.bom))
-
-    // Firebase components without version
-    implementation("com.google.firebase:firebase-crashlytics")
-    implementation("com.google.firebase:firebase-analytics-ktx")
+    implementation(libs.firebase.crashlytics)
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.firestore)
 }

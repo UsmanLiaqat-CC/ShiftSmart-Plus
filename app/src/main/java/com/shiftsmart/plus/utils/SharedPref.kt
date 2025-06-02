@@ -14,6 +14,7 @@ class SharedPref(private val ctx: Context) {
 
     private val USER = "user"
     private val TOKEN = "token"
+    private val FINGERPRINT = "fingerprint"
     private val LAST_API_CALL_TIME = "last_api_call_time" // <-- New Key for 5-minute check
 
     // Save Token
@@ -58,6 +59,17 @@ class SharedPref(private val ctx: Context) {
     fun getLastApiCallTime(): Long {
         return sharedPreferences.getLong(LAST_API_CALL_TIME, 0L)
     }
+
+    // 🔐 Save fingerprint enable/disable state
+    fun setFingerprintEnabled(enabled: Boolean) {
+        sharedPreferences.edit().putBoolean(FINGERPRINT, enabled).apply()
+    }
+
+    // 🔐 Get fingerprint state
+    fun isFingerprintEnabled(): Boolean {
+        return sharedPreferences.getBoolean(FINGERPRINT, false)
+    }
+
 
     fun clearPrefrence() {
         sharedPreferences?.edit()?.clear()?.apply()

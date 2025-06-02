@@ -16,8 +16,7 @@ import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCalendarForShift
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
 import java.util.Calendar
-
-// Updated AlarmReceiver
+import java.util.Date
 
 class AlarmReceiver : BroadcastReceiver() {
 
@@ -29,14 +28,13 @@ class AlarmReceiver : BroadcastReceiver() {
                 "START_SERVICE" -> {
                     Log.i("AlarmReceiver", "Received START_SERVICE_ALARM")
 
-                    // Optional: Wake screen via activity (only if needed)
                     val wakeIntent = Intent(context, WakeUpActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     }
                     context.startActivity(wakeIntent)
 
                     val serviceIntent = Intent(context, MyService::class.java).apply {
-                        action = "START_SERVICE"
+                        action = MyService.ACTION_START
                     }
 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -47,73 +45,75 @@ class AlarmReceiver : BroadcastReceiver() {
 
                     Log.i("AlarmReceiver", "Foreground service started successfully")
                 }
+
                 "STOP_SERVICE" -> {
                     Log.i("AlarmReceiver", "Received STOP_SERVICE_ALARM")
                     val stopIntent = Intent(context, MyService::class.java).apply {
-                        action = "STOP_SERVICE"
+                        action = MyService.ACTION_STOP
                     }
                     context.startService(stopIntent)
                 }
-                "CHECK_SERVICE" -> {
-                    Log.i("AlarmReceiver", "Received CHECK_SERVICE")
-                    val shifts = getShiftsFromSharedPreferences(context) // Implement this function to get shifts
-                    // Proceed with the logic to handle the service start/stop only if within the shift period
-                    handleShiftPeriod(context, shifts)
-                    val stopIntent = Intent(context, MyService::class.java).apply {
-                        action = "CHECK_SERVICE"
-                    }
-                    context.startService(stopIntent)
-                }
+
                 "CALL_API" -> {
                     Log.i("AlarmReceiver", "Received CALL_API")
-                    val shifts = getShiftsFromSharedPreferences(context) // Implement this function to get shifts
-                    // Proceed with the logic to handle the service start/stop only if within the shift period
-                    handleShiftPeriod(context, shifts)
-                    val stopIntent = Intent(context, MyService::class.java).apply {
-                        action = "CALL_API"
-                    }
-                    context.startService(stopIntent)
 
-                    // Reschedule the alarm for 5 minutes later
-                    scheduleNextAlarm(context)
-                }
-                "RESTART_SERVICE" -> {
-                    Log.i("AlarmReceiver", "Received RESTART_SERVICE")
+                    val lastCallTime = SharedPref.getInstance(context)?.getLastApiCallTime()
+                    val currentTime = System.currentTimeMillis()
 
-                    val serviceIntent = Intent(context, MyService::class.java).apply {
-                        action = "START_SERVICE"
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(serviceIntent)
+                    Log.i("AlarmReceiver", "Last call: $lastCallTime, Current time: $currentTime")
+
+                    // ✅ Ensure it's a new 5-minute bucket
+                    val lastBucket = (lastCallTime ?: 0) / (5 * 60 * 1000)
+                    val currentBucket = currentTime / (5 * 60 * 1000)
+
+                    if (currentBucket != lastBucket) {
+                        val shifts = getShiftsFromSharedPreferences(context)
+                        handleShiftPeriod(context, shifts)
+
+                        val apiIntent = Intent(context, MyService::class.java).apply {
+                            action = MyService.ACTION_CALL_API
+                        }
+                        context.startService(apiIntent)
+
+                        SharedPref.getInstance(context)?.saveLastApiCallTime(currentTime)
+                        scheduleNextAlignedAlarm(context)
+
+                        Log.i("AlarmReceiver", "API call executed at $currentTime")
                     } else {
-                        context.startService(serviceIntent)
+                        Log.i("AlarmReceiver", "Same 5-minute bucket, skipping duplicate schedule.")
                     }
-
-                    // Schedule the next 5-min restart
-                    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-                    val nextIntent = Intent(context, AlarmReceiver::class.java).apply {
-                        action = "RESTART_SERVICE"
-                    }
-                    val pendingIntent = PendingIntent.getBroadcast(
-                        context,
-                        1234,
-                        nextIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    val triggerTime = System.currentTimeMillis() + 5 * 60 * 1000
-
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerTime,
-                        pendingIntent
-                    )
-
-                    Log.i("AlarmReceiver", "Next RESTART_SERVICE scheduled in 5 minutes")
                 }
 
-                // ... handle CHECK_SERVICE if needed
-            }
+                /*"CALL_API" -> {
+                    Log.i("AlarmReceiver", "Received CALL_API")
 
+                    val lastCallTime = SharedPref.getInstance(context)?.getLastApiCallTime()
+                    val currentTime = System.currentTimeMillis()
+
+                    Log.i("AlarmReceiver", "Last call: $lastCallTime, Current time: $currentTime")
+
+                    val elapsed = currentTime - (lastCallTime ?: 0)
+
+
+                    if (elapsed >= 4.9 * 60 * 1000) {
+                        val shifts = getShiftsFromSharedPreferences(context)
+                        handleShiftPeriod(context, shifts)
+
+                        val apiIntent = Intent(context, MyService::class.java).apply {
+                            action = MyService.ACTION_CALL_API
+                        }
+                        context.startService(apiIntent)
+                        SharedPref.getInstance(context)?.saveLastApiCallTime(currentTime)
+                        scheduleNextAlignedAlarm(context)
+                        Log.i("AlarmReceiver", "API call executed at $currentTime")
+                    } else {
+                        Log.i("AlarmReceiver", "Skipped API call to maintain exact 5-min interval")
+                    }
+
+                }*/
+
+                // Optionally handle CHECK_SERVICE here
+            }
 
         } catch (e: Exception) {
             Log.e("TAG", "Error in AlarmReceiver onReceive", e)
@@ -122,8 +122,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
     private fun handleShiftPeriod(context: Context, shifts: List<TimeRange>) {
         try {
-            val today = getCurrentDayName() // Get today's name (e.g., "Tuesday")
-
+            val today = getCurrentDayName()
             val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
 
             if (todayShift != null && todayShift.start != null && todayShift.end != null) {
@@ -135,13 +134,10 @@ class AlarmReceiver : BroadcastReceiver() {
                 val currentTime = Calendar.getInstance()
 
                 if (startCalendar != null && endCalendar != null) {
-                    // Check if the current time is between shift start & end
                     if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
-                        // Check if the service is running
                         if (!isServiceRunning(context)) {
-                            // If service is not running, schedule alarms
                             Log.i("TAG", "Service is not running. Scheduling alarms...")
-                            AlarmScheduler.scheduleAlarms(context, listOf(todayShift))
+                            AlarmScheduler.scheduleAlarms(context, listOf(todayShift), reschedulePeriodic = false)
                         } else {
                             Log.i("TAG", "Service is already running.")
                         }
@@ -157,56 +153,56 @@ class AlarmReceiver : BroadcastReceiver() {
         }
     }
 
-    // Helper function to check if MyService is running
     private fun isServiceRunning(context: Context): Boolean {
-        try {
+        return try {
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            val services = activityManager.getRunningServices(Int.MAX_VALUE)
-
-            // Check if MyService is running
-            for (service in services) {
-                if (MyService::class.java.name == service.service.className) {
-                    return true
-                }
+            activityManager.getRunningServices(Int.MAX_VALUE).any {
+                it.service.className == MyService::class.java.name
             }
         } catch (e: Exception) {
             Log.e("TAG", "Error checking if service is running", e)
+            false
         }
-        return false
     }
 
-    // Function to get shifts from shared preferences or another storage method
     private fun getShiftsFromSharedPreferences(context: Context): List<TimeRange> {
-        try {
-            // Retrieve shifts from SharedPreferences, database, or any other method
-            // For example:
-            return SharedPref.getInstance(context)?.getUser()?.timetable?.range ?: emptyList()
+        return try {
+            SharedPref.getInstance(context)?.getUser()?.timetable?.range ?: emptyList()
         } catch (e: Exception) {
             Log.e("TAG", "Error retrieving shifts from SharedPreferences", e)
+            emptyList()
         }
-        return emptyList()
     }
 
-    private fun scheduleNextAlarm(context: Context?) {
-
+    private fun scheduleNextAlignedAlarm(context: Context?) {
         val alarmManager = context?.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+        val now = Calendar.getInstance()
+        val currentMillis = now.timeInMillis
+
+        // Force next exact multiple of 5
+        val nextAligned = (currentMillis / (5 * 60 * 1000) + 1) * (5 * 60 * 1000)
+
         val intent = Intent(context, AlarmReceiver::class.java).apply {
             action = "CALL_API"
         }
+
+        // Cancel any existing one before scheduling again
         val pendingIntent = PendingIntent.getBroadcast(
             context,
-            1234, // Keep the same ID so it gets replaced
+            1234,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val triggerTime = System.currentTimeMillis() + 5 * 60 * 1000
+        alarmManager.cancel(pendingIntent)
 
         alarmManager.setExactAndAllowWhileIdle(
             AlarmManager.RTC_WAKEUP,
-            triggerTime,
+            nextAligned,
             pendingIntent
         )
 
-        Log.d("AlarmReceiver", "Next alarm scheduled at: $triggerTime")
+        Log.d("AlarmReceiver", "Next aligned alarm scheduled at: ${Date(nextAligned)}")
     }
+
 }
