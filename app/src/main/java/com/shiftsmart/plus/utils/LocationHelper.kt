@@ -9,6 +9,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +27,14 @@ class LocationHelper(private val context: Context) {
 
     suspend fun fetchFreshLocation(): LatLng = withContext(Dispatchers.Main) {
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+        // If permissions are not granted, try to return last known location without throwing
+        if (!hasLocationPermissions()) {
+            Log.w("LocationHelper", "Missing location permissions. Attempting last known location fallback.")
+            val lastKnown = getLastKnownLocation(locationManager)
+            return@withContext lastKnown?.let { LatLng(it.latitude, it.longitude) } ?: LatLng(0.0, 0.0)
+        }
+
         val isResumed = AtomicBoolean(false)
 
         suspendCancellableCoroutine { continuation ->
@@ -42,17 +51,24 @@ class LocationHelper(private val context: Context) {
                         continuation.resume(null)
                     }
                 }
+
                 override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
                 override fun onProviderEnabled(provider: String) {}
             }
 
-            locationManager.requestLocationUpdates(
-                LocationManager.NETWORK_PROVIDER,
-                0L,
-                0f,
-                listener,
-                Looper.getMainLooper()
-            )
+            try {
+                locationManager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    0L,
+                    0f,
+                    listener,
+                    Looper.getMainLooper()
+                )
+            } catch (e: SecurityException) {
+                Log.e("LocationHelper", "SecurityException while requesting updates: ${e.message}")
+                continuation.resume(null)
+                return@suspendCancellableCoroutine
+            }
 
             continuation.invokeOnCancellation { locationManager.removeUpdates(listener) }
 
@@ -72,35 +88,28 @@ class LocationHelper(private val context: Context) {
         } ?: LatLng(0.0, 0.0)
     }
 
+
+/*
     private fun getLastKnownLocation(locationManager: LocationManager): Location? {
         return if (hasLocationPermissions()) {
-            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
         } else null
     }
+*/
 
-    private fun hasLocationPermissions(): Boolean {
+    private fun getLastKnownLocation(locationManager: LocationManager): Location? {
+        return try {
+            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        } catch (e: SecurityException) {
+            Log.e("LocationHelper", "SecurityException in getLastKnownLocation: ${e.message}")
+            null
+        }
+    }
+
+    fun hasLocationPermissions(): Boolean {
         return ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
-    // Method to check if the required permissions are granted
-    fun checkLocationPermissions(): Boolean {
-        val fineLocationPermission = ActivityCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        )
-        val coarseLocationPermission = ActivityCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_COARSE_LOCATION
-        )
 
-        // Check for Android 14+ (if needed)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            fineLocationPermission == PackageManager.PERMISSION_GRANTED &&
-                    coarseLocationPermission == PackageManager.PERMISSION_GRANTED
-        } else {
-            // For Android versions below 13 (including 13 itself)
-            fineLocationPermission == PackageManager.PERMISSION_GRANTED &&
-                    coarseLocationPermission == PackageManager.PERMISSION_GRANTED
-        }
-
-    }
 }

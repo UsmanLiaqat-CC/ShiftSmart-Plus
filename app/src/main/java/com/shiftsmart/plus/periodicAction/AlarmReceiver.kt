@@ -84,35 +84,6 @@ class AlarmReceiver : BroadcastReceiver() {
                     }
                 }
 
-                /*"CALL_API" -> {
-                    Log.i("AlarmReceiver", "Received CALL_API")
-
-                    val lastCallTime = SharedPref.getInstance(context)?.getLastApiCallTime()
-                    val currentTime = System.currentTimeMillis()
-
-                    Log.i("AlarmReceiver", "Last call: $lastCallTime, Current time: $currentTime")
-
-                    val elapsed = currentTime - (lastCallTime ?: 0)
-
-
-                    if (elapsed >= 4.9 * 60 * 1000) {
-                        val shifts = getShiftsFromSharedPreferences(context)
-                        handleShiftPeriod(context, shifts)
-
-                        val apiIntent = Intent(context, MyService::class.java).apply {
-                            action = MyService.ACTION_CALL_API
-                        }
-                        context.startService(apiIntent)
-                        SharedPref.getInstance(context)?.saveLastApiCallTime(currentTime)
-                        scheduleNextAlignedAlarm(context)
-                        Log.i("AlarmReceiver", "API call executed at $currentTime")
-                    } else {
-                        Log.i("AlarmReceiver", "Skipped API call to maintain exact 5-min interval")
-                    }
-
-                }*/
-
-                // Optionally handle CHECK_SERVICE here
             }
 
         } catch (e: Exception) {

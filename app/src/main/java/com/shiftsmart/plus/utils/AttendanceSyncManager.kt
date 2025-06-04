@@ -12,10 +12,12 @@ import androidx.core.app.ActivityCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.gms.maps.model.LatLng
 import com.shiftsmart.plus.database.DBDao
+import com.shiftsmart.plus.database.IssueModel
 import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
+import com.shiftsmart.plus.models.ErrorModel
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
@@ -45,16 +47,24 @@ class AttendanceSyncManager @Inject constructor(
     private var lastLocation: LatLng = LatLng(0.0, 0.0)
     private val wifiScanResults = mutableListOf<WifiModel>()
     private  val TAG = "AttendanceSyncManager"
+
+
     suspend fun startSyncProcess() {
-        locationHelper.fetchFreshLocation()?.let {
-            lastLocation = it
+        if (!locationHelper.hasLocationPermissions()) {
+            Log.w(TAG, "startSyncProcess: Location permissions not granted, skipping location fetch.")
+           lastLocation= locationHelper.lastLocation
+            performApiCall()
+            return
         }
 
-        maybeTriggerApiCall()
-    }
+        try {
+            val location = locationHelper.fetchFreshLocation()
+            lastLocation = location
+            Log.d(TAG, "startSyncProcess: Location fetched: $lastLocation")
+        } catch (e: Exception) {
+            Log.e(TAG, "startSyncProcess: Failed to fetch location", e)
+        }
 
-
-    private fun maybeTriggerApiCall() {
         performApiCall()
     }
 
@@ -66,8 +76,7 @@ class AttendanceSyncManager @Inject constructor(
         if (apiCallInProgress) return
 
         apiCallInProgress = true
-//        SharedPref.getInstance(context)?.saveLastApiCallTime(System.currentTimeMillis())  // Save the current time
-     
+
         val user = SharedPref.getInstance(context)?.getUser()
         user?.let {
             val record = createRecord(it)
@@ -116,10 +125,47 @@ class AttendanceSyncManager @Inject constructor(
         }
 
     }
+
+    fun RecordModel.toDataRequest(errorsList: List<ErrorModel>? = null): DataRequest {
+        return DataRequest(
+            UUID = this.uuid,
+            user_id = this.user_id,
+            lat = this.lat,
+            lng = this.lng,
+            localTime = this.localTime,
+            time = this.time,
+            attendanceType = this.attendanceType,
+            attendanceStatus = this.attendanceStatus,
+            isForceAttendance = this.isForceAttendance,
+            isLocation = this.isLocation,
+            wifiService = this.wifiService,
+            dataService = this.dataService,
+            notification = this.notification,
+            batterySaver = this.batterySaver,
+            batteryOptimization = this.batteryOptimization,
+            wifi_list = this.wifi_list,
+            errorlogs =errorsList?: emptyList(),
+        )
+    }
+
+
+
     private suspend fun callApi(record: RecordModel, user: UserModel) {
         Log.i(TAG, "Calling API with record: ${record}\n at:${Utils.getCurrentDateTime()}")
-        val records = dao.getAllRecords(user._id.toString()).map { it.toDataRequest() }.toMutableList()
-//        records.add(record.toDataRequest())
+
+        val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
+
+        val errorList = savedIssues.map {
+            ErrorModel(
+                key = it.issueKey,
+                title = it.issueTitle,
+                solution = it.solution,
+                time = Utils.getUTCFromTimestamp(it.timestamp)
+            )
+        }
+        val records = dao.getAllRecords(user._id.toString())
+            .map { it.toDataRequest(errorList) }
+            .toMutableList()
 
         if (Utils.isInternetAvailable(context)) {
             val token = SharedPref.getInstance(context)?.getToken() ?: ""
@@ -232,26 +278,6 @@ class AttendanceSyncManager @Inject constructor(
         val duration = Duration.between(latestTime, newTime).toMinutes()
 
         return duration >= 5
-    }
-    fun RecordModel.toDataRequest(): DataRequest {
-        return DataRequest(
-            UUID = this.uuid,
-            user_id = this.user_id,
-            lat = this.lat,
-            lng = this.lng,
-            localTime = this.localTime,
-            time = this.time,
-            attendanceType = this.attendanceType,
-            attendanceStatus = this.attendanceStatus,
-            isForceAttendance = this.isForceAttendance,
-            isLocation = this.isLocation,
-            wifiService = this.wifiService,
-            dataService = this.dataService,
-            notification = this.notification,
-            batterySaver = this.batterySaver,
-            batteryOptimization = this.batteryOptimization,
-            wifi_list = this.wifi_list
-        )
     }
 
     fun setWifiList(wifiList: MutableList<WifiModel>) {

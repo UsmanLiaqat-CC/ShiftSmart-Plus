@@ -30,8 +30,9 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import java.util.UUID
-import java.util.regex.Pattern
+
+import androidx.core.content.PackageManagerCompat
+import androidx.core.content.UnusedAppRestrictionsConstants
 
 
 /**
@@ -52,75 +53,18 @@ object Utils {
         }
     }
 
-     fun isServiceRunning(context: Context,serviceClass: Class<*>): Boolean {
+    fun isServiceRunning(context: Context,serviceClass: Class<*>): Boolean {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         return activityManager.getRunningServices(Integer.MAX_VALUE).any {
             it.service.className == serviceClass.name
         }
     }
-    fun isPermissionRemovedIfUnused(context: Context): Boolean {
-        // Check foreground location permission
-        val fineLocationGranted = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        val coarseLocationGranted = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        // At least one location permission (fine or coarse) should be granted
-        val foregroundLocationGranted = fineLocationGranted || coarseLocationGranted
-
-        // Check background location permission (only relevant on Android 10+)
-        val backgroundLocationGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-
-        // Notification permission (Android 13+)
-        val notificationsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-
-        // Return true if any critical permission is missing (possibly removed if unused)
-        return !(foregroundLocationGranted && backgroundLocationGranted && notificationsGranted)
-    }
 
 
     fun isAppBackgroundRestricted(context: Context): Boolean {
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        return !powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return cm.restrictBackgroundStatus != ConnectivityManager.RESTRICT_BACKGROUND_STATUS_DISABLED
     }
-
-    fun isAutoLaunchAllowed(context: Context): Boolean {
-        val packageManager = context.packageManager
-        return try {
-            val intent = Intent()
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-            // Example for Xiaomi
-            intent.component = ComponentName(
-                "com.miui.securitycenter",
-                "com.miui.permcenter.autostart.AutoStartManagementActivity"
-            )
-            if (intent.resolveActivity(packageManager) != null) {
-                true // If intent can be resolved, assume it's allowed
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-
 
     fun showSnackBar(msg:String, view: View){
         Snackbar.make(view, msg, Snackbar.LENGTH_SHORT).show()
@@ -130,6 +74,12 @@ object Utils {
         format.timeZone = TimeZone.getTimeZone("UTC")
         return format.format(Date())
     }
+    fun getUTCFromTimestamp(timestamp: Long): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+        return sdf.format(Date(timestamp))
+    }
+
 
     fun getCurrent24HourTime(): String {
         val format = SimpleDateFormat("HH:mm", Locale.getDefault())

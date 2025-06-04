@@ -29,6 +29,14 @@ data class DataRequest(
     val batterySaver : Boolean,
     val batteryOptimization : Boolean,
     var wifi_list   : List<WifiModel> = listOf<WifiModel>(),
+    var errorlogs   : List<ErrorModel> = listOf<ErrorModel>(),
+)
+
+data class ErrorModel(
+    val key: String = "",
+    val title: String = "",
+    val solution:String="",
+    val time: String, // utc time
 )
 
 data class WifiModel(

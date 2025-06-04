@@ -16,6 +16,7 @@ import com.shiftsmart.plus.database.DBDao
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.databinding.FragmentErrorsSolutionsBinding
 import com.shiftsmart.plus.models.AppIssue
+import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -42,10 +43,10 @@ class ErrorsSolutionsFragment : Fragment() {
         AppIssue("notification_off", "Notifications not allowed", "Go to Settings > Apps > Shift Smart+ > Notifications > enable all notifications."),
         AppIssue("permissions_removed", "App not running every 5min - Remove permissions if unused", "Go to Settings > Apps > Shift Smart+ > Permissions > disable 'Remove permissions if unused'."),
 //        AppIssue("draw_over_apps_disabled", "App not running every 5min - Draw over other Apps", "Go to Settings > Apps > Shift Smart+ > Advanced > enable 'Display over other apps'."),
-        AppIssue("battery_manager_on", "Battery Manager Active", "Go to Settings > Battery > disable battery manager/saver."),
+//        AppIssue("battery_manager_on", "Battery Manager Active", "Go to Settings > Battery > disable battery manager/saver."),
         AppIssue("battery_optimization_on", "App optimizer Active", "Go to Settings > Battery > App Standby Optimizer > Shift Smart+ > disable optimization."),
-        AppIssue("screen_lock_close", "Close App after screen is locked", "Go to Settings > Battery > Close after screen lock > Shift Smart+ > disable."),
-        AppIssue("auto_launch_disabled", "App Auto Launch and App Secondary Launch", "Go to Settings > Battery > Auto Launch Management > disable for Shift Smart+."),
+//        AppIssue("screen_lock_close", "Close App after screen is locked", "Go to Settings > Battery > Close after screen lock > Shift Smart+ > disable."),
+//        AppIssue("auto_launch_disabled", "App Auto Launch and App Secondary Launch", "Go to Settings > Battery > Auto Launch Management > disable for Shift Smart+."),
         AppIssue("app_cache_issue", "All settings checked but still offline", "Go to Settings > Apps > Shift Smart+ > Storage > clear cache/data, then relogin."),
         AppIssue("internet_off", "No signal or mobile/wifi connectivity", "Move to a better signal area and reopen Shift Smart+ to sync offline data.")
     )
@@ -59,8 +60,8 @@ class ErrorsSolutionsFragment : Fragment() {
         mBinding = FragmentErrorsSolutionsBinding.inflate(inflater, container, false)
         dao = db.dbDao()
 
-//        setupRecyclerView()
-//        loadIssuesFromDbAndUpdateUI()
+        setupRecyclerView()
+        loadIssuesFromDbAndUpdateUI()
 
         mBinding.backArrow.setOnClickListener {
             findNavController().navigateUp()
@@ -75,11 +76,10 @@ class ErrorsSolutionsFragment : Fragment() {
         mBinding.errorsRecyclerview.adapter = adapter
     }
 
-
-
     private fun loadIssuesFromDbAndUpdateUI() {
         lifecycleScope.launch {
-            val savedIssues = dao.getAllIssues() // List<IssueEntity>
+            val user=SharedPref.getInstance(requireContext())?.getUser()
+            val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
             val savedKeys = savedIssues.map { it.issueKey }
 
             val updatedIssues = issueList.map { issue ->

@@ -92,6 +92,8 @@ dependencies {
 
     kapt (libs.androidx.room.compiler)
     implementation (libs.androidx.room.ktx)
+    implementation(libs.androidx.core)
+    implementation(libs.kotlinx.coroutines.guava)
 
     implementation(libs.androidx.biometric)
     // Import BoM

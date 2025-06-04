@@ -344,6 +344,8 @@ class MainViewModel @Inject constructor(
                     repository.logout(user_id = id,token=user_token)
                 }
 
+                Log.i(TAG, "logoutUser: logoutResponse:${response}");
+
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful)
                     {

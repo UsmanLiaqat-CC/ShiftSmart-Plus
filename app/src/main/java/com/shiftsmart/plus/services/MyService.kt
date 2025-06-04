@@ -178,28 +178,6 @@ class MyService : Service() {
         }
     }
 
-    private fun scheduleRestartAlarm() {
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(this, AlarmReceiver::class.java).apply {
-            action = "RESTART_SERVICE"
-        }
-        val pendingIntent = PendingIntent.getBroadcast(
-            this,
-            1234,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val triggerTime = System.currentTimeMillis() + 5 * 60 * 1000 // 5 minutes
-        alarmManager.setExactAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            triggerTime,
-            pendingIntent
-        )
-
-        Log.i("MyService", "Restart alarm scheduled after 5 minutes")
-    }
-
 
     // Public method to trigger finishAllData from other components
     fun finishServiceOperations() {
@@ -399,21 +377,24 @@ class MyService : Service() {
     }
 
     private fun startLocationFetch() {
+        if (!locationHelper.hasLocationPermissions()) {
+            Log.w(TAG, "MrXXX: Location permission not granted — skipping location fetch")
+            maybeTriggerApiCall()
+            return
+        }
+
         serviceScope.launch {
             try {
                 val freshLatLng = locationHelper.fetchFreshLocation()
-
                 Log.i(TAG, "MrXXX: Fresh location obtained: ${freshLatLng.latitude}, ${freshLatLng.longitude} at: ${Utils.getCurrentDateTime()}")
-
                 maybeTriggerApiCall()
-
             } catch (e: Exception) {
-                maybeTriggerApiCall()
                 Log.e(TAG, "MrXXX: Failed to fetch location", e)
-
+                maybeTriggerApiCall()
             }
         }
     }
+
 
 
 
@@ -425,19 +406,19 @@ class MyService : Service() {
 
     private fun handleServiceStart() {
         Log.i(TAG, "Starting service")
-        saveDataToFirestore("Start")
+
         startForegroundService()
     }
 
     private fun handleServiceStop() {
         Log.i(TAG, "Stopping service")
-        saveDataToFirestore("Stop")
+
 
         finishServiceOperations()
     }
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun handleServiceRestart() {
-        saveDataToFirestore("Restart")
+
 
         Log.i(TAG, "Restarting service")
         if (!isServiceRunning) {
@@ -500,35 +481,10 @@ class MyService : Service() {
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun handleRegularStart() {
 
-        saveDataToFirestore("RegularStart")
 
         startForegroundService()
         startWifiScanning()
         checkShiftAndScheduleTasks()
-    }
-
-    private fun saveDataToFirestore(action: String) {
-
-
-        val user = SharedPref.getInstance(this)?.getUser()
-
-// Format current device time as ID (e.g., "2024-05-14_15-42-10")
-        val sdf = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
-        val currentTime = Date()
-        val docId = sdf.format(currentTime)
-
-        val docRef = FirebaseFirestore.getInstance().collection("service")
-            .document(user?._id.toString())
-            .collection("actions")
-            .document(docId)
-        val data = hashMapOf(
-            "action" to action,
-            "timestamp" to docId,
-            "createdAt" to FieldValue.serverTimestamp()
-        )
-
-        docRef.set(data)
-
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -547,16 +503,9 @@ class MyService : Service() {
             )
             alarmManager.cancel(pendingIntent)
 
-            // Release resources
             releaseWakeLock()
             unregisterReceivers()
-            // Schedule restart if needed
-           /* if (shouldRunCheck()) {
-                val restartIntent = Intent("RESTART_SERVICE").apply {
-                    `package` = packageName
-                }
-                sendBroadcast(restartIntent)
-            }*/
+
         } catch (e: Exception) {
             Log.e(TAG, "Error during onDestroy", e)
         }

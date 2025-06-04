@@ -3,6 +3,8 @@ package com.shiftsmart.plus.ui.activities
 import android.Manifest
 import android.app.AlarmManager
 import android.app.Dialog
+import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -29,18 +31,24 @@ import androidx.lifecycle.lifecycleScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.findNavController
 import androidx.navigation.fragment.findNavController
+import com.google.android.material.snackbar.Snackbar
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.ActivityMainBinding
+import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.databinding.LogoutDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.FingerprintHelper
+import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
+import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import java.util.Locale
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -53,6 +61,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mBinding:ActivityMainBinding
     private var logoutDialog: Dialog? = null  // Keep reference to avoid multiple dialogs
 
+    @Inject
+    lateinit var locationTrack: LocationTrack
+    private var mProgressDialog: Dialog? = null
+    private lateinit var progressDialogBinding: LoadingDialogBinding
     val mainViewModel: MainViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,9 +75,17 @@ class MainActivity : AppCompatActivity() {
         drawerLayout = mBinding.drawerLayout
         Log.i(TAG, "onCreate: Activity created")
 
-        // Check if the app has the necessary location permissions
-        checkPermissionsAndStartService()
+        startPermissionAction()
+        setupDrawer()
+        setUpProgressDialog()
 
+        setupObserver()
+
+    }
+
+
+    private fun startPermissionAction(){
+        checkPermissionsAndStartService()
         // Step 2: Check if battery optimization needs to be ignored
         if (!isIgnoringBatteryOptimizations()) {
             Log.i(TAG, "onCreate: Requesting to ignore battery optimizations")
@@ -85,9 +105,89 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
 
-        setupDrawer()
 
+
+    private fun setUpProgressDialog(
+    ) {
+        if (mProgressDialog != null && mProgressDialog!!.isShowing) {
+            return
+        }
+        val inflater = LayoutInflater.from(this)
+        progressDialogBinding = LoadingDialogBinding.inflate(inflater)
+        mProgressDialog = Dialog(this)
+        mProgressDialog?.setContentView(progressDialogBinding.root)
+        mProgressDialog?.setCancelable(false)
+        mProgressDialog?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+    }
+    fun showProgressDialog(message: String) {
+        progressDialogBinding.titleTv.text = message
+        if (mProgressDialog != null && mProgressDialog?.isShowing == false) {
+            mProgressDialog?.show()
+        }
+    }
+
+
+    fun dismissProgressDialog() {
+        if (mProgressDialog != null && mProgressDialog?.isShowing == true) {
+            mProgressDialog?.dismiss()
+        }
+    }
+
+    private fun setupObserver() {
+        mainViewModel.logoutResponse.observe(this) { resource ->
+            when (resource) {
+                is Resource.Loading -> {
+                    showProgressDialog(resource.message)
+                }
+
+                is Resource.Success -> {
+
+                    Utils.showSnackBar(getString(R.string.logout_successfully), mBinding.root)
+                    dismissProgressDialog()
+                    deleteUserDataAndLogout()
+                }
+
+                is Resource.Error -> {
+                    dismissProgressDialog()
+                    Log.i(TAG, "setUpObserver: error:${resource.message}")
+
+                    if (resource.message == getString(R.string.unauthorize)) {
+                        deleteUserDataAndLogout()
+                    } else {
+                        showSnackBarMessage(resource.message)
+                    }
+
+                }
+
+                else -> {}
+            }
+        }
+    }
+
+
+
+    private fun showSnackBarMessage(message: String) {
+        Snackbar.make(mBinding.root, message, Snackbar.LENGTH_SHORT).show()
+    }
+
+    private fun deleteUserDataAndLogout() {
+
+        lifecycleScope.launch {
+            locationTrack.stopListener()
+            if (isServiceRunning(this@MainActivity, MyService::class.java)) {
+                // Clear Notifications
+                val notificationManager =this@MainActivity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.cancelAll()
+                Log.i("Service", "Service is running. Stopping it now.")
+               this@MainActivity.stopService(Intent(this@MainActivity, MyService::class.java))
+            }
+            SharedPref.getInstance(this@MainActivity)?.clearPrefrence()
+            val navController = findNavController(R.id.nav_host_fragment)
+            navController.navigate(R.id.loginFragment)
+        }
     }
 
     private fun setupDrawer() {

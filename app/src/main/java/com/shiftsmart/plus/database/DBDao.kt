@@ -43,7 +43,7 @@ interface DBDao {
     @Query("DELETE FROM issues WHERE issueKey = :key")
     suspend fun deleteIssueByKey(key: String)
 
-    @Query("SELECT * FROM issues")
-    suspend fun getAllIssues(): List<IssueModel>
+    @Query("SELECT * FROM issues WHERE userId = :uId ORDER BY timestamp ASC")
+    suspend fun getAllIssues(uId: String): List<IssueModel>
 
 }

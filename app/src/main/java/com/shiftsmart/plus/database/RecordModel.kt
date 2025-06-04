@@ -32,5 +32,6 @@ data class RecordModel(
     val batterySaver: Boolean,
     val batteryOptimization: Boolean,
     var wifi_list: List<WifiModel> = listOf<WifiModel>(),
+
 )
 

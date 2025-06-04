@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.location.Location
 import android.location.LocationManager
+import android.net.ConnectivityManager
 import android.net.wifi.ScanResult
 import android.os.Build
 import android.os.Bundle
@@ -26,6 +27,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
+
 import androidx.core.view.GravityCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.viewModels
@@ -46,6 +48,7 @@ import com.shiftsmart.plus.databinding.LogoutDialogBinding
 import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
+import com.shiftsmart.plus.models.ErrorModel
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.repository.MainRepository
@@ -74,6 +77,9 @@ import java.time.Duration
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
+import androidx.core.content.PackageManagerCompat
+import androidx.core.content.UnusedAppRestrictionsConstants
+import kotlinx.coroutines.guava.await  // <-- Add this import
 
 @AndroidEntryPoint
 class HomeFragment : Fragment() {
@@ -211,7 +217,6 @@ class HomeFragment : Fragment() {
     ) {
         val user = SharedPref.getInstance(requireContext())?.getUser()
 
-
         if (condition) {
             dao.insertIssue(IssueModel(issueKey = key, userId = user?._id.toString(), issueTitle = title, solution = solution))
         } else {
@@ -278,13 +283,7 @@ class HomeFragment : Fragment() {
                 dao = dao
             )
 
-//            checkAndUpdateIssue(
-//                key = "draw_over_apps_disabled",
-//                condition = !Utils.canDrawOverOtherApps(requireContext()),
-//                title = "App not running every 5min - Draw over other Apps",
-//                solution = "Go to Settings > Apps > Shift Smart+ > Advanced > enable 'Display over other apps'.",
-//                dao = dao
-//            )
+
             checkAndUpdateIssue(
                 key = "background_restricted",
                 condition = Utils.isAppBackgroundRestricted(requireContext()),
@@ -293,22 +292,20 @@ class HomeFragment : Fragment() {
                 dao = dao
             )
 
-            checkAndUpdateIssue(
-                key = "auto_launch_disabled",
-                condition = !Utils.isAutoLaunchAllowed(requireContext()),
-                title = "App Auto Launch and App Secondary Launch",
-                solution = "Go to Settings > Battery > Auto Launch Management > disable for Shift Smart+.",
-                dao = dao
-            )
 
+            lifecycleScope.launch {
+                val disabled = isAutoPauseDisabled(requireContext())
+                Log.d("AutoRevoke", if (disabled) "Pause app activity is DISABLED" else "ENABLED")
 
-            checkAndUpdateIssue(
-                key = "permissions_removed",
-                condition = Utils.isPermissionRemovedIfUnused(requireContext()), // You need to implement this check
-                title = "App not running every 5min - Remove permissions if unused",
-                solution = "Go to Settings > Apps > Shift Smart+ > Permissions > disable 'Remove permissions if unused'.",
-                dao = dao
-            )
+                checkAndUpdateIssue(
+                    key = "permissions_removed",
+                    condition =disabled, // You need to implement this check
+                    title = "App not running every 5min - Remove permissions if unused",
+                    solution = "Go to Settings > Apps > Shift Smart+ > Permissions > disable 'Remove permissions if unused'.",
+                    dao = dao
+                )
+            }
+
 
             checkAndUpdateIssue(
                 key = "screen_lock_close",
@@ -318,32 +315,56 @@ class HomeFragment : Fragment() {
                 dao = dao
             )
 
+            lifecycleScope.launch {
+                val isCacheIssue = isAppCacheIssueDetected(requireContext(), dao)
 
-            checkAndUpdateIssue(
-                key = "app_cache_issue",
-                condition = isAppCacheIssueDetected(requireContext()), // You need to define this condition logic
-                title = "All settings checked but still offline",
-                solution = "Go to Settings > Apps > Shift Smart+ > Storage > clear cache/data, then relogin.",
-                dao = dao
-            )
+                checkAndUpdateIssue(
+                    key = "app_cache_issue",
+                    condition = isCacheIssue,
+                    title = "All settings checked but still offline",
+                    solution = "Go to Settings > Apps > Shift Smart+ > Storage > clear cache/data, then relogin.",
+                    dao = dao
+                )
+            }
 
             // Repeat for other issues...
         }
     }
 
-    fun isAppCacheIssueDetected(context: Context): Boolean {
-        // Example: Check if network is available but app data syncing is failing
-        val isNetworkAvailable = Utils.isInternetAvailable(context)
-        val isSyncError = checkLastSyncStatusFailed() // Your app logic here
+    suspend fun   isAutoPauseDisabled(context: Context): Boolean {
+        // Await the ListenableFuture inside the coroutine
+        val status: Int = withContext(Dispatchers.Default) {
+            PackageManagerCompat.getUnusedAppRestrictionsStatus(context).await()
+        }
 
-        return isNetworkAvailable && isSyncError
+        return when (status) {
+            UnusedAppRestrictionsConstants.DISABLED -> true  // User has disabled auto-pause
+            UnusedAppRestrictionsConstants.API_30,
+            UnusedAppRestrictionsConstants.API_30_BACKPORT,
+            UnusedAppRestrictionsConstants.API_31 -> false // Feature enabled
+            else -> true // Treat errors or unknown as disabled
+        }
     }
-    fun checkLastSyncStatusFailed(): Boolean {
-        // Implement your logic to check last sync status stored locally
-        // For example, check SharedPreferences flag or DB entry
-        val user=SharedPref.getInstance(requireContext())?.getUser()
-        val list=dao.getAllRecords(user?._id.toString())
-        return list.size>0
+
+    suspend fun isAppCacheIssueDetected(context: Context, dao: DBDao): Boolean {
+        val user = SharedPref.getInstance(context)?.getUser() ?: return false
+
+        return withContext(Dispatchers.IO) {
+            val issues = dao.getAllIssues(user._id.toString())
+
+            val requiredKeys = setOf(
+                "battery_saver_on",
+                "location_off",
+                "internet_off",
+                "background_restricted",
+                "notification_off",
+                "permissions_removed",
+                "battery_optimization_on"
+            )
+
+            val issueKeys = issues.map { it.issueKey }.toSet()
+            requiredKeys.all { issueKeys.contains(it) }
+        }
     }
 
     // This method is called once all permissions are granted
@@ -392,12 +413,21 @@ class HomeFragment : Fragment() {
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             // Step 1: Fetch all records from the database
-                            val records = dao.getAllRecords(itit._id.toString())
 
-                            // Step 2: Convert each record into a DataRequest model
-                            val listDataRequest = records.map { it.toDataRequest() }.toMutableList()
-                            // Step 4: Log the final list
-                            // Step 5: Get the auth token
+                            val savedIssues = dao.getAllIssues(itit?._id.toString()) // List<IssueEntity>
+
+                            val errorList = savedIssues.map {
+                                ErrorModel(
+                                    key = it.issueKey,
+                                    title = it.issueTitle,
+                                    solution = it.solution,
+                                    time = Utils.getUTCFromTimestamp(it.timestamp)
+                                )
+                            }
+                            val listDataRequest = dao.getAllRecords(user._id.toString())
+                                .map { it.toDataRequest(errorList) }
+                                .toMutableList()
+
                             val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
                             Log.i(TAG, "callApiData: listDataRequest token: ${token}")
                             Log.i(TAG, "callApiData: listDataRequest after adding object: ${listDataRequest}")
@@ -569,10 +599,6 @@ class HomeFragment : Fragment() {
 
     }
 
-    private fun showSnackBarMessage(message: String) {
-        Snackbar.make(mBinding.statusTv, message, Snackbar.LENGTH_SHORT).show()
-    }
-
     private fun setUpObserver() {
         mainViewModel.sendDataResponse.observe(viewLifecycleOwner) { resource ->
             when (resource) {
@@ -645,35 +671,7 @@ class HomeFragment : Fragment() {
                 else -> {}
             }
         }
-        mainViewModel.logoutResponse.observe(viewLifecycleOwner) { resource ->
-            when (resource) {
-                is Resource.Loading -> {
-                    showProgressDialog(resource.message)
-                }
 
-                is Resource.Success -> {
-
-                    Utils.showSnackBar(getString(R.string.logout_successfully), mBinding.root)
-
-                    dismissProgressDialog()
-                    deleteUserDataAndLogout()
-                }
-
-                is Resource.Error -> {
-                    dismissProgressDialog()
-                    Log.i(TAG, "setUpObserver: error:${resource.message}")
-
-                    if (resource.message == getString(R.string.unauthorize)) {
-                        deleteUserDataAndLogout()
-                    } else {
-                        showSnackBarMessage(resource.message)
-                    }
-
-                }
-
-                else -> {}
-            }
-        }
     }
 
     fun showProgressDialog(message: String) {
@@ -700,7 +698,6 @@ class HomeFragment : Fragment() {
 
         lifecycleScope.launch {
             locationTrack.stopListener()
-//            dao.deleteAllRecords()
             if (isServiceRunning(requireContext(), MyService::class.java)) {
                 // Clear Notifications
                 val notificationManager = requireActivity().getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -817,17 +814,28 @@ class HomeFragment : Fragment() {
                                 updateProgressDialogMessage(getString(R.string.saving_datato_server))
                                 CoroutineScope(Dispatchers.IO).launch {
                                     try {
-                                        // Fetch records from DB
-                                        val records = dao.getAllRecords(itit._id)
-                                        val listDataRequest =
-                                            records.map { it.toDataRequest() }.toMutableList()
 
-                                        listDataRequest.add(record.toDataRequest())
+                                        val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
+
+                                        val errorList = savedIssues.map {
+                                            ErrorModel(
+                                                key = it.issueKey,
+                                                title = it.issueTitle,
+                                                solution = it.solution,
+                                                time = Utils.getUTCFromTimestamp(it.timestamp)
+                                            )
+                                        }
+
+                                        Log.i(TAG, "callApiDataTEstError: errorList:${errorList.size}")
+                                        val listDataRequest = dao.getAllRecords(user._id.toString())
+                                            .map { it.toDataRequest(errorList) }
+                                            .toMutableList()
+
+                                        listDataRequest.add(record.toDataRequest(errorList))
+                                        Log.i(TAG, "callApiDataTEstError: listDataRequest:${listDataRequest}")
 
                                         val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
-                                        withContext(Dispatchers.Main) {
-                                            mainViewModel.sendAppData(listDataRequest, token)
-                                        }
+                                        withContext(Dispatchers.Main) { mainViewModel.sendAppData(listDataRequest, token) }
                                     } catch (e: Exception) {
                                         dismissProgressDialog()
                                         Log.e(TAG, "Error fetching records: ${e.message}")
@@ -1031,7 +1039,7 @@ class HomeFragment : Fragment() {
         }
     }
 
-    fun RecordModel.toDataRequest(): DataRequest {
+    fun RecordModel.toDataRequest(errorsList: List<ErrorModel>? = null): DataRequest {
         return DataRequest(
             UUID = this.uuid,
             user_id = this.user_id,
@@ -1048,7 +1056,8 @@ class HomeFragment : Fragment() {
             notification = this.notification,
             batterySaver = this.batterySaver,
             batteryOptimization = this.batteryOptimization,
-            wifi_list = this.wifi_list
+            wifi_list = this.wifi_list,
+            errorlogs =errorsList?: emptyList(),
         )
     }
 
