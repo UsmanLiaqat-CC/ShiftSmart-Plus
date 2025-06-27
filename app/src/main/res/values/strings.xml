@@ -119,5 +119,15 @@
     <string name="list_of_errors">List of Errors</string>
     <string name="app_operation_error">App Operation Error</string>
     <string name="app_operation_issues">App Operation Issues</string>
+    <string name="my_shifts">My Shifts</string>
+    <string name="shift_timetabel_default">Shift TimeTabel(Default)</string>
+    <string name="monday">Monday:</string>
+    <string name="tuesday">Tuesday:</string>
+    <string name="wednesday">Wednesday:</string>
+    <string name="thursday">Thursday:</string>
+    <string name="fiday">Friday:</string>
+    <string name="saturday">Saturday:</string>
+    <string name="sunday">Sunday:</string>
+    <string name="up_coming_shifts">UpComing Shifts</string>
 
 </resources>

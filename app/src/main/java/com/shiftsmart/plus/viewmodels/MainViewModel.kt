@@ -11,6 +11,8 @@ import com.shiftsmart.plus.models.DataRequest
 import com.shiftsmart.plus.models.RecordRequest
 import com.shiftsmart.plus.models.RecordsResponseModel
 import com.shiftsmart.plus.models.TimeSheetModel
+import com.shiftsmart.plus.models.UserDetailsResponseModel
+import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.UserResponseModel
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Resource
@@ -53,14 +55,18 @@ class MainViewModel @Inject constructor(
     private val _loginResponse = MutableLiveData<Resource<UserResponseModel>>()
     val loginResponse: LiveData<Resource<UserResponseModel>> get() = _loginResponse
 
-    private val _logoutResponse = MutableLiveData<Resource<UserResponseModel>>()
-    val logoutResponse: LiveData<Resource<UserResponseModel>> get() = _logoutResponse
+    private val _userDetailsResponse = MutableLiveData<Resource<UserModel>>()
+    val userDetailsResponse: LiveData<Resource<UserModel>> get() = _userDetailsResponse
+
+    private val _logoutResponse = MutableLiveData<Resource<UserModel>>()
+    val logoutResponse: LiveData<Resource<UserModel>> get() = _logoutResponse
 
     val exceptionHandler = CoroutineExceptionHandler { coroutineContext, throwable ->
         _attendceRecordResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
         _sendDataResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
         _timeSheetResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
         _loginResponse.value=(Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}"))
+        _userDetailsResponse.value=(Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}"))
         _logoutResponse.value=(Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}"))
         Log.v("TAG9", application.getString(R.string.exception_handled, throwable.localizedMessage))
     }
@@ -258,12 +264,13 @@ class MainViewModel @Inject constructor(
                     repository.loginUser(loginRequest = loginRequest)
                 }
 
-                Log.i(TAG, "loginUser: url:${response}")
 
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful)
                     {
                         val userResponseModel=response.body()
+                        Log.i(TAG, "loginUser: userResponseModel:${userResponseModel}")
+
                         if (userResponseModel?.errors?.isNotEmpty()==true)
                         {
                             if (userResponseModel.errors[0].code==401 ||userResponseModel.errors[0].code==422)
@@ -349,13 +356,19 @@ class MainViewModel @Inject constructor(
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful)
                     {
-                        val userResponseModel=response.body() as UserResponseModel
+//                        val userResponseModel=response.body() as UserModel
+//                        _logoutResponse.value=(Resource.Success(userResponseModel))
+//
 
-                        if (userResponseModel.errors?.isNotEmpty()==true)
-                        {
-                            _logoutResponse.value=(Resource.Error(userResponseModel.errors[0].detail))
-                        }else{
-                            _logoutResponse.value=(Resource.Success(userResponseModel))
+                        val responseModel = response.body() // UserDetailsResponseModel?
+                        val userModel = responseModel?.data // UserModel?
+
+                        if (userModel != null) {
+                            Log.i(TAG, "userDetails: success: $userModel")
+                            _logoutResponse.value = Resource.Success(userModel)
+                        } else {
+                            Log.w(TAG, "userDetails: response success but data is null")
+                            _logoutResponse.value = Resource.Error("User data is missing.")
                         }
                     } else {
 
@@ -389,6 +402,68 @@ class MainViewModel @Inject constructor(
                         )
                     }
                     _logoutResponse.value = Resource.Error(errorMessage)
+                }
+            }
+        }
+
+    }
+
+    fun userDetails(id: String,user_token:String) {
+        Log.i(TAG, "userDetails:: id:${id}\nuser_token:${user_token}")
+
+        _userDetailsResponse.value=(Resource.Loading(application.getString(R.string.please_wait)))
+
+        parentScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    repository.getUserById(user_id = id,token=user_token)
+                }
+
+                withContext(Dispatchers.Main) {
+
+                    if (response.isSuccessful) {
+                        val responseModel = response.body() // UserDetailsResponseModel?
+                        val userModel = responseModel?.data // UserModel?
+
+                        if (userModel != null) {
+                            Log.i(TAG, "userDetails: success: $userModel")
+                            _userDetailsResponse.value = Resource.Success(userModel)
+                        } else {
+                            Log.w(TAG, "userDetails: response success but data is null")
+                            _userDetailsResponse.value = Resource.Error("User data is missing.")
+                        }
+                    } else {
+                        val errorResponse = response.parseErrorBody()
+                        if (errorResponse != null && errorResponse.errors?.isNotEmpty() == true) {
+                            _userDetailsResponse.value = Resource.Error(errorResponse.errors[0].detail)
+                        } else {
+                            _userDetailsResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
+                        }
+                    }
+
+
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    val errorMessage = when (e) {
+                        is IOException -> application.getString(R.string.network_error_please_check_your_internet_connection)
+                        is HttpException -> {
+                            val code = e.code()
+                            when (code) {
+                                500 -> application.getString(R.string.server_error_please_try_again_later)
+                                404 -> application.getString(R.string.resource_not_found_please_check_the_url)
+                                else -> application.getString(
+                                    R.string.http_error,
+                                    e.message()
+                                )
+                            }
+                        }
+                        else -> application.getString(
+                            R.string.unknown_error,
+                            e.localizedMessage
+                        )
+                    }
+                    _userDetailsResponse.value = Resource.Error(errorMessage)
                 }
             }
         }

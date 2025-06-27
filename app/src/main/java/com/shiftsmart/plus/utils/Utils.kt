@@ -8,6 +8,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -17,6 +18,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.widget.TextView
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.getSystemService
@@ -33,6 +35,8 @@ import java.util.TimeZone
 
 import androidx.core.content.PackageManagerCompat
 import androidx.core.content.UnusedAppRestrictionsConstants
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 
 /**
@@ -42,7 +46,30 @@ import androidx.core.content.UnusedAppRestrictionsConstants
  * Lahore, Pakistan.
  */
 object Utils {
+    fun String.toLocalDate(): LocalDate {
+        val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+        return LocalDate.parse(this, formatter)
+    }
 
+
+    fun isGpsAndPermissionEnabled(context: Context): Boolean {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val isGpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+
+        val fineLocationPermission = ActivityCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        )
+        val coarseLocationPermission = ActivityCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+
+        val isPermissionGranted = fineLocationPermission == PackageManager.PERMISSION_GRANTED ||
+                coarseLocationPermission == PackageManager.PERMISSION_GRANTED
+
+        // ✅ Return TRUE only if BOTH are enabled
+        return isGpsEnabled && isPermissionGranted
+    }
 
     fun isCloseAppAfterScreenLockEnabled(context: Context): Boolean {
         return try {

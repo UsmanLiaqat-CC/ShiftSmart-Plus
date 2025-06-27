@@ -13,12 +13,8 @@ data class Data(
     @SerializedName("accessToken") val accessToken: String?,
 )
 
-
-
-data class ErrorDetail(
-    val title: String,
-    val detail: String,
-    val code: Int
+data class UserDetailsResponseModel(
+    @SerializedName("data") val data: UserModel?
 )
 
 data class UserModel(
@@ -40,6 +36,8 @@ data class UserModel(
     val area: List<Area>,
     val district: List<District>,
     val timetable: TimeTable?,
+    val multipleTimeTables: List<MultipleTimeTable>?,
+
     val store: List<Store>,
     val role: List<Role>,
     val isActive: Boolean,
@@ -52,6 +50,14 @@ data class UserModel(
     val lastSeen: String?,
     val days: List<Day>
 )
+
+data class ErrorDetail(
+    val title: String,
+    val detail: String,
+    val code: Int
+)
+
+
 
 data class Manager(
     val _id: String,
@@ -88,6 +94,12 @@ data class TimeTable(
     val createdAt: String,
     val updatedAt: String,
     val __v: Int
+)
+data class MultipleTimeTable(
+    val startDate: String,
+    val endDate: String,
+    val timetable: TimeTable,
+    val _id: String
 )
 
 data class TimeRange(

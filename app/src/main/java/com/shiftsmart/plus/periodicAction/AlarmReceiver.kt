@@ -9,12 +9,15 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import com.shiftsmart.plus.models.TimeRange
+import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.ui.activities.WakeUpActivity
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCalendarForShift
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
+import com.shiftsmart.plus.utils.Utils.toLocalDate
+import java.time.LocalDate
 import java.util.Calendar
 import java.util.Date
 
@@ -67,8 +70,11 @@ class AlarmReceiver : BroadcastReceiver() {
                     val currentBucket = currentTime / (5 * 60 * 1000)
 
                     if (currentBucket != lastBucket) {
-                        val shifts = getShiftsFromSharedPreferences(context)
-                        handleShiftPeriod(context, shifts)
+//                        val shifts = getShiftsFromSharedPreferences(context)
+
+                        val user= SharedPref.getInstance(context)?.getUser()
+
+                        user?.let { handleShiftPeriod(context, it) }
 
                         val apiIntent = Intent(context, MyService::class.java).apply {
                             action = MyService.ACTION_CALL_API
@@ -90,11 +96,25 @@ class AlarmReceiver : BroadcastReceiver() {
             Log.e("TAG", "Error in AlarmReceiver onReceive", e)
         }
     }
-
-    private fun handleShiftPeriod(context: Context, shifts: List<TimeRange>) {
+    private fun handleShiftPeriod(
+        context: Context,
+        user: UserModel
+    ) {
         try {
             val today = getCurrentDayName()
-            val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
+            val currentDate = LocalDate.now()
+
+            // Step 1: Check for an active multipleTimeTable
+            val activeMultiTable = user.multipleTimeTables?.find { mt ->
+                val start = mt.startDate.toLocalDate()
+                val end = mt.endDate.toLocalDate()
+                currentDate in start..end
+            }
+
+            // Step 2: Select the appropriate shift range
+            val effectiveShifts = activeMultiTable?.timetable?.range ?: user.timetable?.range.orEmpty()
+
+            val todayShift = effectiveShifts.find { it.day.equals(today, ignoreCase = true) }
 
             if (todayShift != null && todayShift.start != null && todayShift.end != null) {
                 Log.i("TAG", "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
@@ -108,7 +128,8 @@ class AlarmReceiver : BroadcastReceiver() {
                     if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
                         if (!isServiceRunning(context)) {
                             Log.i("TAG", "Service is not running. Scheduling alarms...")
-                            AlarmScheduler.scheduleAlarms(context, listOf(todayShift), reschedulePeriodic = false)
+                            // Only schedule for today's shift
+                            AlarmScheduler.scheduleAlarms(context, listOf(todayShift),user.multipleTimeTables!!, reschedulePeriodic = false)
                         } else {
                             Log.i("TAG", "Service is already running.")
                         }
@@ -123,6 +144,45 @@ class AlarmReceiver : BroadcastReceiver() {
             Log.e("TAG", "Error in handleShiftPeriod", e)
         }
     }
+
+
+
+    /*    private fun handleShiftPeriod(
+            context: Context,
+            shifts: List<TimeRange>
+        ) {
+            try {
+                val today = getCurrentDayName()
+                val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
+
+                if (todayShift != null && todayShift.start != null && todayShift.end != null) {
+                    Log.i("TAG", "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
+
+                    val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
+                    val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
+
+                    val currentTime = Calendar.getInstance()
+
+                    if (startCalendar != null && endCalendar != null) {
+                        if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
+                            if (!isServiceRunning(context)) {
+                                Log.i("TAG", "Service is not running. Scheduling alarms...")
+
+                                AlarmScheduler.scheduleAlarms(context, listOf(todayShift), reschedulePeriodic = false)
+                            } else {
+                                Log.i("TAG", "Service is already running.")
+                            }
+                        } else {
+                            Log.i("TAG", "Current time is outside shift period, NOT scheduling API Worker.")
+                        }
+                    }
+                } else {
+                    Log.i("TAG", "No shift found for today.")
+                }
+            } catch (e: Exception) {
+                Log.e("TAG", "Error in handleShiftPeriod", e)
+            }
+        }*/
 
     private fun isServiceRunning(context: Context): Boolean {
         return try {

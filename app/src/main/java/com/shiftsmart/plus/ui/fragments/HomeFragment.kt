@@ -79,10 +79,11 @@ import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import androidx.core.content.PackageManagerCompat
 import androidx.core.content.UnusedAppRestrictionsConstants
+import com.shiftsmart.plus.utils.GpsStatusMonitor
 import kotlinx.coroutines.guava.await  // <-- Add this import
 
 @AndroidEntryPoint
-class HomeFragment : Fragment() {
+class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
 
     private val TAG = "HomeFragment"
@@ -119,6 +120,14 @@ class HomeFragment : Fragment() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         permissionHandler.handlePermissionsResult(permissions)
+    }
+
+    private lateinit var gpsStatusMonitor: GpsStatusMonitor
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        gpsStatusMonitor = GpsStatusMonitor(requireContext())
     }
 
     override fun onCreateView(
@@ -167,6 +176,21 @@ class HomeFragment : Fragment() {
 
     }
 
+    override fun onGpsStatusChanged(enabled: Boolean) {
+        // Here you get live updates when GPS enabled/disabled
+        // Update your UI or notify ViewModel etc.
+        setChecksData()
+        if (enabled) {
+            // GPS is ON
+            Log.d("HomeFragment", "GPS enabled")
+            // update UI or notify user
+        } else {
+            // GPS is OFF
+            Log.d("HomeFragment", "GPS disabled")
+            // show alert or UI hint to enable GPS
+        }
+    }
+
     private fun setChecksData() {
 
 
@@ -187,7 +211,7 @@ class HomeFragment : Fragment() {
             if (!Utils.isMobileDataEnabled(requireContext())) R.drawable.ic_not_check else R.drawable.ic_check
         )
         mBinding.locationServiceStatusIcon.setImageResource(
-            if (!locationTrack.checkLocationPermissions()) R.drawable.ic_not_check else R.drawable.ic_check
+            if (!Utils.isGpsAndPermissionEnabled(requireContext())) R.drawable.ic_not_check else R.drawable.ic_check
         )
         mBinding.notificationStatusIcon.setImageResource(
             if (!Utils.isNotificationPermissionGranted(requireContext())) R.drawable.ic_not_check else R.drawable.ic_check
@@ -226,35 +250,40 @@ class HomeFragment : Fragment() {
 
 
     private fun saveIssuesinDB() {
+
+        val isInternetAvailable = Utils.isInternetAvailable(requireContext())
+
+        val isWifiOn = wifiScanner.isWifiEnabled()
+        val isMobileDataOn = Utils.isMobileDataEnabled(requireContext())
+
         lifecycleScope.launch {
             checkAndUpdateIssue(
                 key = "internet_off",
-                condition = !Utils.isInternetAvailable(requireContext()),
+                condition = !isInternetAvailable,
                 title = "No signal or mobile/wifi connectivity",
                 solution = "Move to a better signal area and reopen Shift Smart+ to sync offline data.",
                 dao = dao
             )
 
+            // Only show Wi-Fi off if mobile data is also off
             checkAndUpdateIssue(
                 key = "wifi_off",
-                condition = !wifiScanner.isWifiEnabled(),
-                title = "Wi-Fi switched off",
+                condition = !isWifiOn,
+                title = "Wi-Fi switched On",
                 solution = "Make sure Wi-Fi is ON in settings > connections.",
                 dao = dao
             )
-
             checkAndUpdateIssue(
                 key = "mobile_data_off",
-                condition = !Utils.isMobileDataEnabled(requireContext()),
+                condition = !isMobileDataOn,
                 title = "Mobile data switched off",
                 solution = "Make sure mobile data is ON in settings > connections.",
                 dao = dao
             )
-
             checkAndUpdateIssue(
                 key = "location_off",
-                condition = !locationTrack.checkLocationPermissions(),
-                title = "Location switched off",
+                condition = !Utils.isGpsAndPermissionEnabled(requireContext()),
+                title = "Location switched On",
                 solution = "Go to Settings > Apps > Shift Smart+ > Permissions > location permission.",
                 dao = dao
             )
@@ -278,7 +307,7 @@ class HomeFragment : Fragment() {
             checkAndUpdateIssue(
                 key = "battery_optimization_on",
                 condition = Utils.isBatteryOptimizationOff(requireContext()),
-                title = "App optimizer Active",
+                title = "Battery optimization Active",
                 solution = "Go to Settings > Battery > App Standby Optimizer > Shift Smart+ > disable optimization.",
                 dao = dao
             )
@@ -287,14 +316,14 @@ class HomeFragment : Fragment() {
             checkAndUpdateIssue(
                 key = "background_restricted",
                 condition = Utils.isAppBackgroundRestricted(requireContext()),
-                title = "App not allowed to run in the Background",
+                title = "App allowed to run in the Background",
                 solution = "Go to Settings > Apps > Shift Smart+ > Background Usage > disable 'Put unused apps to sleep'.",
                 dao = dao
             )
 
 
             lifecycleScope.launch {
-                val disabled = isAutoPauseDisabled(requireContext())
+                val disabled = !isAutoPauseDisabled(requireContext())
                 Log.d("AutoRevoke", if (disabled) "Pause app activity is DISABLED" else "ENABLED")
 
                 checkAndUpdateIssue(
@@ -376,6 +405,18 @@ class HomeFragment : Fragment() {
         super.onResume()
         Log.i(TAG, "onResume: HomeFragment")
         setChecksData()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        gpsStatusMonitor.setListener(this)
+        gpsStatusMonitor.startMonitoring()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        gpsStatusMonitor.removeListener()
+        gpsStatusMonitor.stopMonitoring()
     }
 
     private fun setUpProgressDialog(

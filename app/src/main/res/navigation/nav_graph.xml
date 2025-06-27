@@ -97,4 +97,9 @@
         android:name="com.shiftsmart.plus.ui.fragments.TimeSheetFragment"
         android:label="fragment_time_sheet"
         tools:layout="@layout/fragment_time_sheet" />
+    <fragment
+        android:id="@+id/myShiftsFragment"
+        android:name="com.shiftsmart.plus.ui.fragments.my_shifts.MyShiftsFragment"
+        android:label="fragment_my_shifts"
+        tools:layout="@layout/fragment_my_shifts" />
 </navigation>

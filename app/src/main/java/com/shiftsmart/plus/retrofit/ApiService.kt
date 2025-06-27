@@ -5,6 +5,7 @@ import com.shiftsmart.plus.models.DataRequest
 import com.shiftsmart.plus.models.RecordRequest
 import com.shiftsmart.plus.models.RecordsResponseModel
 import com.shiftsmart.plus.models.TimeSheetModel
+import com.shiftsmart.plus.models.UserDetailsResponseModel
 import com.shiftsmart.plus.models.UserResponseModel
 
 import retrofit2.Response
@@ -45,7 +46,13 @@ interface ApiService {
     suspend fun logout(
         @Path("id") id: String,
         @Header("Authorization") authToken: String,
-    ): Response<UserResponseModel>
+    ): Response<UserDetailsResponseModel>
+
+    @GET("user/getUserById/{id}")
+    suspend fun getUserById(
+        @Path("id") id: String,
+        @Header("Authorization") authToken: String,
+    ): Response<UserDetailsResponseModel>
 
 
     @GET("user/usersTimeSheet/{id}")

@@ -16,8 +16,9 @@ class BootReceiver : BroadcastReceiver() {
 
             if (user != null && user.isActive == true) {
                 // Re-fetch shift data and reschedule alarms
+
                 user.timetable?.range?.let {
-                    AlarmScheduler.scheduleAlarms(context, it)
+                    AlarmScheduler.scheduleAlarms(context, it,user.multipleTimeTables!!)
                     Log.i("BootReceiver", "startMyService: Alarms scheduled with range = ${it}")
                 }
             }

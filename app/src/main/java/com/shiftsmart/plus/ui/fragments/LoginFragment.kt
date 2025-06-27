@@ -144,9 +144,22 @@ class LoginFragment : Fragment() {
                                 }
                             // use here workmanager
                             // 🔹 Schedule WorkManager for periodic API calls
-                            it.data?.userModel?.timetable?.range?.let { it1 ->
-                                AlarmScheduler.scheduleAlarms(requireContext(), it1)
+
+                            val defaultShifts = it.data?.userModel?.timetable?.range
+                            val multiTimeTables = it.data?.userModel?.multipleTimeTables
+
+                            defaultShifts?.let { it1 ->
+                                if (multiTimeTables != null) {
+                                    AlarmScheduler.scheduleAlarms(
+                                        context = requireContext(),
+                                        defaultShifts = it1,
+                                        multipleTimeTables = multiTimeTables
+                                    )
+                                }
                             }
+//                            it.data?.userModel?.timetable?.range?.let { it1 ->
+//                                AlarmScheduler.scheduleAlarms(requireContext(), it1)
+//                            }
 
                         } else {
                             Utils.showSnackBar(

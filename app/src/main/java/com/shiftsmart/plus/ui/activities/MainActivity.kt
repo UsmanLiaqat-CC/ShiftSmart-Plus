@@ -65,6 +65,8 @@ class MainActivity : AppCompatActivity() {
     lateinit var locationTrack: LocationTrack
     private var mProgressDialog: Dialog? = null
     private lateinit var progressDialogBinding: LoadingDialogBinding
+
+
     val mainViewModel: MainViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -165,6 +167,37 @@ class MainActivity : AppCompatActivity() {
                 else -> {}
             }
         }
+        mainViewModel.userDetailsResponse.observe(this) { resource ->
+            when (resource) {
+                is Resource.Loading -> {
+//                    showProgressDialog(resource.message)
+                }
+
+                is Resource.Success -> {
+                    Log.i(TAG, "userDetails: successACtivity:${resource.data}")
+                    val userModel = resource.data
+                    userModel?.let {
+//                            SharedPref.getInstance(this)?.saveToken(it.data.accessToken)
+                        SharedPref.getInstance(this)?.saveUser(userModel)
+
+                        val defaultShifts = userModel?.timetable?.range
+                        val multiTimeTables =userModel?.multipleTimeTables
+                        AlarmScheduler.scheduleAlarms(
+                            context = this,
+                            defaultShifts = defaultShifts!!,
+                            multipleTimeTables = multiTimeTables!!
+                        )
+                    }
+
+                }
+
+                is Resource.Error -> {
+                    Log.i(TAG, "setUpObserver: error:${resource.message}")
+                }
+
+                else -> {}
+            }
+        }
     }
 
 
@@ -247,10 +280,21 @@ class MainActivity : AppCompatActivity() {
             mBinding.drawerLayout.closeDrawer(GravityCompat.START)
         }
 
+        mBinding.navMyShifts.setOnClickListener {
+            navigateToMyShifts()
+            mBinding.drawerLayout.closeDrawer(GravityCompat.START)
+        }
+
         mBinding.navLogout.setOnClickListener {
             showLogoutDialog()
             mBinding.drawerLayout.closeDrawer(GravityCompat.START)
         }
+    }
+
+    private fun navigateToMyShifts() {
+        val navController = findNavController(R.id.nav_host_fragment)
+        navController.navigate(R.id.myShiftsFragment)
+        drawerLayout.closeDrawer(GravityCompat.START)
     }
 
 
@@ -485,19 +529,28 @@ class MainActivity : AppCompatActivity() {
     private fun startMyService() {
         Log.i(TAG, "startMyService: Checking if MyService is already running")
 
-
         val user = SharedPref.getInstance(this)?.getUser()
+        val token = SharedPref.getInstance(this)?.getToken()
         Log.i(TAG, "startMyService: Retrieved user info = $user")
 
-        if (user != null && user.isActive == true) {
-            Log.i(TAG, "startMyService: User is active, scheduling alarms with WorkManager")
+        if (Utils.isInternetAvailable(this))
+        {
+            user?.let {
+                mainViewModel.userDetails(user_token = token ?: "", id = it._id ?: "")
+            }
+        }else{
+            if (user != null && user.isActive == true) {
+                Log.i(TAG, "startMyService: User is active, scheduling alarms with WorkManager")
 
-            // Schedule WorkManager for periodic API calls
-            user.timetable?.range?.let {
-                AlarmScheduler.scheduleAlarms(this, it)
-                Log.i(TAG, "startMyService: Alarms scheduled with range = ${it}")
+                // Schedule WorkManager for periodic API calls
+                user.timetable?.range?.let {
+                    AlarmScheduler.scheduleAlarms(this, it,user.multipleTimeTables!!)
+                    Log.i(TAG, "startMyService: Alarms scheduled with range = ${it}")
+                }
             }
         }
+
+
     }
 
 

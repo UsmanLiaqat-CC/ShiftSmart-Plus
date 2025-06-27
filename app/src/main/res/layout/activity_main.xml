@@ -90,14 +90,11 @@
                     android:layout_width="@dimen/_20sdp"
                     android:layout_height="@dimen/_20sdp"
                     android:src="@drawable/ic_person"/>
-
                 <!-- Your custom menu items -->
                 <TextView
                     android:id="@+id/nav_profile"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-
-
                     android:text="@string/profile"
                     android:padding="12dp"
                     android:textSize="18sp"
@@ -106,7 +103,6 @@
 
 
             </LinearLayout>
-
             <View
                 android:layout_width="match_parent"
                 android:layout_height="@dimen/_1sdp"
@@ -138,7 +134,6 @@
 
 
             </LinearLayout>
-
             <View
                 android:layout_width="match_parent"
                 android:layout_height="@dimen/_1sdp"
@@ -171,12 +166,41 @@
 
 
             </LinearLayout>
-
             <View
                 android:layout_width="match_parent"
                 android:layout_height="@dimen/_1sdp"
                 android:background="#E2E2E2"/>
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:layout_marginTop="@dimen/_5sdp"
+                android:layout_marginBottom="@dimen/_5sdp"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="@dimen/_20sdp"
+                    android:layout_height="@dimen/_20sdp"
+                    android:src="@drawable/ic_clock"/>
+
+                <!-- Your custom menu items -->
+                <TextView
+                    android:id="@+id/nav_my_shifts"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/my_shifts"
+                    android:padding="12dp"
+                    android:textSize="18sp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+
+            </LinearLayout>
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/_1sdp"
+                android:background="#E2E2E2"/>
 
 
             <LinearLayout
