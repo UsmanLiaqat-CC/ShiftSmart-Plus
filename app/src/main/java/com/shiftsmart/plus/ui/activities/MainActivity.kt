@@ -32,6 +32,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.findNavController
 import androidx.navigation.fragment.findNavController
 import com.google.android.material.snackbar.Snackbar
+import com.google.firebase.messaging.FirebaseMessaging
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.ActivityMainBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
@@ -146,7 +147,6 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 is Resource.Success -> {
-
                     Utils.showSnackBar(getString(R.string.logout_successfully), mBinding.root)
                     dismissProgressDialog()
                     deleteUserDataAndLogout()
@@ -180,8 +180,10 @@ class MainActivity : AppCompatActivity() {
 //                            SharedPref.getInstance(this)?.saveToken(it.data.accessToken)
                         SharedPref.getInstance(this)?.saveUser(userModel)
 
+                        FirebaseMessaging.getInstance().subscribeToTopic(userModel?._id.toString())
                         val defaultShifts = userModel?.timetable?.range
                         val multiTimeTables =userModel?.multipleTimeTables
+
                         AlarmScheduler.scheduleAlarms(
                             context = this,
                             defaultShifts = defaultShifts!!,
@@ -215,8 +217,17 @@ class MainActivity : AppCompatActivity() {
                 val notificationManager =this@MainActivity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 notificationManager.cancelAll()
                 Log.i("Service", "Service is running. Stopping it now.")
-               this@MainActivity.stopService(Intent(this@MainActivity, MyService::class.java))
+
+                val stopIntent = Intent(this@MainActivity, MyService::class.java).apply {
+                    action = MyService.ACTION_STOP
+                }
+                this@MainActivity.startService(stopIntent)
             }
+            val user=SharedPref.getInstance(this@MainActivity)?.getUser()
+            user?.let {
+                FirebaseMessaging.getInstance().unsubscribeFromTopic(it?._id.toString())
+            }
+
             SharedPref.getInstance(this@MainActivity)?.clearPrefrence()
             val navController = findNavController(R.id.nav_host_fragment)
             navController.navigate(R.id.loginFragment)

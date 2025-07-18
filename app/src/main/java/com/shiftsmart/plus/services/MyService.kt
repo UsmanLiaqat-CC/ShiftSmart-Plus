@@ -412,8 +412,6 @@ class MyService : Service() {
 
     private fun handleServiceStop() {
         Log.i(TAG, "Stopping service")
-
-
         finishServiceOperations()
     }
     @RequiresApi(Build.VERSION_CODES.Q)

@@ -154,19 +154,23 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         val user = SharedPref.getInstance(requireContext())?.getUser()
         user?.let {
-            dao.getAllLiveRecords(it._id.toString())
-                .observe(viewLifecycleOwner, Observer { records ->
+            val userId = it._id?.toString()
+            if (userId != null) {
+                dao.getAllLiveRecords(userId).observe(viewLifecycleOwner, Observer { records ->
                     if (records.isNotEmpty()) {
                         mBinding.cacheStatusTv.text = records.size.toString()
                         mBinding.syncButton.visibility = View.VISIBLE
-
                     } else {
                         mBinding.cacheStatusTv.text = "0"
-
                         mBinding.syncButton.visibility = View.GONE
-
                     }
                 })
+            } else {
+                Log.e("User ID Error", "_id is null")
+                mBinding.cacheStatusTv.text = "0"
+                mBinding.syncButton.visibility = View.GONE
+            }
+
         }
         setUpProgressDialog()
         setUpClickListeners()

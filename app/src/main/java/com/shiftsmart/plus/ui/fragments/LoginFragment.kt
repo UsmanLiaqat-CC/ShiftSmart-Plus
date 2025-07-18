@@ -25,6 +25,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.gson.Gson
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.FragmentLoginBinding
@@ -142,9 +143,9 @@ class LoginFragment : Fragment() {
                                 ?.run {
                                     findNavController().navigate(R.id.action_loginFragment_to_homeFragment)
                                 }
+                            FirebaseMessaging.getInstance().subscribeToTopic(it.data?.userModel?._id.toString())
                             // use here workmanager
-                            // 🔹 Schedule WorkManager for periodic API calls
-
+                            //  Schedule WorkManager for periodic API calls
                             val defaultShifts = it.data?.userModel?.timetable?.range
                             val multiTimeTables = it.data?.userModel?.multipleTimeTables
 
@@ -157,9 +158,6 @@ class LoginFragment : Fragment() {
                                     )
                                 }
                             }
-//                            it.data?.userModel?.timetable?.range?.let { it1 ->
-//                                AlarmScheduler.scheduleAlarms(requireContext(), it1)
-//                            }
 
                         } else {
                             Utils.showSnackBar(

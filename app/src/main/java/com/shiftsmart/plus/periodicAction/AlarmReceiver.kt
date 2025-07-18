@@ -145,45 +145,6 @@ class AlarmReceiver : BroadcastReceiver() {
         }
     }
 
-
-
-    /*    private fun handleShiftPeriod(
-            context: Context,
-            shifts: List<TimeRange>
-        ) {
-            try {
-                val today = getCurrentDayName()
-                val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
-
-                if (todayShift != null && todayShift.start != null && todayShift.end != null) {
-                    Log.i("TAG", "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
-
-                    val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
-                    val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
-
-                    val currentTime = Calendar.getInstance()
-
-                    if (startCalendar != null && endCalendar != null) {
-                        if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
-                            if (!isServiceRunning(context)) {
-                                Log.i("TAG", "Service is not running. Scheduling alarms...")
-
-                                AlarmScheduler.scheduleAlarms(context, listOf(todayShift), reschedulePeriodic = false)
-                            } else {
-                                Log.i("TAG", "Service is already running.")
-                            }
-                        } else {
-                            Log.i("TAG", "Current time is outside shift period, NOT scheduling API Worker.")
-                        }
-                    }
-                } else {
-                    Log.i("TAG", "No shift found for today.")
-                }
-            } catch (e: Exception) {
-                Log.e("TAG", "Error in handleShiftPeriod", e)
-            }
-        }*/
-
     private fun isServiceRunning(context: Context): Boolean {
         return try {
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager

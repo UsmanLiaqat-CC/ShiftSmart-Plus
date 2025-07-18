@@ -23,45 +23,7 @@ import java.util.Date
 
 object AlarmScheduler {
     private const val TAG = "AlarmScheduler"
-/*    fun scheduleAlarms(
-        context: Context,
-        shifts: List<TimeRange>,
-        reschedulePeriodic: Boolean = true
-    ) {
-        Log.i(TAG, "scheduleAlarms: ${Utils.getCurrentDateTime()}")
 
-        val today = getCurrentDayName() // Get today's name, e.g., "Tuesday"
-        Log.i(TAG, "Today's Day: $today")
-
-        val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
-
-        if (todayShift != null && todayShift.start != null && todayShift.end != null) {
-            Log.i(
-                TAG,
-                "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}"
-            )
-
-            val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
-            val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
-
-            Log.i(
-                TAG,
-                "startCalendar: ${startCalendar?.time} --> endCalendar: ${endCalendar?.time}"
-            )
-
-            if (startCalendar != null && endCalendar != null) {
-
-                scheduleService(context, startCalendar, true)
-                scheduleService(context, endCalendar, false)
-
-                if (reschedulePeriodic) {
-                    schedulePeriodicAlarm(context)
-                }
-            }
-        } else {
-            Log.i(TAG, "No shift found for today.")
-        }
-    }*/
 
     fun scheduleAlarms(
         context: Context,
@@ -69,7 +31,7 @@ object AlarmScheduler {
         multipleTimeTables: List<MultipleTimeTable>,
         reschedulePeriodic: Boolean = true
     ) {
-        val TAG = "AlarmScheduler"
+
         Log.i(TAG, "scheduleAlarms: ${Utils.getCurrentDateTime()}")
 
         val today = getCurrentDayName()
@@ -155,7 +117,6 @@ object AlarmScheduler {
 
         Log.i("AlarmScheduler", "Scheduled CALL_API alarm at ${Date(triggerTime)}")
     }
-
 
     private fun scheduleService(context: Context, calendar: Calendar, isStart: Boolean) {
         Log.i(TAG, "Scheduling Service at ${calendar.time}, isStart: $isStart")

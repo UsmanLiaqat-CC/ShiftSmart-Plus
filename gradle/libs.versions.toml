@@ -1,6 +1,5 @@
 [versions]
 compiler = "1.1.1"
-firebaseBom = "33.10.0"
 gson = "2.10.1"
 hiltAndroid = "2.49"
 hiltCompiler = "2.49"
@@ -30,6 +29,9 @@ biometric = "1.1.0"
 androidx-core = "1.12.0"
 kotlinx-coroutines = "1.8.0"
 
+firebase-messaging = "24.1.2"
+firebase-core = "22.5.0"
+firebaseBom = "33.16.0"
 
 
 [libraries]
@@ -47,7 +49,6 @@ androidx-room-testing = { module = "androidx.room:room-testing", version.ref = "
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workRuntimeKtx" }
 compiler = { module = "android.arch.persistence.room:compiler", version.ref = "compiler" }
 converter-gson = { module = "com.squareup.retrofit2:converter-gson", version.ref = "retrofit" }
-firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-crashlytics = { module = "com.google.firebase:firebase-crashlytics" }
 firebase-analytics = { module = "com.google.firebase:firebase-analytics-ktx" }
 firebase-firestore = { module = "com.google.firebase:firebase-firestore-ktx" }
@@ -77,6 +78,10 @@ androidx-hilt-navigation-fragment = { module = "androidx.hilt:hilt-navigation-fr
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activityVersion" }
 
+firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
+
+firebase-messaging = { module = "com.google.firebase:firebase-messaging", version.ref = "firebase-messaging" }
+firebase-core = { module = "com.google.firebase:firebase-analytics", version.ref = "firebase-core" }
 
 
 [plugins]
