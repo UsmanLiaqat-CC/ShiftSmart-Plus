@@ -322,7 +322,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="20dp"
-                android:text="@string/up_coming_shifts"
+                android:text="@string/all_shifts"
                 android:textColor="@color/black"
                 android:textStyle="bold"
                 android:textSize="@dimen/_16sdp" />

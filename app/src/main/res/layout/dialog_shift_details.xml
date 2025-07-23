@@ -30,7 +30,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/up_coming_shifts"
+                    android:text="@string/all_shifts"
                     android:gravity="center"
                     android:textColor="@color/black"
                     android:layout_centerHorizontal="true"
@@ -114,7 +114,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="@string/thursday"
+                        android:text="@string/tuesday"
                         android:layout_alignParentStart="true"
                         android:textSize="@dimen/_12sdp"
                         android:textColor="@color/grey"
@@ -194,14 +194,14 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="@string/fiday"
+                        android:text="@string/thursday"
                         android:layout_alignParentStart="true"
                         android:textSize="@dimen/_12sdp"
                         android:textColor="@color/grey"
                         />
 
                     <TextView
-                        android:id="@+id/friday_tv"
+                        android:id="@+id/thursday_tv"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
@@ -241,7 +241,7 @@
                         />
 
                     <TextView
-                        android:id="@+id/thursday_tv"
+                        android:id="@+id/friday_tv"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"

@@ -13,6 +13,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.DialogShiftDetailsBinding
 import com.shiftsmart.plus.databinding.FragmentMyShiftsBinding
+import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.models.TimeTable
 import com.shiftsmart.plus.models.UserModel
@@ -66,14 +67,20 @@ class MyShiftsFragment : Fragment() {
         val shiftList = user?.multipleTimeTables ?: emptyList()
 
         adapter = TimeTableAdapter(shiftList) { selectedShift ->
-            showTimeTableDialog(selectedShift.timetable)
+            showTimeTableDialog(selectedShift.timetable,selectedShift,shiftList)
         }
 
         mBinding.shiftRv.adapter = adapter
         mBinding.shiftRv.layoutManager = LinearLayoutManager(requireContext())
     }
 
-    private fun showTimeTableDialog(timetable: TimeTable) {
+    private fun showTimeTableDialog(
+        timetable: TimeTable,
+        selectedShift: MultipleTimeTable,
+        shiftList: List<MultipleTimeTable>
+    ) {
+        android.util.Log.i(TAG, "showTimeTableDialog: selectedShift:${selectedShift}-->\n shiftList:${shiftList}")
+
         val dialogBinding = DialogShiftDetailsBinding.inflate(layoutInflater)
 
         val dayMap = timetable.range.associateBy { it.day.lowercase() }
@@ -82,15 +89,15 @@ class MyShiftsFragment : Fragment() {
         val redColor = ContextCompat.getColor(requireContext(), R.color.red)
 
         val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault())
-        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault())
 
         fun formatTime(time: String?): String {
             return try {
-                timeFormat12.format(timeFormat24.parse(time ?: "")!!)
+                timeFormat24.format(timeFormat24.parse(time ?: "")!!)
             } catch (e: Exception) {
                 ""
             }
         }
+
 
         fun setDay(bindingTextView: TextView, day: String) {
             val data = dayMap[day.lowercase()]
@@ -123,6 +130,7 @@ class MyShiftsFragment : Fragment() {
 
         dialog.show()
     }
+    
     fun setWeekTimings(
         rangeList: List<TimeRange>,
         textViews: Map<String, TextView>
@@ -135,11 +143,11 @@ class MyShiftsFragment : Fragment() {
         )
 
         val inputFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-        val outputFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
+//        val outputFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
 
         fun formatTime(time: String?): String {
             return try {
-                outputFormat.format(inputFormat.parse(time ?: "")!!)
+                inputFormat.format(inputFormat.parse(time ?: "")!!)
             } catch (e: Exception) {
                 ""
             }

@@ -129,5 +129,6 @@
     <string name="saturday">Saturday:</string>
     <string name="sunday">Sunday:</string>
     <string name="up_coming_shifts">UpComing Shifts</string>
+    <string name="all_shifts">All Shifts</string>
 
 </resources>
