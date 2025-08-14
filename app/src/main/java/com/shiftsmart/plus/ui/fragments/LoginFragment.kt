@@ -149,15 +149,11 @@ class LoginFragment : Fragment() {
                             val defaultShifts = it.data?.userModel?.timetable?.range
                             val multiTimeTables = it.data?.userModel?.multipleTimeTables
 
-                            defaultShifts?.let { it1 ->
-                                if (multiTimeTables != null) {
-                                    AlarmScheduler.scheduleAlarms(
-                                        context = requireContext(),
-                                        defaultShifts = it1,
-                                        multipleTimeTables = multiTimeTables
-                                    )
-                                }
-                            }
+                            AlarmScheduler.scheduleAlarms(
+                                context = requireContext(),
+                                defaultShifts = defaultShifts!!,
+                                multipleTimeTables = multiTimeTables!!
+                            )
 
                         } else {
                             Utils.showSnackBar(

@@ -73,6 +73,7 @@
     <string name="please_turn_off_battery_optimization_to_allow_run_app_in_background">Please turn off battery optimization to allow run app in background</string>
     <string name="fetching_location">Fetching location...</string>
     <string name="unable_to_fetch_location_please_try_again_later">Unable to fetch Location. Please move around to get better signal and then try again</string>
+    <string name="unable_to_fetch_location">Unable to fetch Location. Please move around to get better signal and then try again</string>
     <string name="username">Username</string>
     <string name="enter_username">Enter Username</string>
     <string name="location_permission_not_granted">Location Permission not granted</string>

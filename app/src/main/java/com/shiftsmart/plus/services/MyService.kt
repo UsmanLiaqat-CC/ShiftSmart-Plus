@@ -43,6 +43,7 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
+import com.shiftsmart.plus.utils.Utils.toLocalDate
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 
 import java.util.Calendar
 import java.util.Date
@@ -241,7 +243,7 @@ class MyService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 getString(R.string.breakfast_notification_channel_id),
                 getString(R.string.breakfast_notification_channel_name),
@@ -313,18 +315,30 @@ class MyService : Service() {
             wakeLock.release()
         }
     }
-    private fun shouldRunCheck(): Boolean {
-        val user = SharedPref.getInstance(this)?.getUser() ?: return false
-        val today = getCurrentDayName()
-        val currentTime = Calendar.getInstance()
 
-        return user.timetable?.range?.any { shift ->
-            shift.day.equals(today, ignoreCase = true) &&
-                    shift.start != null &&
-                    shift.end != null &&
-                    ShiftUtils.isTimeWithinBufferRange(currentTime, shift.start, shift.end)
-        } ?: false
+private fun shouldRunCheck(): Boolean {
+    val user = SharedPref.getInstance(this)?.getUser() ?: return false
+    val todayName = getCurrentDayName()
+    val today = LocalDate.now()
+
+    // Pick active multiple timetable for today, else default
+    val activeMulti = user.multipleTimeTables?.find { mt ->
+        val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
+        today in s..e
     }
+    val range = activeMulti?.timetable?.range ?: user.timetable?.range ?: return false
+
+    val now = Calendar.getInstance()
+    return range.any { shift ->
+        shift.day.equals(todayName, ignoreCase = true) &&
+                shift.start != null &&
+                shift.end != null &&
+                // Your buffer check (-1h/+1h); keep your helper:
+                ShiftUtils.isTimeWithinBufferRange(now, shift.start, shift.end)
+    }
+}
+
+
 
     private fun createNotification(message: String): Notification {
         val notificationIntent = Intent(this, MainActivity::class.java).apply {
@@ -492,14 +506,14 @@ class MyService : Service() {
         isServiceRunning = false
 
         try {
-            // Cancel any pending alarms
-            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
-            val intent = Intent(this, AlarmReceiver::class.java)
-            val pendingIntent = PendingIntent.getBroadcast(
-                this, 0, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            alarmManager.cancel(pendingIntent)
+//            // Cancel any pending alarms
+//            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+//            val intent = Intent(this, AlarmReceiver::class.java)
+//            val pendingIntent = PendingIntent.getBroadcast(
+//                this, 0, intent,
+//                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+//            )
+//            alarmManager.cancel(pendingIntent)
 
             releaseWakeLock()
             unregisterReceivers()

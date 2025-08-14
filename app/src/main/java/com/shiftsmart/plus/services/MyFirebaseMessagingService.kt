@@ -106,13 +106,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 val timetable = user.timetable?.range
                 val multiTimeTables = user.multipleTimeTables
 
-                if (!timetable.isNullOrEmpty() && !multiTimeTables.isNullOrEmpty()) {
-                    AlarmScheduler.scheduleAlarms(
-                        context = context,
-                        defaultShifts = timetable,
-                        multipleTimeTables = multiTimeTables
-                    )
-                }
+                AlarmScheduler.scheduleAlarms(
+                    context = context,
+                    defaultShifts = timetable!!,
+                    multipleTimeTables = multiTimeTables!!
+                )
 
             } else {
                 Log.w("MyFirebaseMessagingService", "User is not active. Skipping alarm scheduling.")

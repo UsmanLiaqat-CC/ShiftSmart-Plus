@@ -80,6 +80,7 @@ import javax.inject.Inject
 import androidx.core.content.PackageManagerCompat
 import androidx.core.content.UnusedAppRestrictionsConstants
 import com.shiftsmart.plus.utils.GpsStatusMonitor
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await  // <-- Add this import
 
 @AndroidEntryPoint
@@ -101,8 +102,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     @Inject
     lateinit var locationManager: LocationManager
-    @Inject
-    lateinit var repository: MainRepository
+
 
     private lateinit var dao: DBDao
 
@@ -754,9 +754,53 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             findNavController().navigate(R.id.action_homeFragment_to_loginFragment)
         }
     }
-
-
     fun fetchLocationData() {
+        val checkGPS = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+        val checkNetwork = Utils.isInternetAvailable(requireContext())
+
+        Log.i(TAG, "fetchLocationData: checkNetwork:$checkNetwork --> checkGps:$checkGPS")
+
+        if (checkGPS) {
+            val locationTrack = LocationTrack(requireContext())
+            val mLocationManager = requireActivity().getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            showProgressDialog(getString(R.string.fetching_location))
+
+            var locationFetched = false
+
+            // Start 30-second timeout
+            CoroutineScope(Dispatchers.Main).launch {
+                delay(30_000) // wait for 30 seconds
+                if (!locationFetched) {
+                    Log.i(TAG, "fetchLocationData: Timeout reached, location not fetched.")
+                    showMessage(getString(R.string.unable_to_fetch_location_please_try_again_later))
+                    dismissProgressDialog()
+//                    callApiData(0.0, 0.0) // fallback
+                }
+            }
+
+            // Try to get location
+            locationTrack.getLocation(mLocationManager) { location ->
+                if (location != null) {
+                    locationFetched = true
+                    locationTrack.stopListener()
+                    locationTrack.loc = null
+                    mBinding.coordsStatusTv.text = "${location.latitude} , ${location.longitude}"
+                    mBinding.lastUpdateStatusTv.text = getCurrentDateTime().toString()
+
+                    callApiData(location.latitude, location.longitude)
+                    Log.i(TAG, "fetchLocationData: location not null: $location")
+                } else {
+                    Log.i(TAG, "fetchLocationData: location null")
+                    // Let the timeout handle showing message & fallback
+                }
+            }
+        } else {
+            showAlert(ButtonActionEnum.GPS.name)
+        }
+    }
+
+
+/*    fun fetchLocationData() {
 
         val checkGPS = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
         val checkNetwork = Utils.isInternetAvailable(requireContext())
@@ -795,7 +839,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         } else {
             showAlert(ButtonActionEnum.GPS.name)
         }
-    }
+    }*/
 
     var isLocationFetched = false
 

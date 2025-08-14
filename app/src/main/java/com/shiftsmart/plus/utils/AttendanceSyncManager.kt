@@ -24,12 +24,15 @@ import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Utils.getCalendarForShift
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
+import com.shiftsmart.plus.utils.Utils.toLocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import retrofit2.Response
 import java.time.Duration
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
@@ -47,7 +50,8 @@ class AttendanceSyncManager @Inject constructor(
     private var lastLocation: LatLng = LatLng(0.0, 0.0)
     private val wifiScanResults = mutableListOf<WifiModel>()
     private  val TAG = "AttendanceSyncManager"
-
+    private val managerJob = SupervisorJob()
+    private val managerScope = CoroutineScope(Dispatchers.IO + managerJob)
 
     suspend fun startSyncProcess() {
         if (!locationHelper.hasLocationPermissions()) {
@@ -71,20 +75,28 @@ class AttendanceSyncManager @Inject constructor(
 
 
     private fun performApiCall() {
-        Log.i(TAG, "performApiCall: at:${Utils.getCurrentDateTime()}")
-
+        Log.i(TAG, "performApiCall: at:${Utils.getCurrentDateTime()}-->isApiCallInProgress:${apiCallInProgress}")
         if (apiCallInProgress) return
-
         apiCallInProgress = true
 
         val user = SharedPref.getInstance(context)?.getUser()
-        user?.let {
-            val record = createRecord(it)
-            CoroutineScope(Dispatchers.IO).launch {
-                it.timetable?.range?.let { saveDataLocally(record, it,user) }
+        user?.let { u ->
+            val record = createRecord(u)
+            // ✅ use the managerScope so we can cancel it later
+            managerScope.launch {
+                try {
+                    val shifts = u.timetable?.range ?: emptyList()
+                    saveDataLocally(record, shifts, u)
+                } catch (e: Exception) {
+                    Log.e(TAG, "performApiCall error", e)
+                    apiCallInProgress = false
+                }
             }
+        } ?: run {
+            apiCallInProgress = false
         }
     }
+
 
     private fun createRecord(user: UserModel): RecordModel {
         return RecordModel(
@@ -171,16 +183,31 @@ class AttendanceSyncManager @Inject constructor(
             val token = SharedPref.getInstance(context)?.getToken() ?: ""
             try {
                 val response = repository.sendData(records, token)
+                Log.i(TAG, "MRcallApi: apiResponse:${response.body()}")
+
                 if (response.isSuccessful) {
+                    val body = response.body()
                     apiCallInProgress = false
-                    Log.i(TAG, "API call successful, handling response.")
-                    handleSuccessfulResponse(response.body(), record)
-                    Log.i(TAG, "MRcallApi: record successfully sent to admin panal")
-                    sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
+
+                    // ✅ Check if body contains an error-like status
+                    val hasErrorInData = body?.data?.any { it.status.equals("error", ignoreCase = true) } == true
+                    if (hasErrorInData) {
+                        val errorMessages = body?.data
+                            ?.filter { it.status.equals("error", ignoreCase = true) }
+                            ?.joinToString("\n") { it.message ?: "Unknown error" }
+
+                        Log.e(TAG, "API logical error: $errorMessages")
+                        sendNotificationUpdate(errorMessages ?: "Something went wrong")
+                    } else {
+                        Log.i(TAG, "API call successful, handling response.")
+                        handleSuccessfulResponse(body, record)
+                        sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
+                    }
                 } else {
                     Log.e(TAG, "API call failed: ${response.errorBody()}")
                     handleUnsuccessfulResponse(response)
                 }
+
             } catch (e: Exception) {
                 Log.e(TAG, "API call exception: ${e.message}")
                 apiCallInProgress = false
@@ -218,46 +245,117 @@ class AttendanceSyncManager @Inject constructor(
         apiCallInProgress = false
     }
 
+    /**
+     * Persists a record only if we're currently inside today's effective shift window
+     * (multiple timetable if active; otherwise the passed-in `shifts`), using the same
+     * -1h/+1h buffer rule as the rest of the app. When outside the window, the service
+     * is asked to stop.
+     */
     private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel) {
-        Log.i(TAG, "Saving data locally for record: ${record}")
-        val today = getCurrentDayName() // Get today's name (e.g., "Tuesday")
+        Log.i(TAG, "Saving data locally for record: $record")
 
-        val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
+        // 1) Pick the effective timetable for TODAY (active multi-table wins; else fallback to 'shifts')
+        val todayDate = LocalDate.now()
+        val activeMulti = user.multipleTimeTables?.find { mt ->
+            val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
+            todayDate in s..e
+        }
+        val effectiveRange: List<TimeRange> = activeMulti?.timetable?.range ?: shifts
 
-        if (todayShift != null && todayShift.start != null && todayShift.end != null) {
+        val todayName = getCurrentDayName()
+        val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
+
+        if (todayShift?.start != null && todayShift.end != null) {
             Log.i(TAG, "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
 
-            val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
-            val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
+            // 2) Use your centralized buffer rule (-1h/+1h). This helper should already handle
+            //    overnight spans and the +/- buffer (you’re using it elsewhere in the service).
+            val insideWindow = ShiftUtils.isTimeWithinBufferRange(
+                Calendar.getInstance(),
+                todayShift.start,
+                todayShift.end
+            )
 
-            val currentTime = Calendar.getInstance()
+            if (insideWindow) {
+                // 3) Perform DB and API work on IO; dedupe by your latest-record rule
+                managerScope.launch {
+                    try {
+                        val latest = dao.getLatestRecord(record.user_id)
+                        if (shouldInsertRecord(latest, record)) {
+                            dao.insertRecord(record)
 
-            if (startCalendar != null && endCalendar != null) {
-                // Schedule API Worker ONLY IF current time is between shift start & end
-                if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
-                    val latest = dao.getLatestRecord(record.user_id)
-                    if (shouldInsertRecord(latest, record)) {
-                        dao.insertRecord(record)
-                        sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
-                        CoroutineScope(Dispatchers.IO).launch {
-                            callApi(record,user)
+                            // Foreground notification update can be posted back to main
+                            withContext(Dispatchers.Main) {
+                                sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+                            }
+
+                            // Trigger your sync/API work
+                            callApi(record, user)
+                        } else {
+                            Log.d("DBDao", "Record not inserted: Time difference <= 5 minutes")
                         }
-                    } else {
-                        Log.d("DBDao", "Record not inserted: Time difference <= 5 minutes")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save record/call API", e)
                     }
-                } else {
-                    val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
-                    context.sendBroadcast(intent)
-                    Log.i(TAG, "Current time is outside shift period, NOT scheduling API Worker.")
                 }
+            } else {
+                // 4) Outside window → finish service (keeps behavior consistent with the rest of the flow)
+                sendFinishBroadcastAndLog("Current time is outside shift period, NOT scheduling API Worker.")
             }
         } else {
-            Log.i(TAG, "No shift found for today.")
-            val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
-            context.sendBroadcast(intent)
+            // OFF or no shift today
+            sendFinishBroadcastAndLog("No shift found for today.")
         }
     }
-    // Don't forget to unbind when done
+
+    /** Small helper to keep the stop path tidy + consistent in logs */
+    private fun sendFinishBroadcastAndLog(reason: String) {
+        Log.i(TAG, reason)
+        val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
+        context.sendBroadcast(intent)
+    }
+
+
+//    private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel) {
+//        Log.i(TAG, "Saving data locally for record: ${record}")
+//        val today = getCurrentDayName() // Get today's name (e.g., "Tuesday")
+//
+//        val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
+//
+//        if (todayShift != null && todayShift.start != null && todayShift.end != null) {
+//            Log.i(TAG, "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
+//
+//            val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
+//            val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
+//
+//            val currentTime = Calendar.getInstance()
+//
+//            if (startCalendar != null && endCalendar != null) {
+//                // Schedule API Worker ONLY IF current time is between shift start & end
+//                if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
+//                    val latest = dao.getLatestRecord(record.user_id)
+//                    if (shouldInsertRecord(latest, record)) {
+//                        dao.insertRecord(record)
+//                        sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+//                        CoroutineScope(Dispatchers.IO).launch {
+//                            callApi(record,user)
+//                        }
+//                    } else {
+//                        Log.d("DBDao", "Record not inserted: Time difference <= 5 minutes")
+//                    }
+//                } else {
+//                    val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
+//                    context.sendBroadcast(intent)
+//                    Log.i(TAG, "Current time is outside shift period, NOT scheduling API Worker.")
+//                }
+//            }
+//        } else {
+//            Log.i(TAG, "No shift found for today.")
+//            val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
+//            context.sendBroadcast(intent)
+//        }
+//    }
+//    // Don't forget to unbind when done
 
     private fun sendNotificationUpdate(message: String) {
         Log.i(TAG, "sendNotificationUpdate: on${Utils.getCurrentDateTime()}-->message:${message}")
