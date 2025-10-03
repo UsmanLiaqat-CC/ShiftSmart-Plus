@@ -800,47 +800,6 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
 
-/*    fun fetchLocationData() {
-
-        val checkGPS = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
-        val checkNetwork = Utils.isInternetAvailable(requireContext())
-
-        Log.i(TAG, "fetchLocationData: checkNetwork:${checkNetwork}-->checkGps:${checkGPS}")
-
-        if (checkGPS) {
-            val locationTrack = LocationTrack(requireContext())
-            val mLocationManager = requireActivity().getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            showProgressDialog(getString(R.string.fetching_location))
-
-            locationTrack.getLocation(mLocationManager) { location ->
-
-                Log.i(
-                    TAG,
-                    "fetchLocationData: location: ${location?.latitude}-->${location?.longitude}"
-                )
-
-                // Check if location is not null
-                location?.let {
-                    locationTrack.stopListener()
-                    locationTrack.loc = null
-                    // If a new location is retrieved, use it
-                    mBinding.coordsStatusTv.text = "${it.latitude} , ${it.longitude}"
-                    val dateInString = getCurrentDateTime().toString()
-                    mBinding.lastUpdateStatusTv.text = dateInString
-
-                    callApiData(it.latitude, it.longitude)
-                    Log.i(TAG, "fetchLocationData: location not null: $it")
-                } ?: run {
-                    Log.i(TAG, "fetchLocationData: location null: $location")
-                    dismissProgressDialog()
-                    showMessage(getString(R.string.unable_to_fetch_location_please_try_again_later))
-                }
-            }
-        } else {
-            showAlert(ButtonActionEnum.GPS.name)
-        }
-    }*/
-
     var isLocationFetched = false
 
     fun callApiData(lat: Double, lan: Double) {
@@ -944,12 +903,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                 CoroutineScope(Dispatchers.IO).launch {
                                     val latest = dao.getLatestRecord(record.user_id)
 
-                                    if (shouldInsertRecord(latest, record)) {
-                                        dao.insertRecord(record)
-//                                        sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
-                                    } else {
-                                        Log.d("DBDao", "saveDataLocally: Record not inserted: Time difference <= 5 minutes")
-                                    }
+//                                    if (shouldInsertRecord(latest, record)) {
+//                                        dao.insertRecord(record)
+////                                        sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+//                                    }
+                                    dao.insertRecord(record)
+//                                    sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
 
                                     withContext(Dispatchers.Main) {
                                         showMessage(getString(R.string.offile_alert_message))
@@ -972,7 +931,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         }
 
-    fun shouldInsertRecord(
+    private fun shouldInsertRecord(
         latestRecord: RecordModel?,
         newRecord: RecordModel
     ): Boolean {
@@ -982,9 +941,14 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         val latestTime = LocalTime.parse(latestRecord.localTime, formatter)
         val newTime = LocalTime.parse(newRecord.localTime, formatter)
 
+//        // 1️⃣ if the new record time is BEFORE the latest record → reject immediately
+//        if (newTime.isBefore(latestTime)) {
+//            Log.d("DBDao Home", "Record not inserted: new record time ${newRecord.localTime} is before latest ${latestRecord.localTime}")
+//            return false
+//        }
+        // 2️⃣ Otherwise check if difference is >= 5 minutes
         val duration = Duration.between(latestTime, newTime).toMinutes()
-
-        return duration > 5
+        return duration >= 5
     }
     private var clearTextHandler: Handler? = null
     private var clearTextRunnable: Runnable? = null

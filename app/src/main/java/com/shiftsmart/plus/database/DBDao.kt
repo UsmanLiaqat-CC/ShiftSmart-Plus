@@ -36,6 +36,10 @@ interface DBDao {
     @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time DESC LIMIT 1")
     fun getLatestRecord(uId: String): RecordModel?
 
+    @Query("SELECT * FROM record WHERE user_id = :uId AND attendanceType = 'default' ORDER BY time DESC LIMIT 1")
+    fun getLatestDefaultRecord(uId: String): RecordModel?
+
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertIssue(issue: IssueModel)
 

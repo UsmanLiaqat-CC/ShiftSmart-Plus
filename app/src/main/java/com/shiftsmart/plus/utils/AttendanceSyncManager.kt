@@ -252,7 +252,7 @@ class AttendanceSyncManager @Inject constructor(
      * is asked to stop.
      */
     private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel) {
-        Log.i(TAG, "Saving data locally for record: $record")
+//        Log.i("DBDao", "Saving data locally for record: $record")
 
         // 1) Pick the effective timetable for TODAY (active multi-table wins; else fallback to 'shifts')
         val todayDate = LocalDate.now()
@@ -266,7 +266,7 @@ class AttendanceSyncManager @Inject constructor(
         val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
 
         if (todayShift?.start != null && todayShift.end != null) {
-            Log.i(TAG, "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
+//            Log.i("DBDao", "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
 
             // 2) Use your centralized buffer rule (-1h/+1h). This helper should already handle
             //    overnight spans and the +/- buffer (you’re using it elsewhere in the service).
@@ -280,7 +280,8 @@ class AttendanceSyncManager @Inject constructor(
                 // 3) Perform DB and API work on IO; dedupe by your latest-record rule
                 managerScope.launch {
                     try {
-                        val latest = dao.getLatestRecord(record.user_id)
+                      /*  val latest = dao.getLatestRecord(record.user_id)
+                        Log.i("DBDao", "saveDataLocally: latestRecord:${latest}\nnewRecord:${record}");
                         if (shouldInsertRecord(latest, record)) {
                             dao.insertRecord(record)
 
@@ -293,9 +294,31 @@ class AttendanceSyncManager @Inject constructor(
                             callApi(record, user)
                         } else {
                             Log.d("DBDao", "Record not inserted: Time difference <= 5 minutes")
+                        }*/
+                        val latest = dao.getLatestRecord(record.user_id)
+                        val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
+                            // if latest is not default, go find the last default
+                            dao.getLatestDefaultRecord(record.user_id)
+                        } else {
+                            latest
                         }
+
+                        Log.i("DBDao", "saveDataLocally: using referenceRecord:$referenceRecord\nnewRecord:$record")
+
+                        if (shouldInsertRecord(referenceRecord, record)) {
+                            dao.insertRecord(record)
+
+                            withContext(Dispatchers.Main) {
+                                sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+                            }
+
+                            callApi(record, user)
+                        } else {
+                            Log.d("DBDao", "Record not inserted: Time difference <= 5 minutes")
+                        }
+
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to save record/call API", e)
+                        Log.e("DBDao", "Failed to save record/call API", e)
                     }
                 }
             } else {
@@ -316,47 +339,6 @@ class AttendanceSyncManager @Inject constructor(
     }
 
 
-//    private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel) {
-//        Log.i(TAG, "Saving data locally for record: ${record}")
-//        val today = getCurrentDayName() // Get today's name (e.g., "Tuesday")
-//
-//        val todayShift = shifts.find { it.day.equals(today, ignoreCase = true) }
-//
-//        if (todayShift != null && todayShift.start != null && todayShift.end != null) {
-//            Log.i(TAG, "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
-//
-//            val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
-//            val endCalendar = getCalendarForShift(todayShift.day, todayShift.end, 1)
-//
-//            val currentTime = Calendar.getInstance()
-//
-//            if (startCalendar != null && endCalendar != null) {
-//                // Schedule API Worker ONLY IF current time is between shift start & end
-//                if (currentTime.after(startCalendar) && currentTime.before(endCalendar)) {
-//                    val latest = dao.getLatestRecord(record.user_id)
-//                    if (shouldInsertRecord(latest, record)) {
-//                        dao.insertRecord(record)
-//                        sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
-//                        CoroutineScope(Dispatchers.IO).launch {
-//                            callApi(record,user)
-//                        }
-//                    } else {
-//                        Log.d("DBDao", "Record not inserted: Time difference <= 5 minutes")
-//                    }
-//                } else {
-//                    val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
-//                    context.sendBroadcast(intent)
-//                    Log.i(TAG, "Current time is outside shift period, NOT scheduling API Worker.")
-//                }
-//            }
-//        } else {
-//            Log.i(TAG, "No shift found for today.")
-//            val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
-//            context.sendBroadcast(intent)
-//        }
-//    }
-//    // Don't forget to unbind when done
-
     private fun sendNotificationUpdate(message: String) {
         Log.i(TAG, "sendNotificationUpdate: on${Utils.getCurrentDateTime()}-->message:${message}")
         val intent = Intent("UPDATE_NOTIFICATION")
@@ -373,8 +355,13 @@ class AttendanceSyncManager @Inject constructor(
         val latestTime = LocalTime.parse(latestRecord.localTime, formatter)
         val newTime = LocalTime.parse(newRecord.localTime, formatter)
 
+        // 1️⃣ if the new record time is BEFORE the latest record → reject immediately
+        if (newTime.isBefore(latestTime)) {
+            Log.d("DBDao", "Record not inserted: new record time ${newRecord.localTime} is before latest ${latestRecord.localTime}")
+            return false
+        }
+        // 2️⃣ Otherwise check if difference is >= 5 minutes
         val duration = Duration.between(latestTime, newTime).toMinutes()
-
         return duration >= 5
     }
 

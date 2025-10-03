@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.AlarmManager
 import android.app.Dialog
 import android.app.NotificationManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,20 +16,15 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.LayoutInflater
-import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
-import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.findNavController
-import androidx.navigation.fragment.findNavController
 import com.google.android.material.snackbar.Snackbar
 import com.google.firebase.messaging.FirebaseMessaging
 import com.shiftsmart.plus.R
@@ -48,7 +42,6 @@ import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
-import java.util.Locale
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -227,7 +220,7 @@ class MainActivity : AppCompatActivity() {
             user?.let {
                 FirebaseMessaging.getInstance().unsubscribeFromTopic(it?._id.toString())
             }
-
+            FingerprintHelper.setFingerprintEnabled(this@MainActivity, false)
             SharedPref.getInstance(this@MainActivity)?.clearPrefrence()
             val navController = findNavController(R.id.nav_host_fragment)
             navController.navigate(R.id.loginFragment)
@@ -239,7 +232,7 @@ class MainActivity : AppCompatActivity() {
         val switchFingerprint = mBinding.switchFingerprint
 
         // Set initial state from SharedPref
-        switchFingerprint.isChecked =FingerprintHelper.isFingerprintEnabled(this) ?: false
+        switchFingerprint.isChecked =FingerprintHelper.isFingerprintEnabled(this)
 
         // Handle switch toggle
         switchFingerprint.setOnCheckedChangeListener { _, isChecked ->
@@ -271,8 +264,10 @@ class MainActivity : AppCompatActivity() {
         }
         val user = SharedPref.getInstance(this@MainActivity)?.getUser()
 
+        Log.i(TAG, "setupDrawer: userData:${user}")
+        
         mBinding.headerLl.userName.text=user?.name?:getString(R.string.app_name)
-        mBinding.headerLl.userDesTv.text="Organization:"+user?.organization?.name
+        mBinding.headerLl.userDesTv.text = "Organization: ${user?.organization?.name.takeIf { !it.isNullOrBlank() } ?: "NA"}"
 
 
         // Handle clicks on menu items using binding
