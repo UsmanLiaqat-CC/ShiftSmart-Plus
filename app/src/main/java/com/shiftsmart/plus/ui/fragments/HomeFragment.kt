@@ -669,9 +669,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                 "online" -> {
                                     // If status is "online", show the message or store info
                                     withContext(Dispatchers.Main) {
-
                                         showMessage(attendance.message)
-
                                     }
                                     CoroutineScope(Dispatchers.IO).launch {
                                         val uuid = attendance.UUID // Get UUID from response

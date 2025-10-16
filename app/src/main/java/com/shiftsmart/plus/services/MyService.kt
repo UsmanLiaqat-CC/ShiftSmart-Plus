@@ -59,9 +59,6 @@ import java.util.Locale
 
 import javax.inject.Inject
 
-
-
-
 @AndroidEntryPoint
 class MyService : Service() {
 
@@ -293,7 +290,7 @@ class MyService : Service() {
         }
     }
 
-    private fun checkAndMaintainService() {
+/*    private fun checkAndMaintainService() {
 
         Log.d(TAG, "checkAndMaintainService: Keep-alive check.${Utils.getCurrentDateTime()}")
 
@@ -308,7 +305,36 @@ class MyService : Service() {
             startLocationFetch()
         }
 
+    }*/
+
+    private var lastCheckDate: LocalDate? = null
+
+    private fun checkAndMaintainService() {
+        Log.d(TAG, "checkAndMaintainService: ${Utils.getCurrentDateTime()}")
+        val today = LocalDate.now()
+
+        // Force re-sync at day change
+        if (lastCheckDate != null && today.isAfter(lastCheckDate)) {
+            Log.i(TAG, "🕛 Day changed → forcing midnight sync.")
+            forceMidnightSync()
+        }
+        lastCheckDate = today
+
+        if (!shouldRunCheck()) {
+            finishServiceOperations()
+            return
+        }
+
+        serviceScope.launch { startLocationFetch() }
     }
+
+    private fun forceMidnightSync() {
+        serviceScope.launch {
+            attendanceSyncManager.startSyncProcess() // or your backup save method
+            Log.i(TAG, "Midnight sync completed.")
+        }
+    }
+
 
     private fun releaseWakeLock() {
         if (::wakeLock.isInitialized && wakeLock.isHeld) {
@@ -316,27 +342,30 @@ class MyService : Service() {
         }
     }
 
-private fun shouldRunCheck(): Boolean {
-    val user = SharedPref.getInstance(this)?.getUser() ?: return false
-    val todayName = getCurrentDayName()
-    val today = LocalDate.now()
+    private fun shouldRunCheck(): Boolean {
+        val user = SharedPref.getInstance(this)?.getUser() ?: return false
+        val today = LocalDate.now()
 
-    // Pick active multiple timetable for today, else default
-    val activeMulti = user.multipleTimeTables?.find { mt ->
-        val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
-        today in s..e
-    }
-    val range = activeMulti?.timetable?.range ?: user.timetable?.range ?: return false
+        // Pick active multiple timetable (if any)
+        val activeMulti = user.multipleTimeTables?.find { mt ->
+            val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
+            today in s..e
+        }
 
-    val now = Calendar.getInstance()
-    return range.any { shift ->
-        shift.day.equals(todayName, ignoreCase = true) &&
-                shift.start != null &&
-                shift.end != null &&
-                // Your buffer check (-1h/+1h); keep your helper:
-                ShiftUtils.isTimeWithinBufferRange(now, shift.start, shift.end)
+        // Get active timetable range (default if none)
+        val range = activeMulti?.timetable?.range ?: user.timetable?.range ?: return false
+        val now = Calendar.getInstance()
+
+        // ✅ Check if current time falls inside ANY shift window (handles overnight spans too)
+        val isInsideShift = range.any { shift ->
+            shift.start != null && shift.end != null &&
+                    ShiftUtils.isTimeWithinBufferRange(now, shift.start, shift.end)
+        }
+
+        Log.i("MyService", "shouldRunCheck → insideShift=$isInsideShift at ${Utils.getCurrentDateTime()}")
+        return isInsideShift
     }
-}
+
 
 
 
@@ -410,8 +439,6 @@ private fun shouldRunCheck(): Boolean {
     }
 
 
-
-
     private fun maybeTriggerApiCall() {
         CoroutineScope(Dispatchers.IO).launch {
             attendanceSyncManager.startSyncProcess()
@@ -431,7 +458,6 @@ private fun shouldRunCheck(): Boolean {
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun handleServiceRestart() {
 
-
         Log.i(TAG, "Restarting service")
         if (!isServiceRunning) {
             startForegroundService()
@@ -439,6 +465,7 @@ private fun shouldRunCheck(): Boolean {
             checkShiftAndScheduleTasks()
         }
     }
+
     private fun checkShiftAndScheduleTasks() {
         val user = SharedPref.getInstance(this)?.getUser() ?: run {
             Log.w(TAG, "No user found in SharedPref")
@@ -446,33 +473,33 @@ private fun shouldRunCheck(): Boolean {
             return
         }
 
-        user.timetable?.range?.let { shifts ->
-            val today = getCurrentDayName()
-            val currentTime = Calendar.getInstance()
-
-            shifts.find { it.day.equals(today, true) }?.let { todayShift ->
-                if (todayShift.start != null && todayShift.end != null) {
-
-                    if (ShiftUtils.isTimeWithinBufferRange(currentTime, todayShift.start, todayShift.end))
-                    {
-                        Log.i(TAG, "Within shift time (${todayShift.start} - ${todayShift.end}), continuing service")
-                    }else{
-                        finishServiceOperations()
-                    }
-                }
-            } ?: run {
-                Log.i(TAG, "No shift found for today ($today), stopping service")
-                finishServiceOperations()
-            }
-        } ?: run {
+        val range = user.timetable?.range ?: run {
             Log.w(TAG, "No timetable range found, stopping service")
+            finishServiceOperations()
+            return
+        }
+
+        val currentTime = Calendar.getInstance()
+
+        // ✅ Check if current time is inside ANY shift window (including overnight ones)
+        val activeShift = range.find { shift ->
+            shift.start != null && shift.end != null &&
+                    ShiftUtils.isTimeWithinBufferRange(currentTime, shift.start, shift.end)
+        }
+
+        if (activeShift != null) {
+            Log.i(TAG, "Within shift time (${activeShift.day}: ${activeShift.start}–${activeShift.end}), continuing service")
+            // keep service alive, do nothing
+        } else {
+            Log.i(TAG, "Outside all shift windows, stopping service")
             finishServiceOperations()
         }
     }
 
+
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun startForegroundService() {
-        val notification = createNotification("Service running").apply {
+        val notification = createNotification("Service started").apply {
             flags = flags or Notification.FLAG_NO_CLEAR
         }
 
@@ -506,15 +533,6 @@ private fun shouldRunCheck(): Boolean {
         isServiceRunning = false
 
         try {
-//            // Cancel any pending alarms
-//            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
-//            val intent = Intent(this, AlarmReceiver::class.java)
-//            val pendingIntent = PendingIntent.getBroadcast(
-//                this, 0, intent,
-//                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-//            )
-//            alarmManager.cancel(pendingIntent)
-
             releaseWakeLock()
             unregisterReceivers()
 

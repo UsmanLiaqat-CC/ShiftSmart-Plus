@@ -13,8 +13,8 @@ import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.SharedPref
+import com.shiftsmart.plus.utils.ShiftUtils.getCalendarForShift
 import com.shiftsmart.plus.utils.Utils
-import com.shiftsmart.plus.utils.Utils.getCalendarForShift
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import java.time.LocalDate
@@ -163,11 +163,11 @@ object AlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(cancelPendingIntent)
-        Log.i(TAG, "Canceled any existing CALL_API alarm before scheduling a new one")
+//        Log.i(TAG, "Canceled any existing CALL_API alarm before scheduling a new one")
 
         // Exact-alarm permission gate (S+); you already redirect to settings elsewhere if needed
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            Log.w(TAG, "Exact alarm permission not granted. Redirecting to settings.")
+//            Log.w(TAG, "Exact alarm permission not granted. Redirecting to settings.")
             val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
                 data = Uri.parse("package:${context.packageName}")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -196,7 +196,7 @@ object AlarmScheduler {
      *       actually fires (in receiver/service).
      */
     private fun scheduleService(context: Context, calendar: Calendar, isStart: Boolean) {
-        Log.i(TAG, "Scheduling Service at ${calendar.time}, isStart: $isStart")
+//        Log.i(TAG, "Scheduling Service at ${calendar.time}, isStart: $isStart")
         try {
             val intent = Intent(context, MyService::class.java).apply {
                 action = if (isStart) "START_SERVICE" else "STOP_SERVICE"
@@ -232,7 +232,7 @@ object AlarmScheduler {
         )
         if (!wakeLock.isHeld) {
             wakeLock.acquire(10 * 1000L)
-            Log.i("AlarmScheduler", "Wake lock acquired and screen turned on.")
+//            Log.i("AlarmScheduler", "Wake lock acquired and screen turned on.")
         }
     }
 
@@ -270,80 +270,58 @@ object AlarmScheduler {
         }
     }
 
-    /**
-     * scheduleDay(...)
-     * WHEN: Internal helper to schedule a specific DATE’s start/stop from a timetable.
-     * WHAT: Picks the DATE’s effective timetable; schedules either (START+STOP) or immediate start + STOP.
-     * NOTE: Cancels TODAY’s start/stop (1001/1002) when used for TODAY; for TOMORROW, prefer the
-     *       1101/1102 variants via scheduleServiceWithCode().
-     */
-    private fun scheduleDay(
-        context: Context,
-        date: LocalDate,
-        defaultShifts: List<TimeRange>,
-        multipleTimeTables: List<MultipleTimeTable>,
-        allowImmediateStartIfInsideWindow: Boolean
-    ) {
-        val activeMulti = multipleTimeTables.find { mt ->
-            date in mt.startDate.toLocalDate()..mt.endDate.toLocalDate()
-        }
-        val dayName = date.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
-        val range = activeMulti?.timetable?.range ?: defaultShifts
-        val shift = range.find { it.day.equals(dayName, ignoreCase = true) }
-
-        if (shift?.start != null && shift.end != null) {
-            val startCal = getCalendarForDate(date, shift.start, -1)  // -1h
-            val endCal   = getCalendarForDate(date, shift.end,   1)  // +1h
-            if (endCal.timeInMillis <= startCal.timeInMillis) endCal.add(Calendar.DAY_OF_YEAR, 1)
-
-            val now = System.currentTimeMillis()
-            cancelServiceAlarm(context, true)
-            cancelServiceAlarm(context, false)
-
-            if (allowImmediateStartIfInsideWindow && now in startCal.timeInMillis until endCal.timeInMillis) {
-                startServiceNow(context)
-                scheduleService(context, endCal, false)
-            } else {
-                scheduleService(context, startCal, true)
-                scheduleService(context, endCal, false)
-            }
-        } else {
-            Log.i(TAG, "No shift for $dayName on $date")
-        }
-    }
 
     /**
      * scheduleTomorrowFromPrefs(...)
      * WHEN: Called by AlarmReceiver right after START fires.
-     * WHAT: Schedules TOMORROW’s start/stop using distinct request codes (1101/1102) so TODAY’s alarms remain.
+     * WHAT: Schedules TOMORROW’s start/stop using distinct request codes (1101/1102)
+     *       so TODAY’s alarms remain intact.
+     * WHY: Ensures overnight shifts continue seamlessly (e.g., Mon→Tue, Tue→Wed).
      */
     fun scheduleTomorrowFromPrefs(context: Context) {
         val user = SharedPref.getInstance(context)?.getUser() ?: return
-        val def = user.timetable?.range ?: return
-        val multi = user.multipleTimeTables ?: emptyList()
+        val defaultShifts = user.timetable?.range ?: return
+        val multipleTables = user.multipleTimeTables ?: emptyList()
         val tomorrow = LocalDate.now().plusDays(1)
 
-        val activeMulti = multi.find { mt ->
-            val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
-            tomorrow in s..e
+        // 1️⃣ Pick the correct timetable
+        val activeMulti = multipleTables.find { mt ->
+            val start = mt.startDate.toLocalDate()
+            val end = mt.endDate.toLocalDate()
+            tomorrow in start..end
         }
+
         val dayName = tomorrow.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
-        val range = activeMulti?.timetable?.range ?: def
-        val shift = range.find { it.day.equals(dayName, ignoreCase = true) } ?: run {
-            Log.i(TAG, "No shift for $dayName (tomorrow) from prefs"); return
+        val effectiveRange = activeMulti?.timetable?.range ?: defaultShifts
+        val tomorrowShift = effectiveRange.find { it.day.equals(dayName, ignoreCase = true) }
+
+        if (tomorrowShift == null || tomorrowShift.start == null || tomorrowShift.end == null) {
+            Log.i(TAG, "scheduleTomorrowFromPrefs → No valid shift for $dayName (OFF)")
+            return
         }
-        if (shift.start == null || shift.end == null) { Log.i(TAG, "Tomorrow OFF"); return }
 
-        val startCal = getCalendarForDate(tomorrow, shift.start, -1)
-        val endCal   = getCalendarForDate(tomorrow, shift.end,   1)
-        if (endCal.timeInMillis <= startCal.timeInMillis) endCal.add(Calendar.DAY_OF_YEAR, 1)
+        // 2️⃣ Build start and end calendars with ±1h
+        val startCal = getCalendarForDate(tomorrow, tomorrowShift.start, -1)
+        val endCal = getCalendarForDate(tomorrow, tomorrowShift.end, 1)
 
+        // 🕛 Normalize overnight: if end <= start, push end to next day
+        if (endCal.timeInMillis <= startCal.timeInMillis) {
+            endCal.add(Calendar.DAY_OF_YEAR, 1)
+        }
+
+        // 3️⃣ Cancel any existing tomorrow alarms (rc=1101/1102)
         cancelTomorrowAlarms(context)
-        scheduleServiceWithCode(context, startCal, true,  1101)
-        scheduleServiceWithCode(context, endCal,   false, 1102)
 
-        Log.i(TAG, "Re-chained TOMORROW start=${startCal.time} stop=${endCal.time}")
+        // 4️⃣ Schedule tomorrow’s start and stop
+        scheduleServiceWithCode(context, startCal, true, 1101)
+        scheduleServiceWithCode(context, endCal, false, 1102)
+
+        Log.i(
+            TAG,
+            "✅ Tomorrow scheduled: $dayName start=${startCal.time} (rc=1101), stop=${endCal.time} (rc=1102)"
+        )
     }
+
 
     /**
      * scheduleTodayAndTomorrow(...)

@@ -186,40 +186,7 @@ object Utils {
     }
 
 
-     fun getCalendarForShift(day: String?, time: String?, hourOffset: Int): Calendar? {
-        val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
 
-        return try {
-            val parsedTime = sdf.parse(time) ?: return null
-
-            val now = Calendar.getInstance()
-            val shiftCalendar = Calendar.getInstance()
-
-            // Set the correct hour, minute, and second
-            shiftCalendar.time = parsedTime
-            shiftCalendar.set(Calendar.YEAR, now.get(Calendar.YEAR))
-            shiftCalendar.set(Calendar.MONTH, now.get(Calendar.MONTH))
-            shiftCalendar.set(Calendar.DAY_OF_MONTH, now.get(Calendar.DAY_OF_MONTH)) // Set to today
-            shiftCalendar.set(Calendar.SECOND, 0)
-            shiftCalendar.set(Calendar.MILLISECOND, 0)
-
-            // Ensure we are scheduling for the correct weekday
-            val targetDay = getDayOfWeek(day)
-            while (shiftCalendar.get(Calendar.DAY_OF_WEEK) != targetDay) {
-                shiftCalendar.add(Calendar.DAY_OF_YEAR, 1) // Move to the correct day
-            }
-
-            // Apply hour offset (after setting the correct day)
-            shiftCalendar.add(Calendar.HOUR_OF_DAY, hourOffset)
-
-            Log.i("getCalendarForShift", "Shift Time: ${shiftCalendar.time}")
-            shiftCalendar
-
-        } catch (e: ParseException) {
-            Log.e("getCalendarForShift", "Invalid time format", e)
-            null
-        }
-    }
      fun getCurrentDayName(): String {
         val calendar = Calendar.getInstance()
         return SimpleDateFormat("EEEE", Locale.getDefault()).format(calendar.time)

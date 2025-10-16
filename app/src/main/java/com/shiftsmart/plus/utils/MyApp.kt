@@ -14,12 +14,6 @@ import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
 import androidx.work.WorkManager
-import com.shiftsmart.plus.database.RecordModel
-import com.shiftsmart.plus.models.TimeRange
-import com.shiftsmart.plus.services.MyService
-import com.shiftsmart.plus.utils.Utils.getCalendarForShift
-import com.shiftsmart.plus.utils.Utils.getCurrentDayName
-import java.util.Calendar
 
 
 @HiltAndroidApp
