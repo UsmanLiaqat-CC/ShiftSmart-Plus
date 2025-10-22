@@ -138,10 +138,20 @@ class MyService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(TAG, "Service command received")
+        Log.i(TAG, "Service command received: ${intent?.action}")
+
+        // Determine appropriate message based on shift status
+        val isInShift = shouldRunCheck()
+        val initialMessage = when {
+            !isInShift -> "Off-shift - Service idle"
+            intent?.action == ACTION_CALL_API -> "Syncing attendance data..."
+            intent?.action == ACTION_START -> "Starting attendance tracking..."
+            intent?.action == ACTION_STOP -> "Stopping service..."
+            else -> "Attendance tracking active"
+        }
 
         // Always start foreground early to avoid crash
-        val notification = createNotification("Service is running...")
+        val notification = createNotification(initialMessage)
         startForeground(NOTIFICATION_ID, notification)
 
         when (intent?.action) {
@@ -319,15 +329,19 @@ class MyService : Service() {
         // Force re-sync at day change
         if (lastCheckDate != null && today.isAfter(lastCheckDate)) {
             Log.i(TAG, "🕛 Day changed → forcing midnight sync.")
+            updateForegroundNotification(this, "Day changed - Syncing data...")
             forceMidnightSync()
         }
         lastCheckDate = today
 
         if (!shouldRunCheck()) {
+            Log.d(TAG, "Off-shift - Stopping service")
+            updateForegroundNotification(this, "Off-shift - Service stopping...")
             finishServiceOperations()
             return
         }
 
+        updateForegroundNotification(this, "Tracking attendance...")
         serviceScope.launch { startLocationFetch() }
     }
 
@@ -452,12 +466,13 @@ class MyService : Service() {
 
     private fun handleServiceStart() {
         Log.i(TAG, "Starting service")
-
+        updateForegroundNotification(this, "Attendance tracking started")
         startForegroundService()
     }
 
     private fun handleServiceStop() {
         Log.i(TAG, "Stopping service")
+        updateForegroundNotification(this, "Service stopped")
         finishServiceOperations()
     }
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -474,12 +489,14 @@ class MyService : Service() {
     private fun checkShiftAndScheduleTasks() {
         val user = SharedPref.getInstance(this)?.getUser() ?: run {
             Log.w(TAG, "No user found in SharedPref")
+            updateForegroundNotification(this, "No user - Service stopping")
             finishServiceOperations()
             return
         }
 
         val range = user.timetable?.range ?: run {
             Log.w(TAG, "No timetable range found, stopping service")
+            updateForegroundNotification(this, "No schedule - Service stopping")
             finishServiceOperations()
             return
         }
@@ -494,9 +511,11 @@ class MyService : Service() {
 
         if (activeShift != null) {
             Log.i(TAG, "Within shift time (${activeShift.day}: ${activeShift.start}–${activeShift.end}), continuing service")
+            updateForegroundNotification(this, "In-shift - Tracking active")
             // keep service alive, do nothing
         } else {
             Log.i(TAG, "Outside all shift windows, stopping service")
+            updateForegroundNotification(this, "Off-shift - Service stopping")
             finishServiceOperations()
         }
     }
