@@ -11,7 +11,7 @@ data class RecordsResponseModel(
 data class RecordData(
     val _id: String,
     val user: String,
-    val date: String,
+    val date: String, // utc timestamp
     val coordinates: GeoPoint,
     val store: StoreRecord,
     val inStore: Boolean,

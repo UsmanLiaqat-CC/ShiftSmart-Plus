@@ -109,7 +109,17 @@ class AttendanceFragment : Fragment() {
                         }
 
                         currentList.addAll(newData)
-                        attendanceAdapter.submitList(currentList.toList()) // trigger DiffUtil
+
+                        // Sort by date - most recent first
+                        val sortedList = currentList.sortedByDescending { record ->
+                            try {
+                                record.date?.let { java.time.ZonedDateTime.parse(it) }
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+
+                        attendanceAdapter.submitList(sortedList) // trigger DiffUtil
                     }
                 }
                 is Resource.Error -> {
@@ -125,6 +135,9 @@ class AttendanceFragment : Fragment() {
         attendanceAdapter = AttendanceAdapter()
         recyclerView.layoutManager = LinearLayoutManager(requireContext())
         recyclerView.adapter = attendanceAdapter
+
+        // Synchronize horizontal scrolling between header and RecyclerView
+        setupScrollSync()
 
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
@@ -153,6 +166,28 @@ class AttendanceFragment : Fragment() {
                 }
             }
         })
+    }
+
+    private fun setupScrollSync() {
+        var isHeaderScrolling = false
+        var isRecyclerScrolling = false
+
+        // Synchronize header scroll with RecyclerView scroll
+        mBinding.recyclerScroll.setOnScrollChangeListener { _, scrollX, _, _, _ ->
+            if (!isHeaderScrolling) {
+                isRecyclerScrolling = true
+                mBinding.headerScroll.scrollTo(scrollX, 0)
+                isRecyclerScrolling = false
+            }
+        }
+
+        mBinding.headerScroll.setOnScrollChangeListener { _, scrollX, _, _, _ ->
+            if (!isRecyclerScrolling) {
+                isHeaderScrolling = true
+                mBinding.recyclerScroll.scrollTo(scrollX, 0)
+                isHeaderScrolling = false
+            }
+        }
     }
 
     private fun loadAttendanceData() {

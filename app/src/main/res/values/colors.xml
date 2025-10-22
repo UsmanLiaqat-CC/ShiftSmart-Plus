@@ -6,6 +6,8 @@
     <color name="red">#EE4444</color>
     <color name="orange">#F77128</color>
     <color name="green">#23C55E</color>
+    <color name="light_green">#C8F5D9</color>
+    <color name="light_red">#FFCDD2</color>
 
     <color name="green_text">#209652</color>
     <color name="green_card_bg">#26209652</color>

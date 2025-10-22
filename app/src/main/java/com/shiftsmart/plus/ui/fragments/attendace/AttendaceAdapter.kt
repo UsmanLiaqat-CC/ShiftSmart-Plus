@@ -13,6 +13,7 @@ import com.shiftsmart.plus.databinding.ItemAttendaceBinding
 import com.shiftsmart.plus.models.RecordData
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.ZoneId
 import java.util.Locale
 
 /**
@@ -29,7 +30,7 @@ class AttendanceAdapter : ListAdapter<RecordData, AttendanceAdapter.AttendanceVi
     }
 
     override fun onBindViewHolder(holder: AttendanceViewHolder, position: Int) {
-        holder.bind(getItem(position))
+        holder.bind(getItem(position), position)
     }
 
     class AttendanceViewHolder(
@@ -37,27 +38,59 @@ class AttendanceAdapter : ListAdapter<RecordData, AttendanceAdapter.AttendanceVi
         private val context: Context
     ) : RecyclerView.ViewHolder(binding.root) {
 
-        fun bind(item: RecordData) {
-            binding.storeNameTv.text = item.store?.name ?: context.getString(R.string.store_not_found)
-            binding.attendaceTypeTv.text = item.attendanceType
+        fun bind(item: RecordData, position: Int) {
+            // Set row number
+            binding.numberTv.text = (position + 1).toString()
+
+            // Set status
             binding.attendaceStatusTv.text = item.attendanceStatus
-            binding.attendaceCoordinatesTv.text = "${item.coordinates?.coordinates?.get(1).toString()},${item.coordinates?.coordinates?.get(0).toString()}"
 
-            if (!item.date.isNullOrBlank()) {
-                val zonedDateTime = ZonedDateTime.parse(item.date)
-                val dateFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault())
-                val timeFormatter = DateTimeFormatter.ofPattern("hh:mm a", Locale.getDefault())
-
-                val formattedDate = zonedDateTime.format(dateFormatter)
-                val formattedTime = zonedDateTime.format(timeFormatter)
-
-                binding.dateTv.text = "Date:"+formattedDate
-                binding.timeTv.text = "Time:"+formattedTime
-            } else {
-                binding.dateTv.text = context.getString(R.string.unknown_date)
-                binding.timeTv.text = context.getString(R.string.unknown_time)
+            // Set background color based on status
+            when (item.attendanceStatus?.lowercase()) {
+                "online" -> {
+                    binding.root.setBackgroundColor(context.getColor(R.color.light_green))
+                }
+                "offline" -> {
+                    binding.root.setBackgroundColor(context.getColor(R.color.light_red))
+                }
+                else -> {
+                    binding.root.setBackgroundColor(context.getColor(android.R.color.white))
+                }
             }
 
+            // Set type - show "auto" if type is "default"
+            binding.attendaceTypeTv.text = if (item.attendanceType.equals("default", ignoreCase = true)) {
+                "auto"
+            } else {
+                item.attendanceType
+            }
+
+            // Set In Store (Yes/No based on if store exists)
+            binding.storeNameTv.text = if (item.store != null) "Yes" else "No"
+
+            // Convert UTC date to local time and format
+            if (!item.date.isNullOrBlank()) {
+                try {
+                    // Parse the UTC time from the server
+                    val utcDateTime = ZonedDateTime.parse(item.date)
+
+                    // ✅ Format directly as UTC, without converting to local timezone
+                    val dateTimeFormatter = DateTimeFormatter.ofPattern("MM/dd/yyyy, hh:mm:ss a", Locale.getDefault())
+                    val formattedUtcDateTime = utcDateTime.format(dateTimeFormatter)
+                    binding.dateTv.text = formattedUtcDateTime
+
+                    binding.timeTv.text = item.localTime
+                } catch (e: Exception) {
+                    binding.dateTv.text = "Unknown"
+                    binding.timeTv.text = "--:--"
+                }
+            } else {
+                binding.dateTv.text = "Unknown"
+                binding.timeTv.text = "--:--"
+            }
+
+            // Store coordinates in hidden field (for compatibility)
+            binding.attendaceCoordinatesTv.text = "${item.coordinates?.coordinates?.get(1).toString()},${item.coordinates?.coordinates?.get(0).toString()}"
         }
     }
 

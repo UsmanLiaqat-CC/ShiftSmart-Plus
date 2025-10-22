@@ -122,22 +122,125 @@
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent">
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/records_rv"
+
+            <!-- Header Row with Horizontal Scroll -->
+            <HorizontalScrollView
+                android:id="@+id/header_scroll"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"/>
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/header_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="@dimen/_8sdp"
+                    android:background="@color/primary_color">
+
+                    <!-- No. Header -->
+                    <TextView
+                        android:layout_width="@dimen/_40sdp"
+                        android:layout_height="wrap_content"
+                        android:text="No."
+                        android:textStyle="bold"
+                        android:textColor="@color/white"
+                        android:textSize="@dimen/_11sdp"
+                        android:gravity="center"
+                        android:singleLine="true"/>
+
+                    <!-- Status Header -->
+                    <TextView
+                        android:layout_width="@dimen/_70sdp"
+                        android:layout_height="wrap_content"
+                        android:text="Status"
+                        android:textStyle="bold"
+                        android:textColor="@color/white"
+                        android:textSize="@dimen/_11sdp"
+                        android:gravity="center"
+                        android:paddingStart="@dimen/_4sdp"
+                        android:paddingEnd="@dimen/_4sdp"
+                        android:singleLine="true"/>
+
+                    <!-- Type Header -->
+                    <TextView
+                        android:layout_width="@dimen/_70sdp"
+                        android:layout_height="wrap_content"
+                        android:text="Type"
+                        android:textStyle="bold"
+                        android:textColor="@color/white"
+                        android:textSize="@dimen/_11sdp"
+                        android:gravity="center"
+                        android:paddingStart="@dimen/_4sdp"
+                        android:paddingEnd="@dimen/_4sdp"
+                        android:singleLine="true"/>
+
+                    <!-- Date Header -->
+                    <TextView
+                        android:layout_width="@dimen/_140sdp"
+                        android:layout_height="wrap_content"
+                        android:text="Date"
+                        android:textStyle="bold"
+                        android:textColor="@color/white"
+                        android:textSize="@dimen/_11sdp"
+                        android:gravity="center"
+                        android:paddingStart="@dimen/_4sdp"
+                        android:paddingEnd="@dimen/_4sdp"
+                        android:singleLine="true"/>
+
+                    <!-- In Store Header -->
+                    <TextView
+                        android:layout_width="@dimen/_60sdp"
+                        android:layout_height="wrap_content"
+                        android:text="In Store"
+                        android:textStyle="bold"
+                        android:textColor="@color/white"
+                        android:textSize="@dimen/_11sdp"
+                        android:gravity="center"
+                        android:paddingStart="@dimen/_4sdp"
+                        android:paddingEnd="@dimen/_4sdp"
+                        android:singleLine="true"/>
+
+                    <!-- Local Time Header -->
+                    <TextView
+                        android:layout_width="@dimen/_70sdp"
+                        android:layout_height="wrap_content"
+                        android:text="Local Time"
+                        android:textStyle="bold"
+                        android:textColor="@color/white"
+                        android:textSize="@dimen/_11sdp"
+                        android:gravity="center"
+                        android:paddingStart="@dimen/_4sdp"
+                        android:paddingEnd="@dimen/_4sdp"
+                        android:singleLine="true"/>
+
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <HorizontalScrollView
+                android:id="@+id/recycler_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_below="@id/header_scroll"
+                android:scrollbars="none">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/records_rv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:clipToPadding="false"/>
+            </HorizontalScrollView>
+
             <TextView
                 android:id="@+id/no_record_found"
                 android:layout_width="wrap_content"
-               android:layout_centerInParent="true"
+                android:layout_centerInParent="true"
                 android:layout_height="wrap_content"
                 android:textColor="@color/black"
                 android:gravity="center_vertical"
                 android:visibility="gone"
-                android:hint="@string/no_record_found"
-
-
-                />
+                android:hint="@string/no_record_found"/>
         </RelativeLayout>
 
 
