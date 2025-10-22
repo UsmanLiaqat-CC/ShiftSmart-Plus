@@ -1,16 +1,13 @@
 package com.shiftsmart.plus.ui.fragments
 
 import android.Manifest
-import android.app.Activity
 import android.app.Dialog
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.location.Location
 import android.location.LocationManager
-import android.net.ConnectivityManager
 import android.net.wifi.ScanResult
 import android.os.Build
 import android.os.Bundle
@@ -28,14 +25,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
 
-import androidx.core.view.GravityCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.material.snackbar.Snackbar
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.database.DBDao
 import com.shiftsmart.plus.database.IssueModel
@@ -44,14 +38,11 @@ import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.databinding.CustomAlertDialogBinding
 import com.shiftsmart.plus.databinding.FragmentHomeBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
-import com.shiftsmart.plus.databinding.LogoutDialogBinding
 import com.shiftsmart.plus.enums.StatusEnum
-import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
 import com.shiftsmart.plus.models.ErrorModel
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.services.MyService
-import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.ui.activities.MainActivity
 import com.shiftsmart.plus.utils.BatteryOptimizationContract
@@ -79,12 +70,15 @@ import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import androidx.core.content.PackageManagerCompat
 import androidx.core.content.UnusedAppRestrictionsConstants
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import com.shiftsmart.plus.utils.GpsStatusMonitor
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.guava.await  // <-- Add this import
-import kotlinx.coroutines.withTimeoutOrNull
-import java.sql.Date
+import kotlinx.coroutines.guava.await
 import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
@@ -148,6 +142,14 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Handle window insets for edge-to-edge display on newer devices
+        ViewCompat.setOnApplyWindowInsetsListener(mBinding.headerLayout) { v, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(top = systemBars.top)
+            insets
+        }
+
         dao = db.dbDao()
         // Initialize PermissionHandler
         // Initialize PermissionHandler with a callback
@@ -474,13 +476,65 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     time = Utils.getUTCFromTimestamp(it.timestamp)
                                 )
                             }
-                            val listDataRequest = dao.getAllRecords(user._id.toString())
+                            val allRecords = dao.getAllRecords(user._id.toString())
                                 .map { it.toDataRequest(errorList) }
-                                .toMutableList()
+
+                            // Filter out duplicate records based on time (without seconds) for default type
+                            // Also filter consecutive default records with < 4 minutes difference
+                            val listDataRequest = mutableListOf<DataRequest>()
+                            var lastDefaultTime: LocalTime? = null
+
+                            for ((index, record) in allRecords.withIndex()) {
+                                if (record.attendanceType == "default") {
+                                    val currentTimeKey = try {
+                                        record.time.substringBeforeLast(':').substringAfter('T')
+                                    } catch (e: Exception) {
+                                        record.localTime.substringBeforeLast(':')
+                                    }
+
+                                    val isDuplicate = allRecords.subList(0, index).any { prevRecord ->
+                                        if (prevRecord.attendanceType == "default") {
+                                            val prevTimeKey = try {
+                                                prevRecord.time.substringBeforeLast(':').substringAfter('T')
+                                            } catch (e: Exception) {
+                                                prevRecord.localTime.substringBeforeLast(':')
+                                            }
+                                            currentTimeKey == prevTimeKey
+                                        } else false
+                                    }
+
+                                    if (isDuplicate) {
+                                        Log.d(TAG, "Duplicate default record found at time $currentTimeKey, excluding from API call")
+                                        continue
+                                    }
+
+                                    // Check if time difference with last default record is < 4 minutes
+                                    try {
+                                        val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+                                        val currentTime = LocalTime.parse(record.localTime, formatter)
+
+                                        if (lastDefaultTime != null) {
+                                            val minutesDiff = Duration.between(lastDefaultTime, currentTime).toMinutes()
+                                            if (minutesDiff < 4) {
+                                                Log.d(TAG, "Consecutive default record with ${minutesDiff} min difference (< 4 min) at ${record.localTime}, excluding")
+                                                continue
+                                            }
+                                        }
+
+                                        lastDefaultTime = currentTime
+                                        listDataRequest.add(record)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error parsing time: ${record.localTime}", e)
+                                        listDataRequest.add(record)
+                                    }
+                                } else {
+                                    listDataRequest.add(record)
+                                }
+                            }
 
                             val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
                             Log.i(TAG, "callApiData: listDataRequest token: ${token}")
-                            Log.i(TAG, "callApiData: listDataRequest after adding object: ${listDataRequest}")
+                            Log.i(TAG, "callApiData: Total records: ${allRecords.size}, After deduplication and 4-min filter: ${listDataRequest.size}")
 
                             // **Step 6: Switch to Main thread before updating LiveData**
                             withContext(Dispatchers.Main) {
@@ -499,11 +553,11 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-//            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-//                // Fingerprint passed, proceed with your original code
-//               arrivalButtonPressed()
-//            }
-            arrivalButtonPressed()
+            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                // Fingerprint passed, proceed with your original code
+               arrivalButtonPressed()
+            }
+//            arrivalButtonPressed()
 
         }
 
@@ -834,7 +888,6 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
     }
 
-
     var isLocationFetched = false
 
     fun callApiData(lat: Double, lan: Double) {
@@ -842,128 +895,179 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         Log.i(TAG, "callApiData: 577 isLocationEnabled:${isLocationFetched}")
 
-            mBinding.statusTv.text = ""
-            try {
-                var wifiList = listOf<WifiModel>()
-                wifiScanner.scanWifiNetworks { scanResults ->
-                    wifiList = if (scanResults.isNotEmpty()) {
-                        displayWifiNetworks(scanResults)
-                        scanResults.map { result ->
-                            WifiModel(
-                                ssid = result.SSID,
-                                bssid = result.BSSID,
-                                strength = rssiToPercentage(result.level)
-                            )
-                        }
-                    } else {
-                        arrayListOf()
+        mBinding.statusTv.text = ""
+        try {
+            var wifiList = listOf<WifiModel>()
+            wifiScanner.scanWifiNetworks { scanResults ->
+                wifiList = if (scanResults.isNotEmpty()) {
+                    displayWifiNetworks(scanResults)
+                    scanResults.map { result ->
+                        WifiModel(
+                            ssid = result.SSID,
+                            bssid = result.BSSID,
+                            strength = rssiToPercentage(result.level)
+                        )
+                    }
+                } else {
+                    arrayListOf()
+                }
+
+                if (!isLocationFetched)
+                {
+
+                    Log.i(TAG, "callApiData: 588 wifiList${wifiList}-->batterySAver:${ Utils.isBatterySaverOn(requireContext())}--->optimization:${Utils.isBatteryOptimizationOff(requireContext())}")
+                    if (isLocationFetched) {
+                        Log.i(TAG, "callApiData: already in progress, exiting.")
+                        return@scanWifiNetworks
                     }
 
-                    if (!isLocationFetched)
-                    {
+                    isLocationFetched=true
+                    val user = SharedPref.getInstance(requireContext())?.getUser()
+                    user?.let { itit ->
+                        Log.i(TAG, "callApiData: 594user found")
+                        val randomUid = Utils.generateRandomFourDigitUuid()
+                        val record = RecordModel(
+                            uuid = randomUid,
+                            user_id = itit._id.toString(),
+                            lat = lat,
+                            lng = lan,
+                            localTime = Utils.getCurrent24HourTime(),
+                            time = Utils.getCurrentUtcTime(),
+                            attendanceType = btnStatus,
+                            attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
+                            isForceAttendance = false,
+                            isLocation = locationTrack.checkLocationPermissions(),
+                            wifiService = wifiScanner.isWifiEnabled(),
+                            dataService = Utils.isMobileDataEnabled(requireContext()),
+                            notification = Utils.isNotificationPermissionGranted(requireContext()),
+                            batterySaver = !Utils.isBatterySaverOn(requireContext()),
+                            batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
+                            wifi_list = wifiList
+                        )
+                        if (Utils.isInternetAvailable(requireContext())) {
 
-                        Log.i(TAG, "callApiData: 588 wifiList${wifiList}-->batterySAver:${ Utils.isBatterySaverOn(requireContext())}--->optimization:${Utils.isBatteryOptimizationOff(requireContext())}")
-                        if (isLocationFetched) {
-                            Log.i(TAG, "callApiData: already in progress, exiting.")
-                            return@scanWifiNetworks
-                        }
+                            // Handle saving or API call
+                            updateProgressDialogMessage(getString(R.string.saving_datato_server))
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
 
-                        isLocationFetched=true
-                        val user = SharedPref.getInstance(requireContext())?.getUser()
-                        user?.let { itit ->
-                            Log.i(TAG, "callApiData: 594user found")
-                            val randomUid = Utils.generateRandomFourDigitUuid()
-                            val record = RecordModel(
-                                uuid = randomUid,
-                                user_id = itit._id.toString(),
-                                lat = lat,
-                                lng = lan,
-                                localTime = Utils.getCurrent24HourTime(),
-                                time = Utils.getCurrentUtcTime(),
-                                attendanceType = btnStatus,
-                                attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
-                                isForceAttendance = false,
-                                isLocation = locationTrack.checkLocationPermissions(),
-                                wifiService = wifiScanner.isWifiEnabled(),
-                                dataService = Utils.isMobileDataEnabled(requireContext()),
-                                notification = Utils.isNotificationPermissionGranted(requireContext()),
-                                batterySaver = !Utils.isBatterySaverOn(requireContext()),
-                                batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
-                                wifi_list = wifiList
-                            )
-                            if (Utils.isInternetAvailable(requireContext())) {
+                                    val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
 
-                                // Handle saving or API call
-                                updateProgressDialogMessage(getString(R.string.saving_datato_server))
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    try {
+                                    val errorList = savedIssues.map {
+                                        ErrorModel(
+                                            key = it.issueKey,
+                                            title = it.issueTitle,
+                                            solution = it.solution,
+                                            time = Utils.getUTCFromTimestamp(it.timestamp)
+                                        )
+                                    }
 
-                                        val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
+                                    Log.i(TAG, "callApiDataTEstError: errorList:${errorList.size}")
+                                    val allRecords = dao.getAllRecords(user._id.toString())
+                                        .map { it.toDataRequest(errorList) }
 
-                                        val errorList = savedIssues.map {
-                                            ErrorModel(
-                                                key = it.issueKey,
-                                                title = it.issueTitle,
-                                                solution = it.solution,
-                                                time = Utils.getUTCFromTimestamp(it.timestamp)
-                                            )
+                                    // Filter out duplicate records and consecutive defaults with < 4 min difference
+                                    val listDataRequest = mutableListOf<DataRequest>()
+                                    var lastDefaultTime: LocalTime? = null
+
+                                    for ((index, record) in allRecords.withIndex()) {
+                                        if (record.attendanceType == "default") {
+                                            val currentTimeKey = try {
+                                                record.time.substringBeforeLast(':').substringAfter('T')
+                                            } catch (e: Exception) {
+                                                record.localTime.substringBeforeLast(':')
+                                            }
+
+                                            val isDuplicate = allRecords.subList(0, index).any { prevRecord ->
+                                                if (prevRecord.attendanceType == "default") {
+                                                    val prevTimeKey = try {
+                                                        prevRecord.time.substringBeforeLast(':').substringAfter('T')
+                                                    } catch (e: Exception) {
+                                                        prevRecord.localTime.substringBeforeLast(':')
+                                                    }
+                                                    currentTimeKey == prevTimeKey
+                                                } else false
+                                            }
+
+                                            if (isDuplicate) {
+                                                Log.d(TAG, "Duplicate default record at $currentTimeKey, excluding")
+                                                continue
+                                            }
+
+                                            try {
+                                                val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+                                                val currentTime = LocalTime.parse(record.localTime, formatter)
+
+                                                if (lastDefaultTime != null) {
+                                                    val minutesDiff = Duration.between(lastDefaultTime, currentTime).toMinutes()
+                                                    if (minutesDiff < 4) {
+                                                        Log.d(TAG, "Consecutive default with ${minutesDiff} min (< 4) at ${record.localTime}, excluding")
+                                                        continue
+                                                    }
+                                                }
+
+                                                lastDefaultTime = currentTime
+                                                listDataRequest.add(record)
+                                            } catch (e: Exception) {
+                                                Log.e(TAG, "Error parsing time: ${record.localTime}", e)
+                                                listDataRequest.add(record)
+                                            }
+                                        } else {
+                                            listDataRequest.add(record)
                                         }
-
-                                        Log.i(TAG, "callApiDataTEstError: errorList:${errorList.size}")
-                                        val listDataRequest = dao.getAllRecords(user._id.toString())
-                                            .map { it.toDataRequest(errorList) }
-                                            .toMutableList()
-
-                                        listDataRequest.add(record.toDataRequest(errorList))
-                                        Log.i(TAG, "callApiDataTEstError: listDataRequest:${listDataRequest}")
-
-                                        val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
-                                        withContext(Dispatchers.Main) { mainViewModel.sendAppData(listDataRequest, token,requireContext()) }
-                                    } catch (e: Exception) {
-                                        dismissProgressDialog()
-                                        Log.e(TAG, "Error fetching records: ${e.message}")
                                     }
+
+                                    listDataRequest.add(record.toDataRequest(errorList))
+                                    Log.i(TAG, "callApiDataTEstError: Total: ${allRecords.size}, After filters: ${listDataRequest.size - 1} + new record")
+
+                                    val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
+                                    withContext(Dispatchers.Main) { mainViewModel.sendAppData(listDataRequest, token,requireContext()) }
+                                } catch (e: Exception) {
+                                    dismissProgressDialog()
+                                    Log.e(TAG, "Error fetching records: ${e.message}")
                                 }
-                            }
-                            else {
-                                Log.i(
-                                    TAG,
-                                    "callApiData: internet not available saving to database: ${record}"
-                                )
-                                updateProgressDialogMessage(getString(R.string.saving_data_to_database))
-
-                                dismissProgressDialog()
-
-                                // Save to database when no internet is available
-                                CoroutineScope(Dispatchers.IO).launch {
-
-                                    dao.insertRecord(record)
-
-                                    withContext(Dispatchers.Main) {
-                                        showMessage(getString(R.string.offile_alert_message))
-                                    }
-                                }
-
                             }
                         }
+                        else {
+                            Log.i(
+                                TAG,
+                                "callApiData: internet not available saving to database: ${record}"
+                            )
+                            updateProgressDialogMessage(getString(R.string.saving_data_to_database))
 
+                            dismissProgressDialog()
+
+                            // Save to database when no internet is available
+                            CoroutineScope(Dispatchers.IO).launch {
+
+                                dao.insertRecord(record)
+
+                                withContext(Dispatchers.Main) {
+                                    showMessage(getString(R.string.offile_alert_message))
+                                }
+                            }
+
+                        }
                     }
 
                 }
-            } catch (e: Exception) {
-                dismissProgressDialog()
-                Log.i(TAG, "callApiData: 672 exception:${e.printStackTrace()}")
-            }finally {
-                // Reset isLocationFetched when everything is done, so the method can be called again if needed
-                isLocationFetched = false
-            }
 
+            }
+        } catch (e: Exception) {
+            dismissProgressDialog()
+            Log.i(TAG, "callApiData: 672 exception:${e.printStackTrace()}")
+        }finally {
+            // Reset isLocationFetched when everything is done, so the method can be called again if needed
+            isLocationFetched = false
         }
+
+    }
 
     ///////////////////////////////////////////////////
 
+    // dummy text
 
-/*    var isLocationFetched = false
+   /* var isLocationFetched = false
 
     fun callApiData(lat: Double, lan: Double) {
         isLocationFetched = false
@@ -1042,12 +1146,41 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     }
 
                                     Log.i(TAG, "callApiDataTEstError: errorList:${errorList.size}")
-                                    val listDataRequest = dao.getAllRecords(user._id.toString())
+                                    val allRecords = dao.getAllRecords(user._id.toString())
                                         .map { it.toDataRequest(errorList) }
-                                        .toMutableList()
+
+                                    // Filter out duplicate records based on time (without seconds) for default type
+                                    val listDataRequest = allRecords.filterIndexed { index, record ->
+                                        if (record.attendanceType == "default") {
+                                            val currentTimeKey = try {
+                                                record.time.substringBeforeLast(':').substringAfter('T')
+                                            } catch (e: Exception) {
+                                                record.localTime.substringBeforeLast(':')
+                                            }
+
+                                            val isDuplicate = allRecords.subList(0, index).any { prevRecord ->
+                                                if (prevRecord.attendanceType == "default") {
+                                                    val prevTimeKey = try {
+                                                        prevRecord.time.substringBeforeLast(':').substringAfter('T')
+                                                    } catch (e: Exception) {
+                                                        prevRecord.localTime.substringBeforeLast(':')
+                                                    }
+                                                    currentTimeKey == prevTimeKey
+                                                } else false
+                                            }
+
+                                            if (isDuplicate) {
+                                                Log.d(TAG, "Duplicate default record found at time $currentTimeKey, excluding from API call")
+                                            }
+
+                                            !isDuplicate
+                                        } else {
+                                            true
+                                        }
+                                    }.toMutableList()
 
                                     listDataRequest.add(record.toDataRequest(errorList))
-                                    Log.i(TAG, "callApiDataTEstError: listDataRequest:${listDataRequest}")
+                                    Log.i(TAG, "callApiDataTEstError: Total records: ${allRecords.size}, After deduplication: ${listDataRequest.size - 1} + new record")
 
                                     val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
                                     withContext(Dispatchers.Main) { mainViewModel.sendAppData(listDataRequest, token,requireContext()) }
@@ -1072,26 +1205,78 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     val currentUtcTime = Utils.getCurrentUtcTime()
 
                                     // Parse the initial times
-                                    val localFormatter = DateTimeFormatter.ofPattern("HH:mm")
+                                    val localFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
                                     var localTime = LocalTime.parse(currentLocalTime, localFormatter)
 
                                     // Parse UTC timestamp (format: yyyy-MM-dd'T'HH:mm:ss'Z')
                                     val utcDateFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
                                     utcDateFormatter.timeZone = TimeZone.getTimeZone("UTC")
-                                    var utcDate = utcDateFormatter.parse(currentUtcTime) ?: java.util.Date()
+                                    var utcDate = utcDateFormatter.parse(currentUtcTime) ?: Date()
 
-                                    // Insert 50 dummy records with 5-minute gaps
-                                    for (i in 1..15) {
+                                    // Insert comprehensive test dummy records with various time patterns
+                                    // This includes duplicates, <2 min, <4 min, and valid records
+                                    val testPatterns = listOf(
+                                        // Group 1: Base record + duplicates (same minute) + <2 min
+                                        0,    // 10:00:00 - Base record ✅ SHOULD BE KEPT
+                                        0,    // 10:00:15 - Duplicate (same minute) ❌ SHOULD BE FILTERED
+                                        0,    // 10:00:45 - Duplicate (same minute) ❌ SHOULD BE FILTERED
+                                        1,    // 10:01:30 - <2 min from base ❌ SHOULD BE FILTERED
+
+                                        // Group 2: Another base + <4 min spacing
+                                        3,    // 10:03:00 - <4 min from first base ❌ SHOULD BE FILTERED
+
+                                        // Group 3: Valid record + duplicates
+                                        5,    // 10:05:00 - ≥4 min from first base ✅ SHOULD BE KEPT
+                                        5,    // 10:05:20 - Duplicate ❌ SHOULD BE FILTERED
+                                        6,    // 10:06:30 - <2 min ❌ SHOULD BE FILTERED
+
+                                        // Group 4: <4 min from last valid
+                                        8,    // 10:08:00 - <4 min from 10:05 ❌ SHOULD BE FILTERED
+
+                                        // Group 5: Valid record
+                                        10,   // 10:10:00 - ≥4 min from 10:05 ✅ SHOULD BE KEPT
+
+                                        // Group 6: More test cases
+                                        11,   // 10:11:00 - <2 min ❌ SHOULD BE FILTERED
+                                        13,   // 10:13:00 - <4 min ❌ SHOULD BE FILTERED
+                                        15,   // 10:15:00 - ≥4 min ✅ SHOULD BE KEPT
+                                        15,   // 10:15:30 - Duplicate ❌ SHOULD BE FILTERED
+
+                                        // Group 7: Final valid records
+                                        20,   // 10:20:00 - ≥4 min ✅ SHOULD BE KEPT
+                                        25,   // 10:25:00 - ≥4 min ✅ SHOULD BE KEPT
+                                        30    // 10:30:00 - ≥4 min ✅ SHOULD BE KEPT
+                                    )
+
+                                    var recordCount = 0
+                                    val baseLocalTime = localTime
+                                    val baseUtcDate = utcDate
+
+                                    for ((index, minutesToAdd) in testPatterns.withIndex()) {
+                                        // Calculate time for this record
+                                        val recordLocalTime = baseLocalTime.plusMinutes(minutesToAdd.toLong())
+
+                                        val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+                                        calendar.time = baseUtcDate
+                                        calendar.add(Calendar.MINUTE, minutesToAdd)
+
+                                        // Add random seconds for duplicates in same minute
+                                        if (index > 0 && testPatterns[index] == testPatterns[index - 1]) {
+                                            calendar.add(Calendar.SECOND, (15..45).random())
+                                        }
+
+                                        val recordUtcDate = calendar.time
+
                                         val dummyUid = Utils.generateRandomFourDigitUuid()
                                         val dummyRecord = RecordModel(
                                             uuid = dummyUid,
                                             user_id = itit._id.toString(),
                                             lat = lat,
                                             lng = lan,
-                                            localTime = localTime.format(localFormatter),
-                                            time = utcDateFormatter.format(utcDate),
+                                            localTime = recordLocalTime.format(localFormatter),
+                                            time = utcDateFormatter.format(recordUtcDate),
                                             attendanceType = "default",
-                                            attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
+                                            attendanceStatus = "offline",
                                             isForceAttendance = false,
                                             isLocation = locationTrack.checkLocationPermissions(),
                                             wifiService = wifiScanner.isWifiEnabled(),
@@ -1102,21 +1287,23 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                             wifi_list = wifiList
                                         )
                                         dao.insertRecord(dummyRecord)
-                                        Log.i(TAG, "callApiData: Inserted dummy record $i/15 - LocalTime: ${localTime.format(localFormatter)}, UTC: ${utcDateFormatter.format(utcDate)}")
+                                        recordCount++
 
-                                        // Add 5 minutes to both local time and UTC time for the next record
-                                        localTime = localTime.plusMinutes(5)
+                                        val status = when {
+                                            index > 0 && testPatterns[index] == testPatterns[index - 1] -> "DUPLICATE"
+                                            minutesToAdd - (testPatterns.take(index).lastOrNull { testPatterns.indexOf(it) < index && testPatterns[testPatterns.indexOf(it)] != testPatterns[index] } ?: 0) < 2 -> "<2 MIN"
+                                            minutesToAdd - (testPatterns.take(index).lastOrNull { testPatterns.indexOf(it) < index && testPatterns[testPatterns.indexOf(it)] != testPatterns[index] } ?: 0) < 4 -> "<4 MIN"
+                                            else -> "VALID"
+                                        }
 
-                                        // Add 5 minutes to UTC date
-                                        val calendar = java.util.Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-                                        calendar.time = utcDate
-                                        calendar.add(java.util.Calendar.MINUTE, 5)
-                                        utcDate = calendar.time
+                                        Log.i(TAG, "Dummy #${index + 1}: ${recordLocalTime.format(localFormatter)} ($status)")
                                     }
 
                                     withContext(Dispatchers.Main) {
                                         dismissProgressDialog()
-                                        showMessage("${getString(R.string.offile_alert_message)} - 15 records saved")
+                                        showMessage("Test data saved: $recordCount records\n" +
+                                                "Expected to keep ~6 records after filtering\n" +
+                                                "(Duplicates and <4 min will be filtered)")
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error inserting dummy records: ${e.message}")
@@ -1144,31 +1331,6 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }*/
 
     ///////////////////////////////////////////////
-
-
-
-
-
-
-    private fun shouldInsertRecord(
-        latestRecord: RecordModel?,
-        newRecord: RecordModel
-    ): Boolean {
-        if (latestRecord == null) return true // No record yet, so insert
-
-        val formatter = DateTimeFormatter.ofPattern("HH:mm")
-        val latestTime = LocalTime.parse(latestRecord.localTime, formatter)
-        val newTime = LocalTime.parse(newRecord.localTime, formatter)
-
-//        // 1️⃣ if the new record time is BEFORE the latest record → reject immediately
-//        if (newTime.isBefore(latestTime)) {
-//            Log.d("DBDao Home", "Record not inserted: new record time ${newRecord.localTime} is before latest ${latestRecord.localTime}")
-//            return false
-//        }
-        // 2️⃣ Otherwise check if difference is >= 5 minutes
-        val duration = Duration.between(latestTime, newTime).toMinutes()
-        return duration >= 5
-    }
 
     private var clearTextHandler: Handler? = null
     private var clearTextRunnable: Runnable? = null

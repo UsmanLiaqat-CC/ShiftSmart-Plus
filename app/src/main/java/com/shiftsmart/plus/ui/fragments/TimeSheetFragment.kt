@@ -1,10 +1,14 @@
 package com.shiftsmart.plus.ui.fragments
 
 import android.os.Bundle
+import android.util.Log
 import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import com.shiftsmart.plus.databinding.FragmentTimeSheetBinding
@@ -34,6 +38,13 @@ class TimeSheetFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // Handle window insets for edge-to-edge display on newer devices
+        ViewCompat.setOnApplyWindowInsetsListener(mBinding.headerLl) { v, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(top = systemBars.top)
+            insets
+        }
+
         observeViewModel()
 
 
@@ -58,8 +69,11 @@ class TimeSheetFragment : Fragment() {
                     setDataonViews("",0,0)
                 }
                 is Resource.Success -> {
+                    
                     mBinding.progressBar.visibility = View.GONE
                     val timeSheetModel = resource.data
+                    Log.i(TAG, "observeViewModel: timeSheetModel - day: ${timeSheetModel.day}, totalHours: ${timeSheetModel.totalHours}, attendanceInMin: ${timeSheetModel.attendanceInMin}")
+
                     setDataonViews(timeSheetModel.day,timeSheetModel.totalHours,timeSheetModel.attendanceInMin)
                 }
                 is Resource.Error -> {

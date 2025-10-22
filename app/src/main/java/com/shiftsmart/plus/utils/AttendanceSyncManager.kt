@@ -30,6 +30,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import retrofit2.Response
 import java.time.Duration
@@ -54,6 +56,7 @@ class AttendanceSyncManager @Inject constructor(
     private  val TAG = "AttendanceSyncManager"
     private val managerJob = SupervisorJob()
     private val managerScope = CoroutineScope(Dispatchers.IO + managerJob)
+    private val insertMutex = Mutex() // Prevents concurrent record insertion
 
     suspend fun startSyncProcess() {
         if (!locationHelper.hasLocationPermissions()) {
@@ -177,9 +180,65 @@ class AttendanceSyncManager @Inject constructor(
                 time = Utils.getUTCFromTimestamp(it.timestamp)
             )
         }
-        val records = dao.getAllRecords(user._id.toString())
+        val allRecords = dao.getAllRecords(user._id.toString())
             .map { it.toDataRequest(errorList) }
-            .toMutableList()
+
+        // Filter out duplicate records based on time (without seconds) for default type
+        // Also filter consecutive default records with < 4 minutes difference
+        val records = mutableListOf<DataRequest>()
+        var lastDefaultTime: LocalTime? = null
+
+        for ((index, record) in allRecords.withIndex()) {
+            if (record.attendanceType == "default") {
+                // Extract time without seconds (HH:mm format)
+                val currentTimeKey = try {
+                    record.time.substringBeforeLast(':').substringAfter('T')
+                } catch (e: Exception) {
+                    record.localTime.substringBeforeLast(':')
+                }
+
+                // Check if this time already exists in previous records (duplicate check)
+                val isDuplicate = allRecords.subList(0, index).any { prevRecord ->
+                    if (prevRecord.attendanceType == "default") {
+                        val prevTimeKey = try {
+                            prevRecord.time.substringBeforeLast(':').substringAfter('T')
+                        } catch (e: Exception) {
+                            prevRecord.localTime.substringBeforeLast(':')
+                        }
+                        currentTimeKey == prevTimeKey
+                    } else false
+                }
+
+                if (isDuplicate) {
+                    Log.d(TAG, "Duplicate default record found at time $currentTimeKey, excluding from API call")
+                    continue
+                }
+
+                // Check if time difference with last default record is < 4 minutes
+                try {
+                    val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+                    val currentTime = LocalTime.parse(record.localTime, formatter)
+
+                    if (lastDefaultTime != null) {
+                        val minutesDiff = Duration.between(lastDefaultTime, currentTime).toMinutes()
+                        if (minutesDiff < 4) {
+                            Log.d(TAG, "Consecutive default record found with ${minutesDiff} minutes difference (< 4 min) at time ${record.localTime}, excluding from API call")
+                            continue
+                        }
+                    }
+
+                    lastDefaultTime = currentTime
+                    records.add(record)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing time for record: ${record.localTime}", e)
+                    records.add(record) // Add anyway if parsing fails
+                }
+            } else {
+                records.add(record) // Keep all non-default records
+            }
+        }
+
+        Log.i(TAG, "callApi: Total records: ${allRecords.size}, After deduplication and 4-min filter: ${records.size}")
 
         if (Utils.isInternetAvailable(context)) {
             val token = SharedPref.getInstance(context)?.getToken() ?: ""
@@ -353,34 +412,36 @@ class AttendanceSyncManager @Inject constructor(
 
         if (insideWindow) {
             managerScope.launch {
-                try {
-                    val existingCount = dao.countRecordByTime(record.time)
-                    if (existingCount > 0) {
-                        Log.d(TAG, "Duplicate record found for time: ${record.time}, skipping insert.")
-                        return@launch
-                    }
-
-                    val latest = dao.getLatestRecord(record.user_id)
-                    val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
-                        dao.getLatestDefaultRecord(record.user_id)
-                    } else {
-                        latest
-                    }
-
-                    Log.i(TAG, "saveDataLocally: inside window using referenceRecord:$referenceRecord\nnewRecord:$record")
-
-                    if (shouldInsertRecord(referenceRecord, record)) {
-                        dao.insertRecord(record)
-                        withContext(Dispatchers.Main) {
-                            sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+                insertMutex.withLock {
+                    try {
+                        val existingCount = dao.countRecordByTime(record.time)
+                        if (existingCount > 0) {
+                            Log.d(TAG, "Duplicate record found for time: ${record.time}, skipping insert.")
+                            return@withLock
                         }
-                        callApi(record, user)
-                    } else {
-                        Log.d(TAG, "Record not inserted: Time difference <= 5 minutes")
-                    }
 
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to save record/call API", e)
+                        val latest = dao.getLatestRecord(record.user_id)
+                        val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
+                            dao.getLatestDefaultRecord(record.user_id)
+                        } else {
+                            latest
+                        }
+
+                        Log.i(TAG, "saveDataLocally: inside window using referenceRecord:$referenceRecord\nnewRecord:$record")
+
+                        if (shouldInsertRecord(referenceRecord, record)) {
+                            dao.insertRecord(record)
+                            withContext(Dispatchers.Main) {
+                                sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
+                            }
+                            callApi(record, user)
+                        } else {
+                            Log.d(TAG, "Record not inserted: Time difference <= 5 minutes")
+                        }
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save record/call API", e)
+                    }
                 }
             }
         } else {
@@ -408,7 +469,7 @@ class AttendanceSyncManager @Inject constructor(
     ): Boolean {
         if (latestRecord == null) return true // No record yet, so insert
 
-        val formatter = DateTimeFormatter.ofPattern("HH:mm")
+        val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         val latestTime = LocalTime.parse(latestRecord.localTime, formatter)
         val newTime = LocalTime.parse(newRecord.localTime, formatter)
 

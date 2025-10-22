@@ -8,6 +8,9 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.shiftsmart.plus.R
@@ -43,6 +46,15 @@ class MyShiftsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+
+        // Handle window insets for edge-to-edge display on newer devices
+        ViewCompat.setOnApplyWindowInsetsListener(mBinding.headerLl) { v, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(top = systemBars.top)
+            insets
+        }
+
+
          user= SharedPref.getInstance(requireContext())?.getUser()
 
         setWeekTimings(
@@ -66,12 +78,22 @@ class MyShiftsFragment : Fragment() {
 //        / Setup adapter for multiple shifts
         val shiftList = user?.multipleTimeTables ?: emptyList()
 
-        adapter = TimeTableAdapter(shiftList) { selectedShift ->
-            showTimeTableDialog(selectedShift.timetable,selectedShift,shiftList)
+        if (shiftList.isNotEmpty())
+        {
+            mBinding.tvAllShift.visibility=View.VISIBLE
+            mBinding.tvMaincard.visibility=View.VISIBLE
+            adapter = TimeTableAdapter(shiftList) { selectedShift ->
+                showTimeTableDialog(selectedShift.timetable,selectedShift,shiftList)
+            }
+
+            mBinding.shiftRv.adapter = adapter
+            mBinding.shiftRv.layoutManager = LinearLayoutManager(requireContext())
+        }else{
+            mBinding.tvAllShift.visibility=View.GONE
+            mBinding.tvMaincard.visibility=View.GONE
         }
 
-        mBinding.shiftRv.adapter = adapter
-        mBinding.shiftRv.layoutManager = LinearLayoutManager(requireContext())
+
     }
 
     private fun showTimeTableDialog(

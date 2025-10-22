@@ -25,7 +25,8 @@
         android:id="@+id/header_ll"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-
+        android:paddingTop="@dimen/_10sdp"
+        android:fitsSystemWindows="true"
         app:layout_constraintEnd_toEndOf="@id/rightguidline"
         app:layout_constraintStart_toStartOf="@id/leftguidline"
         app:layout_constraintTop_toTopOf="parent">
@@ -43,10 +44,14 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_centerInParent="true"
+            android:layout_centerHorizontal="true"
+            android:layout_alignTop="@id/back_arrow"
+            android:layout_alignBottom="@id/back_arrow"
+            android:gravity="center"
             android:text="@string/list_of_errors"
             android:textSize="@dimen/_16sdp" />
     </RelativeLayout>
+
 
 
     <com.google.android.material.button.MaterialButton

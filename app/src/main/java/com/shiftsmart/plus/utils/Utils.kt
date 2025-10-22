@@ -109,7 +109,7 @@ object Utils {
 
 
     fun getCurrent24HourTime(): String {
-        val format = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val format = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         return format.format(Date())
     }
     fun checkInternetAndSetStatus(context: Context): String {

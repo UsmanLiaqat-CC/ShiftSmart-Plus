@@ -14,6 +14,9 @@ import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.ui.activities.WakeUpActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 
@@ -79,40 +82,43 @@ class AlarmReceiver : BroadcastReceiver() {
                         return
                     }
 
-                    try {
-                        val db = ShiftSmartPlusDatabase.getInstance(context)
-                        val dao = db.dbDao()
-                        val latestDefaultRecord = dao.getLatestDefaultRecord(user._id.toString())
+                    // Use coroutine to call suspend function
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val db = ShiftSmartPlusDatabase.getInstance(context)
+                            val dao = db.dbDao()
+                            val latestDefaultRecord = dao.getLatestDefaultRecord(user._id.toString())
 
-                        val currentTimeStr = Utils.getCurrent24HourTime()
-                        val formatter = DateTimeFormatter.ofPattern("HH:mm")
+                            val currentTimeStr = Utils.getCurrent24HourTime()
+                            val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
-                        val now = LocalTime.parse(currentTimeStr, formatter)
-                        val lastRecordTime = latestDefaultRecord?.localTime?.let {
-                            try { LocalTime.parse(it, formatter) } catch (e: Exception) { null }
-                        }
-
-                        val minutesDiff = lastRecordTime?.let {
-                            Duration.between(it, now).toMinutes()
-                        } ?: Long.MAX_VALUE
-
-                        if (minutesDiff >= 5) {
-                            Log.i("AlarmReceiver", "⏱ Time diff = $minutesDiff min → Executing API call")
-
-                            val apiIntent = Intent(context, MyService::class.java).apply {
-                                action = MyService.ACTION_CALL_API
+                            val now = LocalTime.parse(currentTimeStr, formatter)
+                            val lastRecordTime = latestDefaultRecord?.localTime?.let {
+                                try { LocalTime.parse(it, formatter) } catch (e: Exception) { null }
                             }
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                context.startForegroundService(apiIntent)
-                            else
-                                context.startService(apiIntent)
 
-                        } else {
-                            Log.i("AlarmReceiver", "⏸ Time diff = $minutesDiff min (<5) → Skipping API call")
+                            val minutesDiff = lastRecordTime?.let {
+                                Duration.between(it, now).toMinutes()
+                            } ?: Long.MAX_VALUE
+
+                            if (minutesDiff >= 5) {
+                                Log.i("AlarmReceiver", "⏱ Time diff = $minutesDiff min → Executing API call")
+
+                                val apiIntent = Intent(context, MyService::class.java).apply {
+                                    action = MyService.ACTION_CALL_API
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                    context.startForegroundService(apiIntent)
+                                else
+                                    context.startService(apiIntent)
+
+                            } else {
+                                Log.i("AlarmReceiver", "⏸ Time diff = $minutesDiff min (<5) → Skipping API call")
+                            }
+                            scheduleNextAlignedAlarm(context)
+                        } catch (e: Exception) {
+                            Log.e("AlarmReceiver", "Error in CALL_API logic", e)
                         }
-                        scheduleNextAlignedAlarm(context)
-                    } catch (e: Exception) {
-                        Log.e("AlarmReceiver", "Error in CALL_API logic", e)
                     }
                 }
 
