@@ -33,11 +33,16 @@ interface DBDao {
     @Query("DELETE FROM record")
     suspend fun deleteAllRecords()
 
+    @Query("DELETE FROM record WHERE user_id = :uId")
+    suspend fun deleteAllRecordsByUserId(uId: String)
+
     @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time DESC LIMIT 1")
     fun getLatestRecord(uId: String): RecordModel?
 
     @Query("SELECT * FROM record WHERE user_id = :uId AND attendanceType = 'default' ORDER BY time DESC LIMIT 1")
     fun getLatestDefaultRecord(uId: String): RecordModel?
+    @Query("SELECT COUNT(*) FROM record WHERE time = :recordTime")
+    suspend fun countRecordByTime(recordTime: String): Int
 
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

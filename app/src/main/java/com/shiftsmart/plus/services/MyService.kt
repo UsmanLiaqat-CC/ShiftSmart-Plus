@@ -122,6 +122,8 @@ class MyService : Service() {
     @Inject lateinit var attendanceSyncManager: AttendanceSyncManager
 
 
+
+
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "Service created")
@@ -147,6 +149,7 @@ class MyService : Service() {
             ACTION_STOP -> handleServiceStop()
             ACTION_RESTART -> handleServiceRestart()
             ACTION_CALL_API -> checkAndMaintainService()
+
             else -> handleRegularStart()
         }
 
@@ -443,7 +446,9 @@ class MyService : Service() {
         CoroutineScope(Dispatchers.IO).launch {
             attendanceSyncManager.startSyncProcess()
         }
+
     }
+
 
     private fun handleServiceStart() {
         Log.i(TAG, "Starting service")
@@ -553,6 +558,7 @@ class MyService : Service() {
         const val ACTION_STOP = "STOP_SERVICE"
         const val ACTION_CALL_API = "CALL_API"
         const val ACTION_RESTART = "RESTART_SERVICE"
+        const val ACTION_SYNC_DATA = "SYNC_DATA" // 👈 add this new one
     }
 
 }

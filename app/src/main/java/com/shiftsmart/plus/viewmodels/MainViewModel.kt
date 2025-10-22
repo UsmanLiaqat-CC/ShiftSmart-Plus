@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.models.AttendaceResponseModel
 import com.shiftsmart.plus.models.DataRequest
@@ -16,6 +17,7 @@ import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.UserResponseModel
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Resource
+import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.parseErrorBody
 
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -40,7 +42,8 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     private val repository: MainRepository,
     @ApplicationContext val application: Context,
-):ViewModel() {
+):ViewModel()
+{
     private  val TAG = "MainViewModel"
 
     private val _sendDataResponse = MutableLiveData<Resource<AttendaceResponseModel>>()
@@ -75,11 +78,13 @@ class MainViewModel @Inject constructor(
         CoroutineScope(Dispatchers.IO  + SupervisorJob() + exceptionHandler)
     }
 
-    fun sendAppData(listDataRequest: List<DataRequest>, token:String) {
+  /*  fun sendAppData(listDataRequest: List<DataRequest>, token:String, context: Context) {
 
-        Log.i(TAG, "sendAppData: dataREquest: ${listDataRequest}\nToken:${token}")
 
         _sendDataResponse.value = Resource.Loading(application.getString(R.string.saving_datato_server))
+
+        val token = SharedPref.getInstance(context)?.getToken() ?: ""
+        Log.i(TAG, "sendAppData: dataREquest: ${listDataRequest}\nToken:${token}")
 
         parentScope.launch {
             try {
@@ -97,12 +102,15 @@ class MainViewModel @Inject constructor(
                         if (attendaceResponseModel.errors?.isNotEmpty() == true) {
                             Log.i(TAG, "sendAppData: response inner errors: ${attendaceResponseModel}")
 
-                            if (attendaceResponseModel.errors[0].code==401||attendaceResponseModel.errors[0].code==422 ||attendaceResponseModel.errors[0].code==500)
-                            {
-                                _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
-                            }else{
-                                _sendDataResponse.value = Resource.Error(attendaceResponseModel.errors[0].detail)
-                            }
+//                            if (attendaceResponseModel.errors[0].code==401||attendaceResponseModel.errors[0].code==422 ||attendaceResponseModel.errors[0].code==500)
+//                            {
+//                                _sendDataResponse.value = Resource.Error("${application.getString(R.string.unauthorize)} ${attendaceResponseModel.errors[0].code}")
+//                            }else{
+//                                _sendDataResponse.value = Resource.Error(attendaceResponseModel.errors[0].detail)
+//                            }
+
+                            _sendDataResponse.value = Resource.Error("error")
+
                         }
                         else {
                             Log.i(TAG, "sendAppData: response inner success: ${attendaceResponseModel}")
@@ -112,22 +120,24 @@ class MainViewModel @Inject constructor(
                     }
                     else {
                         val errorResponse = response.parseErrorBody()
-                        Log.i(TAG, "sendAppData: response not success: ${errorResponse}-->responseBody:${response.body()}")
+                        Log.i(TAG, "sendAppData: response not success: ${errorResponse}-->responseBody:${response.body()}\ndataREquest:${listDataRequest}")
                         if (errorResponse != null && errorResponse.errors?.isNotEmpty() == true) {
-                            if (errorResponse.errors[0].code==401 ||errorResponse.errors[0].code==422 || errorResponse.errors[0].code==500)
-                            {
-                                _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
-                            }else{
-                                _sendDataResponse.value = Resource.Error(errorResponse.errors[0].detail)
-                            }
+//                            if (errorResponse.errors[0].code==401 ||errorResponse.errors[0].code==422 || errorResponse.errors[0].code==500)
+//                            {
+//                                _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
+//                            }else{
+//                                _sendDataResponse.value = Resource.Error(errorResponse.errors[0].detail)
+//                            }
+                            _sendDataResponse.value = Resource.Error(errorResponse.errors[0].detail)
                         }
                         else {
-                            if (response.code()==401 || response.code()==422 ||response.code()==500)
-                            {
-                                _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
-                            }else{
-                                _sendDataResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
-                            }
+//                            if (response.code()==401 || response.code()==422 ||response.code()==500)
+//                            {
+//                                _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
+//                            }else{
+//                                _sendDataResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
+//                            }
+                            _sendDataResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
 
                         }
                     }
@@ -159,6 +169,71 @@ class MainViewModel @Inject constructor(
         }
 
     }
+*/
+
+    fun sendAppData(listDataRequest: List<DataRequest>, token: String, context: Context) {
+        val authToken = SharedPref.getInstance(context)?.getToken() ?: ""
+
+
+        _sendDataResponse.postValue(Resource.Loading(application.getString(R.string.saving_datato_server)))
+
+        parentScope.launch {
+            try {
+                Log.i(TAG, "sendAppData() -> request size: ${listDataRequest.size}, token: $authToken")
+
+                // Run the API call entirely on IO thread
+                val response = repository.sendData(listDataRequest, authToken)
+
+                if (response.isSuccessful) {
+                    val attendaceResponse = response.body()
+
+                    if (attendaceResponse == null) {
+                        _sendDataResponse.postValue(Resource.Error("Empty response from server"))
+                        return@launch
+                    }
+
+                    if (attendaceResponse.errors?.isNotEmpty() == true) {
+                        val firstError = attendaceResponse.errors.first()
+                        Log.w(TAG, "Server responded with error: $firstError")
+                        _sendDataResponse.postValue(Resource.Error(firstError.detail ?: "Unknown server error"))
+                    } else {
+                        Log.i(TAG, "sendAppData() success: ${attendaceResponse.data?.size ?: 0} records synced.")
+                        _sendDataResponse.postValue(Resource.Success(attendaceResponse))
+                    }
+
+                } else {
+                    val errorResponse = response.parseErrorBody()
+                    val errorMessage = errorResponse?.errors?.firstOrNull()?.detail
+                        ?: "Failed with code ${response.code()}: ${response.message()}"
+
+                    Log.e(TAG, "sendAppData() HTTP Error: $errorMessage")
+                    _sendDataResponse.postValue(Resource.Error(errorMessage))
+                }
+
+            } catch (e: IOException) {
+                Log.e(TAG, "Network error", e)
+                _sendDataResponse.postValue(
+                    Resource.Error(application.getString(R.string.network_error_please_check_your_internet_connection))
+                )
+
+            } catch (e: HttpException) {
+                val message = when (e.code()) {
+                    500 -> application.getString(R.string.server_error_please_try_again_later)
+                    404 -> application.getString(R.string.resource_not_found_please_check_the_url)
+                    else -> application.getString(R.string.http_error, e.message())
+                }
+                Log.e(TAG, "HTTP Exception: ${e.code()} ${e.message()}")
+                _sendDataResponse.postValue(Resource.Error(message))
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error", e)
+                _sendDataResponse.postValue(
+                    Resource.Error(application.getString(R.string.unknown_error, e.localizedMessage))
+                )
+            }
+        }
+    }
+
 
     fun getTimeSheet(userId: String) {
 

@@ -115,6 +115,8 @@ class AlarmReceiver : BroadcastReceiver() {
                         Log.e("AlarmReceiver", "Error in CALL_API logic", e)
                     }
                 }
+
+
             }
 
         } catch (e: Exception) {

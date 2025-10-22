@@ -28,6 +28,7 @@ import com.shiftsmart.plus.utils.Utils.toLocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import retrofit2.Response
@@ -187,29 +188,34 @@ class AttendanceSyncManager @Inject constructor(
                 Log.i(TAG, "MRcallApi: apiResponse:${response.body()}")
 
                 if (response.isSuccessful) {
-
-
                     val body = response.body()
+
+                    if (body == null) {
+                        Log.e(TAG, "API call successful but body is null")
+                        sendNotificationUpdate("Empty response from server")
+                        return
+                    }
+
+                    Log.i(TAG, "callApi: Response body message: ${body.message}")
+
 //                    apiCallInProgress = false
                     // ✅ Check if body contains an error-like status
-                    val hasErrorInData = body?.data?.any { it.status.equals("error", ignoreCase = true) } == true
+                    val hasErrorInData = body.data.any { it.status.equals("error", ignoreCase = true) }
                     if (hasErrorInData) {
-                        val errorMessages = body?.data
-                            ?.filter { it.status.equals("error", ignoreCase = true) }
-                            ?.joinToString("\n") { it.message ?: "Unknown error" }
+                        val errorMessages = body.data
+                            .filter { it.status.equals("error", ignoreCase = true) }
+                            .joinToString("\n") { it.message }
 
-                        body?.data?.forEach { attendance ->
+                        body.data.forEach { attendance ->
                             dao.deleteRecordByUuid(attendance.UUID)
                         }
                         Log.e(TAG, "API logical error: $errorMessages")
-                        sendNotificationUpdate(errorMessages ?: "Something went wrong")
+                        sendNotificationUpdate(errorMessages)
                     } else {
                         Log.i(TAG, "API call successful, handling response.")
                         handleSuccessfulResponse(body, record)
-                        sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
                     }
                 } else {
-
 
                     Log.e(TAG, "API call failed: ${response.errorBody()}")
                     handleUnsuccessfulResponse(response)
@@ -231,11 +237,62 @@ class AttendanceSyncManager @Inject constructor(
         response: AttendaceResponseModel?,
         record: RecordModel
     ) {
-        response?.data?.forEach { attendance ->
-            // Handle successful response, maybe clean up the records locally if successful
-            dao.deleteRecordByUuid(attendance.UUID)
+        response?.let { attendanceResponse ->
+            // Get the main message from response
+            val mainMessage = attendanceResponse.message
+            Log.i(TAG, "handleSuccessfulResponse: mainMessage: $mainMessage")
+
+            // Check if main message requires deleting all user records
+            if (mainMessage.contains("Multiple attendance records", ignoreCase = true))
+            {
+
+                Log.i(TAG, "handleSuccessfulResponse: Deleting all records based on message: $mainMessage")
+                sendNotificationUpdate(mainMessage)
+
+                // Delete all records for this user
+                val user = SharedPref.getInstance(context)?.getUser()
+                user?.let {
+                    val userId = it._id.toString()
+                    dao.deleteAllRecordsByUserId(userId)
+                    Log.i(TAG, "handleSuccessfulResponse: Deleted all records for user: $userId")
+                }
+            } else {
+                // Show main message if not related to deletion
+                if (mainMessage.isNotEmpty()) {
+                    sendNotificationUpdate(mainMessage)
+                }
+            }
+
+            // Iterate through attendance data list
+            attendanceResponse.data.forEach { attendance ->
+                Log.i(TAG, "handleSuccessfulResponse: Processing attendance: $attendance")
+
+                when (attendance.attendanceStatus) {
+                    "online" -> {
+                        // Delete record by UUID
+                        dao.deleteRecordByUuid(attendance.UUID)
+                        Log.i(TAG, "handleSuccessfulResponse: Deleted online record UUID: ${attendance.UUID}")
+                    }
+
+                    "offline" -> {
+                        // If status is "offline", delete corresponding record from database
+                        dao.deleteRecordByUuid(attendance.UUID)
+                        Log.i(TAG, "handleSuccessfulResponse: Deleted offline record UUID: ${attendance.UUID}")
+                    }
+
+                    else -> {
+                        // Handle any other status by deleting the record
+                        dao.deleteRecordByUuid(attendance.UUID)
+                        Log.i(TAG, "handleSuccessfulResponse: Deleted record with status '${attendance.attendanceStatus}', UUID: ${attendance.UUID}")
+                    }
+                }
+            }
+
+            Log.i(TAG, "API data successfully processed and cleaned.")
+
+            // Send final sync notification
+            sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
         }
-        Log.i(TAG, "API data successfully processed and cleaned.")
     }
 
     private suspend fun handleUnsuccessfulResponse(response: Response<AttendaceResponseModel>) {
@@ -260,73 +317,7 @@ class AttendanceSyncManager @Inject constructor(
      * -1h/+1h buffer rule as the rest of the app. When outside the window, the service
      * is asked to stop.
      */
-/*
-    private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel) {
-//        Log.i("DBDao", "Saving data locally for record: $record")
 
-        // 1) Pick the effective timetable for TODAY (active multi-table wins; else fallback to 'shifts')
-        val todayDate = LocalDate.now()
-        val activeMulti = user.multipleTimeTables?.find { mt ->
-            val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
-            todayDate in s..e
-        }
-        val effectiveRange: List<TimeRange> = activeMulti?.timetable?.range ?: shifts
-
-        val todayName = getCurrentDayName()
-        val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
-
-        if (todayShift?.start != null && todayShift.end != null) {
-//            Log.i("DBDao", "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
-
-            // 2) Use your centralized buffer rule (-1h/+1h). This helper should already handle
-            //    overnight spans and the +/- buffer (you’re using it elsewhere in the service).
-            val insideWindow = ShiftUtils.isTimeWithinBufferRange(
-                Calendar.getInstance(),
-                todayShift.start,
-                todayShift.end
-            )
-
-            if (insideWindow) {
-                // 3) Perform DB and API work on IO; dedupe by your latest-record rule
-                managerScope.launch {
-                    try {
-
-                        val latest = dao.getLatestRecord(record.user_id)
-                        val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
-                            // if latest is not default, go find the last default
-                            dao.getLatestDefaultRecord(record.user_id)
-                        } else {
-                            latest
-                        }
-
-                        Log.i("DBDao", "saveDataLocally: using referenceRecord:$referenceRecord\nnewRecord:$record")
-
-                        if (shouldInsertRecord(referenceRecord, record)) {
-                            dao.insertRecord(record)
-
-                            withContext(Dispatchers.Main) {
-                                sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
-                            }
-
-                            callApi(record, user)
-                        } else {
-                            Log.d("DBDao", "Record not inserted: Time difference <= 5 minutes")
-                        }
-
-                    } catch (e: Exception) {
-                        Log.e("DBDao", "Failed to save record/call API", e)
-                    }
-                }
-            } else {
-                // 4) Outside window → finish service (keeps behavior consistent with the rest of the flow)
-                sendFinishBroadcastAndLog("Current time is outside shift period, NOT scheduling API Worker.")
-            }
-        } else {
-            // OFF or no shift today
-            sendFinishBroadcastAndLog("No shift found for today.")
-        }
-    }
-*/
     fun getPreviousDayName(): String {
         val cal = Calendar.getInstance()
         cal.add(Calendar.DAY_OF_YEAR, -1)
@@ -363,6 +354,12 @@ class AttendanceSyncManager @Inject constructor(
         if (insideWindow) {
             managerScope.launch {
                 try {
+                    val existingCount = dao.countRecordByTime(record.time)
+                    if (existingCount > 0) {
+                        Log.d(TAG, "Duplicate record found for time: ${record.time}, skipping insert.")
+                        return@launch
+                    }
+
                     val latest = dao.getLatestRecord(record.user_id)
                     val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
                         dao.getLatestDefaultRecord(record.user_id)
@@ -429,5 +426,7 @@ class AttendanceSyncManager @Inject constructor(
         wifiScanResults.clear()
         wifiScanResults.addAll(wifiList);
     }
+
+
 
 }

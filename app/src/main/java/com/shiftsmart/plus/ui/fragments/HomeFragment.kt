@@ -82,6 +82,11 @@ import androidx.core.content.UnusedAppRestrictionsConstants
 import com.shiftsmart.plus.utils.GpsStatusMonitor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await  // <-- Add this import
+import kotlinx.coroutines.withTimeoutOrNull
+import java.sql.Date
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 @AndroidEntryPoint
 class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
@@ -479,7 +484,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
                             // **Step 6: Switch to Main thread before updating LiveData**
                             withContext(Dispatchers.Main) {
-                                mainViewModel.sendAppData(listDataRequest, token)
+                                mainViewModel.sendAppData(listDataRequest, token,requireContext())
                             }
                         } catch (e: Exception) {
                             dismissProgressDialog()
@@ -494,10 +499,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-                // Fingerprint passed, proceed with your original code
-               arrivalButtonPressed()
-            }
+//            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+//                // Fingerprint passed, proceed with your original code
+//               arrivalButtonPressed()
+//            }
+            arrivalButtonPressed()
+
         }
 
         mBinding.departBtn.setOnClickListener {
@@ -654,12 +661,42 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                 is Resource.Success -> {
                     val attendanceResponse = resource.data
 
+                    // Get the main message from response
+                    val mainMessage = attendanceResponse.message
                     Log.i(TAG, "setUpObserver: successResponse:${attendanceResponse}")
+                    Log.i(TAG, "setUpObserver: mainMessage:${mainMessage}")
+
                     CoroutineScope(Dispatchers.Main).launch {
                         dismissProgressDialog()
                         if (isSyncPressed) {
                             showMessage(getString(R.string.data_sync_successfully_to_server))
                             isSyncPressed = false
+                        }
+
+                        // Check if main message requires deleting all user records
+                        if (mainMessage.contains("Multiple attendance records", ignoreCase = true)) {
+
+                            withContext(Dispatchers.Main) {
+                                showMessage(mainMessage)
+                            }
+
+                            // Delete all records for this user
+                            withContext(Dispatchers.IO) {
+                                val user = SharedPref.getInstance(requireContext())?.getUser()
+                                user?.let {
+                                    val userId = it._id.toString()
+                                    db.dbDao().deleteAllRecordsByUserId(userId)
+                                    Log.i(TAG, "setUpObserver: Deleted all records for user: $userId")
+                                }
+                            }
+                        }
+                        else {
+                            // Show main message if not related to deletion
+                            if (mainMessage.isNotEmpty() && !isSyncPressed) {
+                                withContext(Dispatchers.Main) {
+                                    showMessage(mainMessage)
+                                }
+                            }
                         }
 
                         // Iterate through attendance data list
@@ -881,7 +918,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                         Log.i(TAG, "callApiDataTEstError: listDataRequest:${listDataRequest}")
 
                                         val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
-                                        withContext(Dispatchers.Main) { mainViewModel.sendAppData(listDataRequest, token) }
+                                        withContext(Dispatchers.Main) { mainViewModel.sendAppData(listDataRequest, token,requireContext()) }
                                     } catch (e: Exception) {
                                         dismissProgressDialog()
                                         Log.e(TAG, "Error fetching records: ${e.message}")
@@ -899,14 +936,8 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
                                 // Save to database when no internet is available
                                 CoroutineScope(Dispatchers.IO).launch {
-                                    val latest = dao.getLatestRecord(record.user_id)
 
-//                                    if (shouldInsertRecord(latest, record)) {
-//                                        dao.insertRecord(record)
-////                                        sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
-//                                    }
                                     dao.insertRecord(record)
-//                                    sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
 
                                     withContext(Dispatchers.Main) {
                                         showMessage(getString(R.string.offile_alert_message))
@@ -929,6 +960,196 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         }
 
+    ///////////////////////////////////////////////////
+
+
+/*    var isLocationFetched = false
+
+    fun callApiData(lat: Double, lan: Double) {
+        isLocationFetched = false
+
+        Log.i(TAG, "callApiData: 577 isLocationEnabled:${isLocationFetched}")
+
+//        CoroutineScope(Dispatchers.IO).launch {
+//            db.dbDao().deleteAllRecords()
+//        }
+
+        mBinding.statusTv.text = ""
+        try {
+            var wifiList = listOf<WifiModel>()
+            wifiScanner.scanWifiNetworks { scanResults ->
+                wifiList = if (scanResults.isNotEmpty()) {
+                    displayWifiNetworks(scanResults)
+                    scanResults.map { result ->
+                        WifiModel(
+                            ssid = result.SSID,
+                            bssid = result.BSSID,
+                            strength = rssiToPercentage(result.level)
+                        )
+                    }
+                } else {
+                    arrayListOf()
+                }
+
+                if (!isLocationFetched)
+                {
+
+                    Log.i(TAG, "callApiData: 588 wifiList${wifiList}-->batterySAver:${ Utils.isBatterySaverOn(requireContext())}--->optimization:${Utils.isBatteryOptimizationOff(requireContext())}")
+                    if (isLocationFetched) {
+                        Log.i(TAG, "callApiData: already in progress, exiting.")
+                        return@scanWifiNetworks
+                    }
+
+                    isLocationFetched=true
+                    val user = SharedPref.getInstance(requireContext())?.getUser()
+                    user?.let { itit ->
+                        Log.i(TAG, "callApiData: 594user found")
+                        val randomUid = Utils.generateRandomFourDigitUuid()
+                        val record = RecordModel(
+                            uuid = randomUid,
+                            user_id = itit._id.toString(),
+                            lat = lat,
+                            lng = lan,
+                            localTime = Utils.getCurrent24HourTime(),
+                            time = Utils.getCurrentUtcTime(),
+                            attendanceType = btnStatus,
+                            attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
+                            isForceAttendance = false,
+                            isLocation = locationTrack.checkLocationPermissions(),
+                            wifiService = wifiScanner.isWifiEnabled(),
+                            dataService = Utils.isMobileDataEnabled(requireContext()),
+                            notification = Utils.isNotificationPermissionGranted(requireContext()),
+                            batterySaver = !Utils.isBatterySaverOn(requireContext()),
+                            batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
+                            wifi_list = wifiList
+                        )
+                        if (Utils.isInternetAvailable(requireContext())) {
+
+                            // Handle saving or API call
+                            updateProgressDialogMessage(getString(R.string.saving_datato_server))
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
+
+                                    val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
+
+                                    val errorList = savedIssues.map {
+                                        ErrorModel(
+                                            key = it.issueKey,
+                                            title = it.issueTitle,
+                                            solution = it.solution,
+                                            time = Utils.getUTCFromTimestamp(it.timestamp)
+                                        )
+                                    }
+
+                                    Log.i(TAG, "callApiDataTEstError: errorList:${errorList.size}")
+                                    val listDataRequest = dao.getAllRecords(user._id.toString())
+                                        .map { it.toDataRequest(errorList) }
+                                        .toMutableList()
+
+                                    listDataRequest.add(record.toDataRequest(errorList))
+                                    Log.i(TAG, "callApiDataTEstError: listDataRequest:${listDataRequest}")
+
+                                    val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
+                                    withContext(Dispatchers.Main) { mainViewModel.sendAppData(listDataRequest, token,requireContext()) }
+                                } catch (e: Exception) {
+                                    dismissProgressDialog()
+                                    Log.e(TAG, "Error fetching records: ${e.message}")
+                                }
+                            }
+                        }
+                        else {
+                            Log.i(
+                                TAG,
+                                "callApiData: internet not available saving to database: ${record}"
+                            )
+                            updateProgressDialogMessage(getString(R.string.saving_data_to_database))
+
+                            // Save 500 dummy records to database when no internet is available
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
+                                    // Get current time for the first record
+                                    val currentLocalTime = Utils.getCurrent24HourTime()
+                                    val currentUtcTime = Utils.getCurrentUtcTime()
+
+                                    // Parse the initial times
+                                    val localFormatter = DateTimeFormatter.ofPattern("HH:mm")
+                                    var localTime = LocalTime.parse(currentLocalTime, localFormatter)
+
+                                    // Parse UTC timestamp (format: yyyy-MM-dd'T'HH:mm:ss'Z')
+                                    val utcDateFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
+                                    utcDateFormatter.timeZone = TimeZone.getTimeZone("UTC")
+                                    var utcDate = utcDateFormatter.parse(currentUtcTime) ?: java.util.Date()
+
+                                    // Insert 50 dummy records with 5-minute gaps
+                                    for (i in 1..15) {
+                                        val dummyUid = Utils.generateRandomFourDigitUuid()
+                                        val dummyRecord = RecordModel(
+                                            uuid = dummyUid,
+                                            user_id = itit._id.toString(),
+                                            lat = lat,
+                                            lng = lan,
+                                            localTime = localTime.format(localFormatter),
+                                            time = utcDateFormatter.format(utcDate),
+                                            attendanceType = "default",
+                                            attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
+                                            isForceAttendance = false,
+                                            isLocation = locationTrack.checkLocationPermissions(),
+                                            wifiService = wifiScanner.isWifiEnabled(),
+                                            dataService = Utils.isMobileDataEnabled(requireContext()),
+                                            notification = Utils.isNotificationPermissionGranted(requireContext()),
+                                            batterySaver = !Utils.isBatterySaverOn(requireContext()),
+                                            batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
+                                            wifi_list = wifiList
+                                        )
+                                        dao.insertRecord(dummyRecord)
+                                        Log.i(TAG, "callApiData: Inserted dummy record $i/15 - LocalTime: ${localTime.format(localFormatter)}, UTC: ${utcDateFormatter.format(utcDate)}")
+
+                                        // Add 5 minutes to both local time and UTC time for the next record
+                                        localTime = localTime.plusMinutes(5)
+
+                                        // Add 5 minutes to UTC date
+                                        val calendar = java.util.Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+                                        calendar.time = utcDate
+                                        calendar.add(java.util.Calendar.MINUTE, 5)
+                                        utcDate = calendar.time
+                                    }
+
+                                    withContext(Dispatchers.Main) {
+                                        dismissProgressDialog()
+                                        showMessage("${getString(R.string.offile_alert_message)} - 15 records saved")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error inserting dummy records: ${e.message}")
+                                    withContext(Dispatchers.Main) {
+                                        dismissProgressDialog()
+                                        showMessage(getString(R.string.offile_alert_message))
+                                    }
+                                }
+                            }
+
+                        }
+                    }
+
+                }
+
+            }
+        } catch (e: Exception) {
+            dismissProgressDialog()
+            Log.i(TAG, "callApiData: 672 exception:${e.printStackTrace()}")
+        }finally {
+            // Reset isLocationFetched when everything is done, so the method can be called again if needed
+            isLocationFetched = false
+        }
+
+    }*/
+
+    ///////////////////////////////////////////////
+
+
+
+
+
+
     private fun shouldInsertRecord(
         latestRecord: RecordModel?,
         newRecord: RecordModel
@@ -948,6 +1169,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         val duration = Duration.between(latestTime, newTime).toMinutes()
         return duration >= 5
     }
+
     private var clearTextHandler: Handler? = null
     private var clearTextRunnable: Runnable? = null
 
@@ -976,7 +1198,6 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         // Post the runnable with a 5-second delay
         clearTextHandler?.postDelayed(clearTextRunnable!!, 5000)
     }
-
 
     override fun onDestroy() {
         super.onDestroy()
