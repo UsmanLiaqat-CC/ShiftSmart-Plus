@@ -569,11 +569,11 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-                // Fingerprint passed, proceed with your original code
-               arrivalButtonPressed()
-            }
-//            arrivalButtonPressed()
+//            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+//                // Fingerprint passed, proceed with your original code
+//               arrivalButtonPressed()
+//            }
+            arrivalButtonPressed()
 
         }
 
