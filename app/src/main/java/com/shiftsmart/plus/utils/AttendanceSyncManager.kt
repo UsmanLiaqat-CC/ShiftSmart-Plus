@@ -396,7 +396,6 @@ class AttendanceSyncManager @Inject constructor(
             }
         }
         else {
-
             Log.e(TAG, "No internet available for API call.")
 //            apiCallInProgress = false
         }
@@ -535,18 +534,45 @@ class AttendanceSyncManager @Inject constructor(
                         // ✅ STEP 2: Get the latest record for time difference validation
                         val latest = dao.getLatestRecord(record.user_id)
                         val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
-                            dao.getLatestDefaultRecord(record.user_id)
+                            val lastDefault = dao.getLatestDefaultRecord(record.user_id)
+                            Log.i(TAG, "Latest record is ${latest.attendanceType} type at ${latest.localTime}, using last DEFAULT record at ${lastDefault?.localTime} for comparison")
+                            lastDefault
                         } else {
+                            Log.i(TAG, "Latest record is ${latest?.attendanceType} type at ${latest?.localTime}, using it as reference")
                             latest
                         }
 
                         Log.i(TAG, "saveDataLocally: inside window using referenceRecord:$referenceRecord\nnewRecord:$record")
 
-                        // ✅ STEP 3: Validate using 4-minute gap enforcement
-                        // This applies to ALL record types and ensures:
-                        // - No out-of-order time insertions
-                        // - Minimum 4-minute gap between consecutive records
-                        if (shouldInsertRecord(referenceRecord, record)) {
+                        // ✅ STEP 3: Insert dummy records if needed to fill gaps (only for default types)
+                        if (record.attendanceType == StatusEnum.default.name) {
+                            insertDummyRecordsIfNeeded(referenceRecord, record)
+
+                            // ✅ IMPORTANT: After inserting dummy records, we need to refresh the reference
+                            // to use the LAST INSERTED DUMMY RECORD for validation, not the old reference
+                            // This ensures proper gap validation
+                        }
+
+                        // ✅ STEP 4: Get the updated reference record after dummy insertion
+                        // This is critical because if dummy records were inserted, we need to validate
+                        // against the LAST dummy record, not the original reference
+                        val latestAfterDummy = dao.getLatestRecord(record.user_id)
+                        val updatedReferenceRecord = if (latestAfterDummy != null && latestAfterDummy.attendanceType != StatusEnum.default.name) {
+                            dao.getLatestDefaultRecord(record.user_id)
+                        } else {
+                            latestAfterDummy
+                        }
+
+                        // ✅ STEP 5: Validate using 4-minute gap enforcement
+                        // For DEFAULT records: compare against last DEFAULT record (which might be a dummy we just inserted)
+                        // For ARRIVAL/DEPARTURE: compare against the actual latest record
+                        val recordToCompare = if (record.attendanceType == StatusEnum.default.name) {
+                            updatedReferenceRecord // Use updated last default record for gap validation
+                        } else {
+                            latestAfterDummy // Use actual latest record for arrival/departure
+                        }
+
+                        if (shouldInsertRecord(recordToCompare, record)) {
                             dao.insertRecord(record)
                             withContext(Dispatchers.Main) {
                                 sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
@@ -580,6 +606,116 @@ class AttendanceSyncManager @Inject constructor(
         intent.putExtra("message", message)
         LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
     }
+
+    /**
+     * Inserts dummy records with 5-minute intervals between the last default record and the current record.
+     * This fills gaps when there's more than 5 minutes difference between consecutive records.
+     *
+     * IMPORTANT: This method should ALWAYS receive the last DEFAULT type record as reference,
+     * not arrival/departure records. The caller is responsible for filtering.
+     *
+     * @param lastDefaultRecord The last default record in the database
+     * @param currentRecord The new record that is about to be inserted
+     */
+    private suspend fun insertDummyRecordsIfNeeded(
+        lastDefaultRecord: RecordModel?,
+        currentRecord: RecordModel
+    ) {
+        // Only proceed if there's a previous default record
+        if (lastDefaultRecord == null) {
+            Log.d(TAG, "❌ No previous default record found, skipping dummy record insertion")
+            return
+        }
+
+        try {
+            // Parse UTC times using SimpleDateFormat
+            // Note: The format is "2025-10-23T12:25:10Z" (without milliseconds)
+            val utcFormatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.getDefault())
+            utcFormatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
+
+            val lastUtcTime = utcFormatter.parse(lastDefaultRecord.time)
+            val currentUtcTime = utcFormatter.parse(currentRecord.time)
+
+            if (lastUtcTime == null || currentUtcTime == null) {
+                Log.e(TAG, "❌ Failed to parse UTC times for dummy record insertion")
+                return
+            }
+
+            // Calculate time difference in minutes
+            val diffMinutes = ((currentUtcTime.time - lastUtcTime.time) / (1000 * 60)).toInt()
+
+            Log.i(TAG, "⏱️ Gap Analysis: Last DEFAULT record: ${lastDefaultRecord.localTime} (${lastDefaultRecord.attendanceType})")
+            Log.i(TAG, "⏱️ Gap Analysis: Current record: ${currentRecord.localTime} (${currentRecord.attendanceType})")
+            Log.i(TAG, "⏱️ Gap Analysis: Time difference = $diffMinutes minutes")
+
+            // Only insert dummy records if gap is more than 5 minutes
+            if (diffMinutes <= 5) {
+                Log.i(TAG, "✅ Gap is $diffMinutes minutes (<= 5), no dummy records needed")
+                return
+            }
+
+            // Calculate how many dummy records we need to insert
+            val numberOfDummyRecords = (diffMinutes / 5) - 1
+
+            if (numberOfDummyRecords <= 0) {
+                Log.i(TAG, "✅ No dummy records needed for gap of $diffMinutes minutes")
+                return
+            }
+
+            Log.i(TAG, "📝 FILLING GAP: Inserting $numberOfDummyRecords dummy records to fill $diffMinutes minute gap")
+            Log.i(TAG, "📝 Template: Using last DEFAULT record data (lat=${lastDefaultRecord.lat}, lng=${lastDefaultRecord.lng})")
+
+            // Local time formatter
+            val localFormatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+
+            // Insert dummy records at 5-minute intervals
+            for (i in 1..numberOfDummyRecords) {
+                val utcCalendar = java.util.Calendar.getInstance()
+                utcCalendar.time = lastUtcTime
+                utcCalendar.add(java.util.Calendar.MINUTE, i * 5)
+                val dummyUtcTime = utcFormatter.format(utcCalendar.time)
+
+                // Calculate local time by adding same interval to last record's local time
+                val lastLocalTime = localFormatter.parse(lastDefaultRecord.localTime)
+                val localCalendar = java.util.Calendar.getInstance()
+                if (lastLocalTime != null) {
+                    localCalendar.time = lastLocalTime
+                    localCalendar.add(java.util.Calendar.MINUTE, i * 5)
+                }
+                val dummyLocalTime = localFormatter.format(localCalendar.time)
+
+                // Create dummy record using all data from last default record
+                val dummyRecord = RecordModel(
+                    uuid = Utils.generateRandomUuid(),
+                    user_id = lastDefaultRecord.user_id,
+                    lat = lastDefaultRecord.lat,
+                    lng = lastDefaultRecord.lng,
+                    localTime = dummyLocalTime,
+                    time = dummyUtcTime,
+                    attendanceType = "default",
+                    attendanceStatus = lastDefaultRecord.attendanceStatus,
+                    isForceAttendance = lastDefaultRecord.isForceAttendance,
+                    isLocation = lastDefaultRecord.isLocation,
+                    wifiService = lastDefaultRecord.wifiService,
+                    dataService = lastDefaultRecord.dataService,
+                    notification = lastDefaultRecord.notification,
+                    batterySaver = lastDefaultRecord.batterySaver,
+                    batteryOptimization = lastDefaultRecord.batteryOptimization,
+                    wifi_list = lastDefaultRecord.wifi_list
+                )
+
+                // Insert dummy record into database
+                dao.insertRecord(dummyRecord)
+                Log.i(TAG, "✅ Dummy record #$i inserted: LocalTime=$dummyLocalTime, UTC=$dummyUtcTime, Type=${dummyRecord.attendanceType}")
+            }
+
+            Log.i(TAG, "✅ Successfully inserted $numberOfDummyRecords dummy DEFAULT records with 5-minute intervals")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error inserting dummy records: ${e.message}", e)
+        }
+    }
+
     /**
      * Validates whether a new record should be inserted based on time comparison with the latest record.
      *

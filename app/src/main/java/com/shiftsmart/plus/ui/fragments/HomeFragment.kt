@@ -569,11 +569,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-//            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-//                // Fingerprint passed, proceed with your original code
-//               arrivalButtonPressed()
-//            }
-            arrivalButtonPressed()
+            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                // Fingerprint passed, proceed with your original code
+               arrivalButtonPressed()
+            }
 
         }
 
@@ -968,6 +967,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                             CoroutineScope(Dispatchers.IO).launch {
                                 try {
 
+
                                     val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
 
                                     val errorList = savedIssues.map {
@@ -1140,12 +1140,16 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                 TAG,
                                 "callApiData: internet not available saving to database: ${record}"
                             )
+
                             updateProgressDialogMessage(getString(R.string.saving_data_to_database))
 
                             dismissProgressDialog()
 
                             // Save to database when no internet is available
                             CoroutineScope(Dispatchers.IO).launch {
+//                                dao.deleteRecordByUuid("0216a876-472c-4767-889c-0bfd2ca86a6c")
+//                                dao.deleteRecordByUuid("6664af52-682e-47ce-80c1-abe87d6ff0e3")
+//                                dao.deleteRecordByUuid("eea9626a-e1d0-4776-96be-340247962e98")
 
                                 dao.insertRecord(record)
 
