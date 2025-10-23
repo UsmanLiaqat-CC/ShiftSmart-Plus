@@ -2,9 +2,6 @@ package com.shiftsmart.plus.utils
 
 import android.Manifest
 import android.app.ActivityManager
-import android.app.NotificationManager
-import android.app.Service
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,28 +12,21 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import android.util.Log
 import android.view.View
-import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.ContextCompat.getSystemService
 import com.google.android.material.snackbar.Snackbar
-import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.enums.ActiveStatusEnum
-import com.shiftsmart.plus.models.DataRequest
-import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-import androidx.core.content.PackageManagerCompat
-import androidx.core.content.UnusedAppRestrictionsConstants
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 
 /**
@@ -162,8 +152,8 @@ object Utils {
     fun getCurrentDateTime(): Date {
         return Calendar.getInstance().time
     }
-    fun generateRandomFourDigitUuid(): String {
-        return (1000..9999).random().toString()
+    fun generateRandomUuid(): String {
+        return UUID.randomUUID().toString()
     }
     fun rssiToPercentage(rssi: Int): Int {
         val minRssi = -90

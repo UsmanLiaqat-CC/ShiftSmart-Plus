@@ -6,13 +6,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Build
-import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.gms.maps.model.LatLng
 import com.shiftsmart.plus.database.DBDao
-import com.shiftsmart.plus.database.IssueModel
 import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.AttendaceResponseModel
@@ -21,14 +19,12 @@ import com.shiftsmart.plus.models.ErrorModel
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
-import com.shiftsmart.plus.periodicAction.AlarmReceiver
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -105,7 +101,7 @@ class AttendanceSyncManager @Inject constructor(
 
     private fun createRecord(user: UserModel): RecordModel {
         return RecordModel(
-            uuid = Utils.generateRandomFourDigitUuid(),
+            uuid = Utils.generateRandomUuid(),
             user_id = user._id.toString(),
             lat = lastLocation.latitude,
             lng = lastLocation.longitude,
@@ -183,21 +179,27 @@ class AttendanceSyncManager @Inject constructor(
         val allRecords = dao.getAllRecords(user._id.toString())
             .map { it.toDataRequest(errorList) }
 
-        // Filter out duplicate records based on time (without seconds) for default type
-        // Also filter consecutive default records with < 4 minutes difference
+        // ✅ DOUBLE-LAYER FILTERING FOR API CALL:
+        // Even though we prevent duplicates at insertion, we apply additional filtering here as a safety net
+        // This ensures clean data is sent to the API and DELETES invalid records from database
+
         val records = mutableListOf<DataRequest>()
+        val recordsToDelete = mutableListOf<String>() // Track UUIDs of records to delete
         var lastDefaultTime: LocalTime? = null
 
         for ((index, record) in allRecords.withIndex()) {
             if (record.attendanceType == "default") {
-                // Extract time without seconds (HH:mm format)
+                // ✅ FILTER 1: Check for UTC time duplicates (comparing without seconds)
+                // Extract UTC time in HH:mm format from the ISO timestamp
                 val currentTimeKey = try {
+                    // Extract time from UTC format like "2025-10-22T13:50:01Z"
                     record.time.substringBeforeLast(':').substringAfter('T')
                 } catch (e: Exception) {
+                    // Fallback to local time if UTC parsing fails
                     record.localTime.substringBeforeLast(':')
                 }
 
-                // Check if this time already exists in previous records (duplicate check)
+                // Check if any previous record has the same UTC time (HH:mm)
                 val isDuplicate = allRecords.subList(0, index).any { prevRecord ->
                     if (prevRecord.attendanceType == "default") {
                         val prevTimeKey = try {
@@ -205,45 +207,153 @@ class AttendanceSyncManager @Inject constructor(
                         } catch (e: Exception) {
                             prevRecord.localTime.substringBeforeLast(':')
                         }
+                        // Compare UTC times to detect duplicates
                         currentTimeKey == prevTimeKey
                     } else false
                 }
 
                 if (isDuplicate) {
-                    Log.d(TAG, "Duplicate default record found at time $currentTimeKey, excluding from API call")
+                    Log.d(TAG, "❌ Duplicate UTC time $currentTimeKey, UUID: ${record.UUID} - DELETING from database")
+                    recordsToDelete.add(record.UUID) // Mark for deletion
                     continue
                 }
 
-                // Check if time difference with last default record is < 4 minutes
+                // ✅ FILTER 2: Enforce minimum 4-minute gap between consecutive default records
+                // This prevents sending multiple records within a short time span
                 try {
                     val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
                     val currentTime = LocalTime.parse(record.localTime, formatter)
 
                     if (lastDefaultTime != null) {
                         val minutesDiff = Duration.between(lastDefaultTime, currentTime).toMinutes()
+
+                        // Reject if gap is less than 4 minutes
                         if (minutesDiff < 4) {
-                            Log.d(TAG, "Consecutive default record found with ${minutesDiff} minutes difference (< 4 min) at time ${record.localTime}, excluding from API call")
+                            Log.d(TAG, "❌ Time gap ${minutesDiff} min (< 4 min) at ${record.localTime}, UUID: ${record.UUID} - DELETING from database")
+                            recordsToDelete.add(record.UUID) // Mark for deletion
                             continue
                         }
+
+                        Log.d(TAG, "✅ Record accepted: ${minutesDiff} minutes gap from previous record, UUID: ${record.UUID}")
                     }
 
+                    // Update the last processed time for next iteration
                     lastDefaultTime = currentTime
                     records.add(record)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing time for record: ${record.localTime}", e)
-                    records.add(record) // Add anyway if parsing fails
+                    records.add(record) // Add anyway if parsing fails to avoid data loss
                 }
             } else {
-                records.add(record) // Keep all non-default records
+                // ✅ Non-default records (manual check-in/out) are always included
+                records.add(record)
+            }
+        }
+
+        // ✅ DELETE invalid records from database immediately
+        if (recordsToDelete.isNotEmpty()) {
+            Log.i(TAG, "Deleting ${recordsToDelete.size} invalid records from database")
+            recordsToDelete.forEach { uuid ->
+                dao.deleteRecordByUuid(uuid)
             }
         }
 
         Log.i(TAG, "callApi: Total records: ${allRecords.size}, After deduplication and 4-min filter: ${records.size}")
 
+        // Round time differences to 5 minutes before sending to API
+        val adjustedRecords = mutableListOf<DataRequest>()
+        for (i in records.indices) {
+            val currentRecord = records[i]
+
+            if (i > 0) {
+                val previousRecord = adjustedRecords[i - 1]
+
+                try {
+                    // Parse UTC times to calculate difference
+                    val utcFormatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.getDefault())
+                    utcFormatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    val prevUtcTime = utcFormatter.parse(previousRecord.time)
+                    val currUtcTime = utcFormatter.parse(currentRecord.time)
+
+                    if (prevUtcTime != null && currUtcTime != null) {
+                        val diffMinutes = ((currUtcTime.time - prevUtcTime.time) / (1000 * 60)).toInt()
+
+                        // Adjust time if difference is 4 or 6 minutes
+                        when (diffMinutes) {
+                            4 -> {
+                                // Increase by 1 minute to make it 5 minutes
+                                val calendar = java.util.Calendar.getInstance()
+                                calendar.time = currUtcTime
+                                calendar.add(java.util.Calendar.MINUTE, 1)
+
+                                val adjustedUtcTime = utcFormatter.format(calendar.time)
+
+                                // Adjust local time as well
+                                val localFormatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                val currLocalTime = localFormatter.parse(currentRecord.localTime)
+                                if (currLocalTime != null) {
+                                    val localCalendar = java.util.Calendar.getInstance()
+                                    localCalendar.time = currLocalTime
+                                    localCalendar.add(java.util.Calendar.MINUTE, 1)
+                                    val adjustedLocalTime = localFormatter.format(localCalendar.time)
+
+                                    adjustedRecords.add(currentRecord.copy(
+                                        time = adjustedUtcTime,
+                                        localTime = adjustedLocalTime
+                                    ))
+                                    Log.i(TAG, "Adjusted record from 4 min to 5 min: ${currentRecord.localTime} -> $adjustedLocalTime")
+                                } else {
+                                    adjustedRecords.add(currentRecord.copy(time = adjustedUtcTime))
+                                }
+                            }
+                            6 -> {
+                                // Decrease by 1 minute to make it 5 minutes
+                                val calendar = java.util.Calendar.getInstance()
+                                calendar.time = currUtcTime
+                                calendar.add(java.util.Calendar.MINUTE, -1)
+
+                                val adjustedUtcTime = utcFormatter.format(calendar.time)
+
+                                // Adjust local time as well
+                                val localFormatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                val currLocalTime = localFormatter.parse(currentRecord.localTime)
+                                if (currLocalTime != null) {
+                                    val localCalendar = java.util.Calendar.getInstance()
+                                    localCalendar.time = currLocalTime
+                                    localCalendar.add(java.util.Calendar.MINUTE, -1)
+                                    val adjustedLocalTime = localFormatter.format(localCalendar.time)
+
+                                    adjustedRecords.add(currentRecord.copy(
+                                        time = adjustedUtcTime,
+                                        localTime = adjustedLocalTime
+                                    ))
+                                    Log.i(TAG, "Adjusted record from 6 min to 5 min: ${currentRecord.localTime} -> $adjustedLocalTime")
+                                } else {
+                                    adjustedRecords.add(currentRecord.copy(time = adjustedUtcTime))
+                                }
+                            }
+                            else -> {
+                                // Keep as is for other differences
+                                adjustedRecords.add(currentRecord)
+                            }
+                        }
+                    } else {
+                        adjustedRecords.add(currentRecord)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error adjusting time difference: ${e.message}")
+                    adjustedRecords.add(currentRecord)
+                }
+            } else {
+                // First record, no adjustment needed
+                adjustedRecords.add(currentRecord)
+            }
+        }
+
         if (Utils.isInternetAvailable(context)) {
             val token = SharedPref.getInstance(context)?.getToken() ?: ""
             try {
-                val response = repository.sendData(records, token)
+                val response = repository.sendData(adjustedRecords, token)
                 Log.i(TAG, "MRcallApi: apiResponse:${response.body()}")
 
                 if (response.isSuccessful) {
@@ -414,12 +524,15 @@ class AttendanceSyncManager @Inject constructor(
             managerScope.launch {
                 insertMutex.withLock {
                     try {
+                        // ✅ STEP 1: Check for exact UTC time duplicate
+                        // This prevents inserting records with the exact same UTC timestamp
                         val existingCount = dao.countRecordByTime(record.time)
                         if (existingCount > 0) {
-                            Log.d(TAG, "Duplicate record found for time: ${record.time}, skipping insert.")
+                            Log.d(TAG, "❌ Duplicate record found for UTC time: ${record.time}, skipping insert.")
                             return@withLock
                         }
 
+                        // ✅ STEP 2: Get the latest record for time difference validation
                         val latest = dao.getLatestRecord(record.user_id)
                         val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
                             dao.getLatestDefaultRecord(record.user_id)
@@ -429,6 +542,10 @@ class AttendanceSyncManager @Inject constructor(
 
                         Log.i(TAG, "saveDataLocally: inside window using referenceRecord:$referenceRecord\nnewRecord:$record")
 
+                        // ✅ STEP 3: Validate using 4-minute gap enforcement
+                        // This applies to ALL record types and ensures:
+                        // - No out-of-order time insertions
+                        // - Minimum 4-minute gap between consecutive records
                         if (shouldInsertRecord(referenceRecord, record)) {
                             dao.insertRecord(record)
                             withContext(Dispatchers.Main) {
@@ -436,7 +553,7 @@ class AttendanceSyncManager @Inject constructor(
                             }
                             callApi(record, user)
                         } else {
-                            Log.d(TAG, "Record not inserted: Time difference <= 5 minutes")
+                            Log.d(TAG, "❌ Record not inserted: Failed shouldInsertRecord validation (either time is before latest or gap < 4 minutes)")
                         }
 
                     } catch (e: Exception) {
@@ -463,24 +580,45 @@ class AttendanceSyncManager @Inject constructor(
         intent.putExtra("message", message)
         LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
     }
+    /**
+     * Validates whether a new record should be inserted based on time comparison with the latest record.
+     *
+     * This function performs two critical checks:
+     * 1. Ensures the new record's time is not before the latest record (prevents out-of-order insertions)
+     * 2. Enforces a minimum 4-minute gap between consecutive records
+     *
+     * @param latestRecord The most recent record in the database for this user (can be null if no records exist)
+     * @param newRecord The new record that we want to insert
+     * @return true if the record should be inserted, false otherwise
+     */
     private fun shouldInsertRecord(
         latestRecord: RecordModel?,
         newRecord: RecordModel
     ): Boolean {
-        if (latestRecord == null) return true // No record yet, so insert
+        // ✅ If no previous record exists, allow insertion
+        if (latestRecord == null) return true
 
         val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         val latestTime = LocalTime.parse(latestRecord.localTime, formatter)
         val newTime = LocalTime.parse(newRecord.localTime, formatter)
 
-        // 1️⃣ if the new record time is BEFORE the latest record → reject immediately
+        // ✅ VALIDATION 1: Reject if new record time is BEFORE the latest record
+        // This prevents inserting records with earlier timestamps than what's already in the database
         if (newTime.isBefore(latestTime)) {
-            Log.d("DBDao", "Record not inserted: new record time ${newRecord.localTime} is before latest ${latestRecord.localTime}")
+            Log.d(TAG, "Record not inserted: new record time ${newRecord.localTime} is before latest ${latestRecord.localTime}")
             return false
         }
-        // 2️⃣ Otherwise check if difference is >= 5 minutes
+
+        // ✅ VALIDATION 2: Check if time difference is at least 4 minutes
+        // This ensures we don't insert records too frequently (minimum 4-minute gap required)
         val duration = Duration.between(latestTime, newTime).toMinutes()
-        return duration >= 5
+        if (duration < 4) {
+            Log.d(TAG, "Record not inserted: Time difference is ${duration} minutes (< 4 minutes required)")
+            return false
+        }
+
+        Log.d(TAG, "shouldInsertRecord validation passed: ${duration} minutes gap between records")
+        return true
     }
 
     fun setWifiList(wifiList: MutableList<WifiModel>) {

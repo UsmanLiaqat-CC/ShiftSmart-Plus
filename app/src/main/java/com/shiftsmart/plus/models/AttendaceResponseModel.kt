@@ -16,7 +16,7 @@ data class AttendaceResponseModel(
 )
 
 data class AttendanceData(
-    @SerializedName("UUID" ) val UUID: Int,
+    @SerializedName("UUID" ) val UUID: String,
     @SerializedName("status" ) val status: String,
     @SerializedName("message" ) val message: String,
     @SerializedName("store" ) val store: String,

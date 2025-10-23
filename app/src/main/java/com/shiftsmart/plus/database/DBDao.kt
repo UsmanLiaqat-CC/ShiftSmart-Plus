@@ -22,7 +22,7 @@ interface DBDao {
     fun updateRecord(recordModel: RecordModel)
 
     @Query("DELETE FROM record WHERE UUID = :uuid")
-    suspend fun deleteRecordByUuid(uuid: Int)
+    suspend fun deleteRecordByUuid(uuid: String)
 
     @Query("SELECT * FROM record WHERE user_id = :uId ORDER BY time ASC")
     fun getAllRecords(uId: String): List<RecordModel>
