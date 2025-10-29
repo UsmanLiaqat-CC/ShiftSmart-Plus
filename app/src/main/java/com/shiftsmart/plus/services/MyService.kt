@@ -34,6 +34,7 @@ import com.shiftsmart.plus.database.DBDao
 import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.enums.StatusEnum
+import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.periodicAction.AlarmReceiver
 import com.shiftsmart.plus.repository.MainRepository
@@ -58,6 +59,7 @@ import java.time.LocalDate
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 import javax.inject.Inject
 import kotlin.collections.addAll
@@ -366,45 +368,47 @@ class MyService : Service() {
 
         updateForegroundNotification(this, "📝 Tracking attendance...")
 
-        // ✅ Handle missing records insertion if alarm detected a gap
-        if (missingRecords > 0 && lastRecordTimeStr != null && targetTimeStr != null) {
-            Log.i(TAG, "📝 Gap detected: Inserting $missingRecords missing record(s) from $lastRecordTimeStr to $targetTimeStr")
-
-            serviceScope.launch {
-                try {
-                    // First fetch current location and wifi data
-                    val location = if (locationHelper.hasLocationPermissions()) {
-                        try {
-                            locationHelper.fetchFreshLocation()
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to fetch location, using last known", e)
-                            locationHelper.lastLocation
-                        }
-                    } else {
+        // ✅ Handle ALL cases: whether gap exists or not, we need to insert records for all missing times
+        serviceScope.launch {
+            try {
+                // First fetch current location and wifi data
+                val location = if (locationHelper.hasLocationPermissions()) {
+                    try {
+                        locationHelper.fetchFreshLocation()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to fetch location, using last known", e)
                         locationHelper.lastLocation
                     }
+                } else {
+                    locationHelper.lastLocation
+                }
 
-                    // Create a template record with current data
-                    val templateRecord = RecordModel(
-                        uuid = Utils.generateRandomUuid(),
-                        user_id = user._id.toString(),
-                        lat = location.latitude,
-                        lng = location.longitude,
-                        localTime = Utils.getCurrent24HourTime(),
-                        time = Utils.getCurrentUtcTime(),
-                        attendanceType = StatusEnum.default.name,
-                        attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
-                        isForceAttendance = false,
-                        isLocation = locationHelper.hasLocationPermissions(),
-                        wifiService = wifiManager.isWifiEnabled,
-                        dataService = Utils.isMobileDataEnabled(this@MyService),
-                        notification = Utils.isNotificationPermissionGranted(this@MyService),
-                        batterySaver = !Utils.isBatterySaverOn(this@MyService),
-                        batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                        wifi_list = wifiScanResults.toList()
-                    )
+                // Create a template record with current data
+                val templateRecord = RecordModel(
+                    uuid = Utils.generateRandomUuid(),
+                    user_id = user._id.toString(),
+                    lat = location.latitude,
+                    lng = location.longitude,
+                    localTime = Utils.getCurrent24HourTime(),
+                    time = Utils.getCurrentUtcTime(),
+                    attendanceType = StatusEnum.default.name,
+                    attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
+                    isForceAttendance = false,
+                    isLocation = locationHelper.hasLocationPermissions(),
+                    wifiService = wifiManager.isWifiEnabled,
+                    dataService = Utils.isMobileDataEnabled(this@MyService),
+                    notification = Utils.isNotificationPermissionGranted(this@MyService),
+                    batterySaver = !Utils.isBatterySaverOn(this@MyService),
+                    batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
+                    wifi_list = wifiScanResults.toList()
+                )
+
+                if (missingRecords > 0 && lastRecordTimeStr != null && targetTimeStr != null) {
+                    // Gap detected: Insert missing records PLUS current record at target time
+                    Log.i(TAG, "📝 Gap detected: Inserting $missingRecords missing record(s) from $lastRecordTimeStr to $targetTimeStr")
 
                     // Insert missing records at exact intervals (fills the gap)
+                    // This will insert records at 5-min intervals BETWEEN last and target
                     attendanceSyncManager.insertMissingRecordsAtExactIntervals(
                         lastRecordTimeStr = lastRecordTimeStr,
                         targetTimeStr = targetTimeStr,
@@ -413,24 +417,91 @@ class MyService : Service() {
                         user = user
                     )
 
-                    // After filling gap, insert current record at target time
-                    Log.i(TAG, "✅ Gap filled, now inserting current record at $targetTimeStr")
-                    startLocationFetch()
+                    // ✅ IMPORTANT: Also insert current record at target time
+                    Log.i(TAG, "✅ Gap filled, now inserting current record at target time: $targetTimeStr")
+                    insertCurrentRecordAtTargetTime(templateRecord, targetTimeStr, user)
 
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error inserting missing records", e)
+                } else {
+                    // No gap detected - just insert current record normally
+                    Log.i(TAG, "✅ No gap detected - inserting current record at ${Utils.getCurrent24HourTime()}")
+                    startLocationFetch()
                 }
-            }
-        } else {
-            // No gap detected OR missingRecords = 0 - just insert current record normally
-            Log.i(TAG, "✅ No gap detected - inserting current record at ${Utils.getCurrent24HourTime()}")
-            serviceScope.launch {
-                startLocationFetch()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error in checkAndMaintainService", e)
             }
         }
     }
 
 
+
+    /**
+     * Inserts the current record at the exact target time (not current system time)
+     * This ensures the record has the correct timestamp when filling gaps
+     */
+    private suspend fun insertCurrentRecordAtTargetTime(
+        templateRecord: RecordModel,
+        targetTimeStr: String,
+        user: UserModel
+    ) {
+        try {
+            // Parse target time to create exact timestamp
+            val targetTime = Utils.parseFlexibleTime(targetTimeStr)
+            if (targetTime == null) {
+                Log.e(TAG, "❌ Failed to parse target time: $targetTimeStr")
+                return
+            }
+
+            // Create timestamp at target time
+            val targetCalendar = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, targetTime.hour)
+                set(Calendar.MINUTE, targetTime.minute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+
+            // Format times
+            val localTimeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+            val localTimeStr = localTimeFormatter.format(targetCalendar.time)
+
+            val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val utcTimeStr = utcFormatter.format(targetCalendar.time)
+
+            // Check if record already exists
+            val dao = ShiftSmartPlusDatabase.getInstance(this).dbDao()
+            val existingCount = dao.countRecordByTime(utcTimeStr)
+            if (existingCount > 0) {
+                Log.i(TAG, "⏭️ Record already exists at target time $localTimeStr - skipping")
+                // Trigger sync to upload existing records
+                attendanceSyncManager.startSyncProcess()
+                return
+            }
+
+            // Create record with exact target time
+            val recordAtTargetTime = templateRecord.copy(
+                uuid = Utils.generateRandomUuid(),
+                localTime = localTimeStr,
+                time = utcTimeStr,
+                attendanceType = StatusEnum.default.name // This is the actual alarm-triggered record
+            )
+
+            Log.i(TAG, "💾 Inserting current record at target time: $localTimeStr (UTC: $utcTimeStr)")
+
+            // Save to database
+            val shouldContinue = attendanceSyncManager.saveRecordLocally(recordAtTargetTime, user)
+
+            if (shouldContinue) {
+                Log.i(TAG, "✅ Record saved at target time: $localTimeStr")
+            } else {
+                Log.w(TAG, "⚠️ Saved but off-shift detected")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error inserting record at target time", e)
+        }
+    }
 
     private fun forceMidnightSync() {
         serviceScope.launch {

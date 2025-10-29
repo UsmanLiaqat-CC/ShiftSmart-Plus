@@ -208,6 +208,24 @@ class AlarmReceiver : BroadcastReceiver() {
                                 Log.i("AlarmReceiver", "⏱️ Current timestamp: $currentTimestamp")
                                 Log.i("AlarmReceiver", "⏱️ Gap: $minutesDiff minutes (${gapMillis / 1000} seconds)")
 
+                                // ✅ CHECK: Is current time a multiple of 5 minutes from last sync?
+                                if (minutesDiff % 5 != 0) {
+                                    // Current time is NOT aligned with 5-minute intervals from last sync
+                                    // Calculate the next proper sync time
+                                    val nextMultipleOf5 = ((minutesDiff / 5) + 1) * 5
+                                    val minutesToWait = nextMultipleOf5 - minutesDiff
+
+                                    Log.w("AlarmReceiver", "⏭️ SKIPPING: Current gap is $minutesDiff min (not a multiple of 5)")
+                                    Log.w("AlarmReceiver", "⏭️ Next valid sync is in $minutesToWait minutes (at ${nextMultipleOf5} min from last sync)")
+
+                                    // Reschedule alarm for the correct time (aligned with last sync)
+                                    val nextSyncTime = lastRecordTimestamp + (nextMultipleOf5 * 60 * 1000L)
+                                    rescheduleAlarmAtSpecificTime(context, nextSyncTime)
+                                    return@launch
+                                }
+
+                                Log.i("AlarmReceiver", "✅ Gap is a multiple of 5 minutes - proceeding with sync")
+
                                 if (minutesDiff >= 5) {
                                     // Calculate how many records we need to insert to FILL THE GAP
                                     // Subtract 1 because the target time record will be created separately
@@ -336,6 +354,41 @@ class AlarmReceiver : BroadcastReceiver() {
             } else {
                 alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextAligned, pendingIntent)
                 Log.d("AlarmReceiver", "Next aligned alarm scheduled at: ${Date(nextAligned)}")
+            }
+        }
+
+        /**
+         * rescheduleAlarmAtSpecificTime(...)
+         * WHEN: When current alarm time is not aligned with last sync time (not a multiple of 5 minutes)
+         * WHAT: Cancels existing CALL_API PI and schedules alarm at the exact time that aligns with last sync
+         */
+        @JvmStatic
+        fun rescheduleAlarmAtSpecificTime(context: Context, targetTimestamp: Long) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+            val intent = Intent(context, AlarmReceiver::class.java).apply { action = "CALL_API" }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context, 1234, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+                val showIntent = PendingIntent.getActivity(
+                    context, 0,
+                    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                    },
+                    PendingIntent.FLAG_IMMUTABLE
+                )
+                alarmManager.setAlarmClock(
+                    AlarmManager.AlarmClockInfo(targetTimestamp, showIntent),
+                    pendingIntent
+                )
+                Log.i("AlarmReceiver", "⏰ Rescheduled CALL_API via setAlarmClock at: ${Date(targetTimestamp)}")
+            } else {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, targetTimestamp, pendingIntent)
+                Log.i("AlarmReceiver", "⏰ Rescheduled CALL_API (aligned with last sync) at: ${Date(targetTimestamp)}")
             }
         }
     }

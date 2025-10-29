@@ -151,7 +151,7 @@ object AlarmScheduler {
      * schedulePeriodicAlarm(...)
      * WHEN: After (re)arming alarms if you want the 5-min CALL_API heartbeat to persist.
      * WHAT: Cancels any existing CALL_API PI and (re)schedules a one-shot exact alarm aligned
-     *       to next 5-min mark. Your AlarmReceiver re-arms the next one each tick.
+     *       with the last sync time (multiple of 5 minutes from last sync).
      */
     fun schedulePeriodicAlarm(context: Context) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -163,11 +163,9 @@ object AlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(cancelPendingIntent)
-//        Log.i(TAG, "Canceled any existing CALL_API alarm before scheduling a new one")
 
         // Exact-alarm permission gate (S+); you already redirect to settings elsewhere if needed
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-//            Log.w(TAG, "Exact alarm permission not granted. Redirecting to settings.")
             val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
                 data = Uri.parse("package:${context.packageName}")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -183,7 +181,8 @@ object AlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val triggerTime = getNextFiveMinuteAlignedTime()
+        // ✅ IMPROVED: Align with last sync time if available
+        val triggerTime = getNextAlignedTimeWithLastSync(context)
         alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
         Log.i(TAG, "Scheduled CALL_API alarm at ${Date(triggerTime)}")
     }
@@ -249,6 +248,37 @@ object AlarmScheduler {
         now.set(Calendar.SECOND, 0)
         now.set(Calendar.MILLISECOND, 0)
         return now.timeInMillis
+    }
+
+    /**
+     * getNextAlignedTimeWithLastSync(...)
+     * WHAT: Returns epoch millis for the next alarm that is aligned with last sync time.
+     *       Ensures syncs always happen at multiples of 5 minutes from the last successful sync.
+     * WHO: Used by schedulePeriodicAlarm().
+     */
+    private fun getNextAlignedTimeWithLastSync(context: Context): Long {
+        val sharedPref = SharedPref.getInstance(context)
+        val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
+
+        if (lastSyncTimestamp > 0L) {
+            // We have a last sync time - calculate next time that's a multiple of 5 minutes from it
+            val currentTime = System.currentTimeMillis()
+            val timeSinceLastSync = currentTime - lastSyncTimestamp
+            val minutesSinceLastSync = (timeSinceLastSync / (60 * 1000)).toInt()
+
+            // Calculate next multiple of 5 minutes from last sync
+            val nextMultipleOf5 = ((minutesSinceLastSync / 5) + 1) * 5
+            val nextAlignedTime = lastSyncTimestamp + (nextMultipleOf5 * 60 * 1000L)
+
+            Log.i(TAG, "⏰ Last sync was ${minutesSinceLastSync} minutes ago")
+            Log.i(TAG, "⏰ Next sync aligned with last sync: ${Date(nextAlignedTime)} (${nextMultipleOf5} min from last sync)")
+
+            return nextAlignedTime
+        } else {
+            // No last sync time - use standard 5-minute boundary alignment
+            Log.i(TAG, "⏰ No last sync found, using standard 5-minute boundary")
+            return getNextFiveMinuteAlignedTime()
+        }
     }
 
     /**
