@@ -34,6 +34,7 @@ import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import javax.inject.Inject
@@ -41,102 +42,326 @@ import javax.inject.Inject
 class AttendanceSyncManager @Inject constructor(
     private val context: Context,
     private val repository: MainRepository,
-    private val dao: DBDao,
-    private val locationHelper: LocationHelper,
-    private val wifiManager: WifiManager
+    private val dao: DBDao
 )
 {
-    private var apiCallInProgress = false
-    private var lastLocation: LatLng = LatLng(0.0, 0.0)
-    private val wifiScanResults = mutableListOf<WifiModel>()
-    private  val TAG = "AttendanceSyncManager"
+    private val TAG = "AttendanceSyncManager"
     private val managerJob = SupervisorJob()
     private val managerScope = CoroutineScope(Dispatchers.IO + managerJob)
     private val insertMutex = Mutex() // Prevents concurrent record insertion
 
+    /**
+     * Saves a record to local database with shift validation.
+     * This is called from MyService after creating a record every 5 minutes.
+     * After saving, automatically syncs to server if internet is available.
+     *
+     * @return true if inside shift window (service should continue), false if off-shift (service should stop)
+     */
+    suspend fun saveRecordLocally(record: RecordModel, user: UserModel): Boolean {
+        val shifts = user.timetable?.range ?: emptyList()
+        return saveDataLocally(record, shifts, user)
+    }
+
+    /**
+     * Public method to trigger sync process manually (e.g., midnight sync, on-demand sync)
+     */
     suspend fun startSyncProcess() {
-        if (!locationHelper.hasLocationPermissions()) {
-            Log.w(TAG, "startSyncProcess: Location permissions not granted, skipping location fetch.")
-           lastLocation= locationHelper.lastLocation
-            performApiCall()
-            return
+        val user = SharedPref.getInstance(context)?.getUser()
+        if (user != null) {
+            callApi(user)
+        } else {
+            Log.e(TAG, "❌ Cannot start sync - no user found")
         }
+    }
+
+    /**
+     * Inserts missing records at exact 5-minute intervals.
+     * Called from MyService when alarm detects gaps.
+     *
+     * @param lastRecordTimeStr The time of the last record (HH:mm or HH:mm:ss)
+     * @param targetTimeStr The target time we want to save (HH:mm or HH:mm:ss)
+     * @param numberOfRecords Number of records to insert to fill the gap
+     * @param currentRecord The current record data to use for dummy records
+     * @param user The user object
+     */
+    suspend fun insertMissingRecordsAtExactIntervals(
+        lastRecordTimeStr: String,
+        targetTimeStr: String,
+        numberOfRecords: Int,
+        currentRecord: RecordModel,
+        user: UserModel
+    ) {
+        Log.i(TAG, "⏰ insertMissingRecordsAtExactIntervals: Inserting $numberOfRecords records from $lastRecordTimeStr to $targetTimeStr")
 
         try {
-            val location = locationHelper.fetchFreshLocation()
-            lastLocation = location
-            Log.d(TAG, "startSyncProcess: Location fetched: $lastLocation")
-        } catch (e: Exception) {
-            Log.e(TAG, "startSyncProcess: Failed to fetch location", e)
-        }
+            val today = LocalDate.now()
+            val activeMulti = user.multipleTimeTables?.find { mt ->
+                val s = mt.startDate.toLocalDate()
+                val e = mt.endDate.toLocalDate()
+                today in s..e
+            }
+            val effectiveRange = activeMulti?.timetable?.range ?: user.timetable?.range
 
-        performApiCall()
-    }
+            if (effectiveRange == null) {
+                Log.e(TAG, "❌ No timetable found, cannot validate shift times")
+                return
+            }
 
-
-
-    private fun performApiCall() {
-        Log.i(TAG, "performApiCall: at:${Utils.getCurrentDateTime()}")
-//        if (apiCallInProgress) return
-//        apiCallInProgress = true
-
-        val user = SharedPref.getInstance(context)?.getUser()
-        user?.let { u ->
-            val record = createRecord(u)
-            // ✅ use the managerScope so we can cancel it later
-            managerScope.launch {
+            // ✅ Get the actual last record timestamp - parse from ACTUAL UTC TIME in database
+            val lastDefaultRecord = dao.getLatestDefaultRecord(user._id.toString())
+            val lastRecordCalendar = if (lastDefaultRecord != null) {
+                // Parse the UTC time from the database record to get the EXACT timestamp
                 try {
-                    val shifts = u.timetable?.range ?: emptyList()
-                    saveDataLocally(record, shifts, u)
+                    val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                        timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }
+                    val utcDate = utcFormatter.parse(lastDefaultRecord.time)
+
+                    if (utcDate != null) {
+                        // Convert UTC to local Calendar
+                        Calendar.getInstance().apply {
+                            time = utcDate
+                        }
+                    } else {
+                        // Fallback: use local time with current date
+                        val lastTime = Utils.parseFlexibleTime(lastDefaultRecord.localTime)
+                        Calendar.getInstance().apply {
+                            if (lastTime != null) {
+                                set(Calendar.HOUR_OF_DAY, lastTime.hour)
+                                set(Calendar.MINUTE, lastTime.minute)
+                                set(Calendar.SECOND, 0)
+                                set(Calendar.MILLISECOND, 0)
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
-                    Log.e(TAG, "performApiCall error", e)
-//                    apiCallInProgress = false
+                    Log.e(TAG, "Failed to parse last record UTC time: ${e.message}")
+                    // Fallback: use local time with current date
+                    val lastTime = Utils.parseFlexibleTime(lastDefaultRecord.localTime)
+                    Calendar.getInstance().apply {
+                        if (lastTime != null) {
+                            set(Calendar.HOUR_OF_DAY, lastTime.hour)
+                            set(Calendar.MINUTE, lastTime.minute)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+                    }
+                }
+            } else {
+                // Fallback to parsing the provided time string with current date
+                val lastTime = Utils.parseFlexibleTime(lastRecordTimeStr)
+                if (lastTime != null) {
+                    Calendar.getInstance().apply {
+                        set(Calendar.HOUR_OF_DAY, lastTime.hour)
+                        set(Calendar.MINUTE, lastTime.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                } else {
+                    Calendar.getInstance()
                 }
             }
-        } ?: run {
-//            apiCallInProgress = false
+
+            Log.i(TAG, "📍 Starting from: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(lastRecordCalendar.time)}")
+            Log.i(TAG, "📍 Starting UTC: ${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(lastRecordCalendar.time)}")
+
+            // Calculate all missing timestamps at exact 5-minute intervals
+            val allMissingTimestamps = mutableListOf<Calendar>()
+
+            for (i in 1..numberOfRecords) {
+                val timestamp = lastRecordCalendar.clone() as Calendar
+                timestamp.add(Calendar.MINUTE, i * 5)
+                allMissingTimestamps.add(timestamp)
+            }
+
+            Log.i(TAG, "📝 Found ${allMissingTimestamps.size} potential time slots")
+
+            // Filter timestamps to only include those within shift periods
+            val validTimestamps = mutableListOf<Calendar>()
+            var skippedOffShift = 0
+
+            for (timestamp in allMissingTimestamps) {
+                // Check if this time falls within ANY shift period
+                val todayName = timestamp.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
+                val yesterdayCalendar = timestamp.clone() as Calendar
+                yesterdayCalendar.add(Calendar.DAY_OF_YEAR, -1)
+                val yesterdayName = yesterdayCalendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
+
+                val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
+                val yesterdayShift = effectiveRange.find { it.day.equals(yesterdayName, ignoreCase = true) }
+
+                var isWithinShift = false
+
+                // Check today's shift
+                if (todayShift?.start != null && todayShift.end != null) {
+                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(timestamp, todayShift.start, todayShift.end)
+                }
+
+                // If not in today's shift, check yesterday's overnight shift
+                if (!isWithinShift && yesterdayShift?.start != null && yesterdayShift.end != null) {
+                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(timestamp, yesterdayShift.start, yesterdayShift.end, -1)
+                }
+
+                if (isWithinShift) {
+                    validTimestamps.add(timestamp)
+                } else {
+                    skippedOffShift++
+                }
+            }
+
+            Log.i(TAG, "✅ ${validTimestamps.size} times are within shift periods")
+            if (skippedOffShift > 0) {
+                Log.i(TAG, "⏭️ Skipped $skippedOffShift times (off-shift period)")
+            }
+
+            if (validTimestamps.isEmpty()) {
+                Log.i(TAG, "⏭️ No records to insert - all times are outside shift periods")
+                return
+            }
+
+            // For each valid timestamp, create and save a record
+            var insertedCount = 0
+            for ((index, timestamp) in validTimestamps.withIndex()) {
+                try {
+                    // Format local time for database
+                    val localTimeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                    val localTimeStr = localTimeFormatter.format(timestamp.time)
+
+                    // Convert to UTC
+                    val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                        timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }
+                    val utcTimeStr = utcFormatter.format(timestamp.time)
+
+                    // Check for duplicate
+                    val existingCount = dao.countRecordByTime(utcTimeStr)
+                    if (existingCount > 0) {
+                        Log.i(TAG, "⏭️ Skipping $localTimeStr - record already exists")
+                        continue
+                    }
+
+                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                    Log.i(TAG, "⏱️ [${index + 1}/${validTimestamps.size}] Inserting record at ${dateFormatter.format(timestamp.time)} → Local: $localTimeStr, UTC: $utcTimeStr")
+
+                    // Create record with exact time but using current record's data
+                    val backfilledRecord = currentRecord.copy(
+                        uuid = Utils.generateRandomUuid(),
+                        localTime = localTimeStr,
+                        time = utcTimeStr,
+                        attendanceType = StatusEnum.default.name
+                    )
+
+                    // Insert the backfilled record
+                    dao.insertRecord(backfilledRecord)
+
+                    // Save last sync time
+                    SharedPref.getInstance(context)?.saveLastSyncTime(localTimeStr)
+
+                    insertedCount++
+                    Log.i(TAG, "✅ Backfilled record inserted: $localTimeStr")
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error inserting record at ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(timestamp.time)}", e)
+                }
+            }
+
+            Log.i(TAG, "✅ Gap filling complete: Inserted $insertedCount records (skipped $skippedOffShift off-shift times)")
+
+            withContext(Dispatchers.Main) {
+                sendNotificationUpdate("✅ Saved $insertedCount records")
+            }
+
+            // Sync to API after inserting missing records
+            callApi(user)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in insertMissingRecordsAtExactIntervals", e)
         }
     }
 
+    /**
+     * Checks if current time is within shift window with comprehensive logging.
+     * Used by MyService to determine if it should continue running.
+     * This is the complete shift validation logic with detailed logs.
+     *
+     * @return true if inside shift, false if off-shift
+     */
+    fun shouldRunCheck(user: UserModel): Boolean {
+        val today = LocalDate.now()
+        val currentTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(java.util.Date())
+        val todayDayName = getCurrentDayName()
 
-    private fun createRecord(user: UserModel): RecordModel {
-        return RecordModel(
-            uuid = Utils.generateRandomUuid(),
-            user_id = user._id.toString(),
-            lat = lastLocation.latitude,
-            lng = lastLocation.longitude,
-            localTime = Utils.getCurrent24HourTime(),
-            time = Utils.getCurrentUtcTime(),
-            attendanceType = StatusEnum.default.name,
-            attendanceStatus = Utils.checkInternetAndSetStatus(context),
-            isForceAttendance = false,
-            isLocation = checkLocationPermissions(),
-            wifiService = wifiManager.isWifiEnabled,
-            dataService = Utils.isMobileDataEnabled(context),
-            notification = Utils.isNotificationPermissionGranted(context),
-            batterySaver = !Utils.isBatterySaverOn(context),
-            batteryOptimization = !Utils.isBatteryOptimizationOff(context),
-            wifi_list = wifiScanResults
-        )
-    }
-    fun checkLocationPermissions(): Boolean {
-        val fineLocationPermission = ActivityCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        )
-        val coarseLocationPermission = ActivityCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_COARSE_LOCATION
-        )
+        // Get yesterday's day name for overnight shift checking
+        val yesterdayCalendar = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        val yesterdayDayName = yesterdayCalendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
 
-        // Check for Android 14+ (if needed)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            fineLocationPermission == PackageManager.PERMISSION_GRANTED &&
-                    coarseLocationPermission == PackageManager.PERMISSION_GRANTED
+        // Pick active multiple timetable (if any)
+        val activeMulti = user.multipleTimeTables?.find { mt ->
+            val s = mt.startDate.toLocalDate()
+            val e = mt.endDate.toLocalDate()
+            today in s..e
+        }
+
+        // Log which timetable is being used
+        if (activeMulti != null) {
+            Log.i(TAG, "📅 Using MULTIPLE TIMETABLE: ${activeMulti.timetable.timeTableName}")
+            Log.i(TAG, "   Active from ${activeMulti.startDate} to ${activeMulti.endDate}")
         } else {
-            // For Android versions below 13 (including 13 itself)
-            fineLocationPermission == PackageManager.PERMISSION_GRANTED &&
-                    coarseLocationPermission == PackageManager.PERMISSION_GRANTED
+            Log.i(TAG, "📅 Using DEFAULT TIMETABLE")
         }
 
+        // Get active timetable range (default if none)
+        val range = activeMulti?.timetable?.range ?: user.timetable?.range ?: return false
+        val now = Calendar.getInstance()
+
+        // Log all shift windows for debugging
+        Log.i(TAG, "🕐 Current time: $currentTimeStr on $todayDayName")
+        Log.i(TAG, "📋 Checking ${range.size} shift(s) in timetable:")
+        range.forEach { shift ->
+            val isThisDayShift = shift.day.equals(todayDayName, ignoreCase = true)
+            val marker = if (isThisDayShift) "→" else " "
+            Log.i(TAG, "  $marker ${shift.day}: ${shift.start} - ${shift.end} (with ±1h buffer)")
+        }
+
+        // ✅ STEP 1: Check if we're inside TODAY's shift
+        val todayShift = range.find { it.day.equals(todayDayName, ignoreCase = true) }
+        var isInsideShift = false
+
+        if (todayShift?.start != null && todayShift.end != null) {
+            isInsideShift = ShiftUtils.isTimeWithinBufferRange(now, todayShift.start, todayShift.end)
+            Log.i(TAG, "📅 Today ($todayDayName) shift: ${todayShift.start} - ${todayShift.end} | Result: ${if (isInsideShift) "✅ INSIDE" else "❌ OUTSIDE"}")
+
+            if (isInsideShift) {
+                Log.i(TAG, "✅ INSIDE shift window: $todayDayName (${todayShift.start} - ${todayShift.end} with ±1h buffer)")
+            }
+        } else {
+            Log.i(TAG, "📅 Today ($todayDayName) has no shift configured")
+        }
+
+        // ✅ STEP 2: If not inside today's shift, check YESTERDAY's overnight shift
+        if (!isInsideShift) {
+            val yesterdayShift = range.find { it.day.equals(yesterdayDayName, ignoreCase = true) }
+
+            if (yesterdayShift?.start != null && yesterdayShift.end != null) {
+                // ✅ CRITICAL: Pass -1 to check yesterday's shift that extends into today
+                isInsideShift = ShiftUtils.isTimeWithinBufferRange(now, yesterdayShift.start, yesterdayShift.end, -1)
+                Log.i(TAG, "📅 Yesterday ($yesterdayDayName) shift check (overnight): ${yesterdayShift.start} - ${yesterdayShift.end} | Result: ${if (isInsideShift) "✅ INSIDE" else "❌ OUTSIDE"}")
+
+                if (isInsideShift) {
+                    Log.i(TAG, "✅ INSIDE shift window: Yesterday's $yesterdayDayName shift extends into today (${yesterdayShift.start} - ${yesterdayShift.end} with ±1h buffer)")
+                }
+            } else {
+                Log.i(TAG, "📅 Yesterday ($yesterdayDayName) has no shift configured")
+            }
+        }
+
+        if (!isInsideShift) {
+            Log.w(TAG, "❌ NOT inside any shift window at $currentTimeStr")
+            Log.w(TAG, "💡 Note: Checked both today's shift and yesterday's overnight shift")
+        }
+
+        Log.i(TAG, "shouldRunCheck → insideShift=$isInsideShift at ${Utils.getCurrentDateTime()}")
+        return isInsideShift
     }
 
     fun RecordModel.toDataRequest(errorsList: List<ErrorModel>? = null): DataRequest {
@@ -163,8 +388,8 @@ class AttendanceSyncManager @Inject constructor(
 
 
 
-    private suspend fun callApi(record: RecordModel, user: UserModel) {
-        Log.i(TAG, "Calling API with record: ${record}\n at:${Utils.getCurrentDateTime()}")
+    private suspend fun callApi(user: UserModel) {
+        Log.i(TAG, "Calling API to sync all records at: ${Utils.getCurrentDateTime()}")
 
         val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
 
@@ -179,181 +404,150 @@ class AttendanceSyncManager @Inject constructor(
         val allRecords = dao.getAllRecords(user._id.toString())
             .map { it.toDataRequest(errorList) }
 
-        // ✅ DOUBLE-LAYER FILTERING FOR API CALL:
-        // Even though we prevent duplicates at insertion, we apply additional filtering here as a safety net
-        // This ensures clean data is sent to the API and DELETES invalid records from database
+        Log.i(TAG, "🔍 STARTING COMPREHENSIVE VALIDATION - Total records: ${allRecords.size}")
 
-        val records = mutableListOf<DataRequest>()
-        val recordsToDelete = mutableListOf<String>() // Track UUIDs of records to delete
-        var lastDefaultTime: LocalTime? = null
+        // ✅ STEP 1: Sort all records by UTC TIMESTAMP (not local time) to handle midnight crossover
+        val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+        utcFormatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
 
-        for ((index, record) in allRecords.withIndex()) {
-            if (record.attendanceType == "default") {
-                // ✅ FILTER 1: Check for UTC time duplicates (comparing without seconds)
-                // Extract UTC time in HH:mm format from the ISO timestamp
-                val currentTimeKey = try {
-                    // Extract time from UTC format like "2025-10-22T13:50:01Z"
-                    record.time.substringBeforeLast(':').substringAfter('T')
-                } catch (e: Exception) {
-                    // Fallback to local time if UTC parsing fails
-                    record.localTime.substringBeforeLast(':')
-                }
+        val sortedRecords = allRecords.sortedBy {
+            try {
+                val utcDate = utcFormatter.parse(it.time)
+                utcDate?.time ?: Long.MAX_VALUE // Use timestamp for sorting
+            } catch (e: Exception) {
+                Long.MAX_VALUE // Put malformed records at the end
+            }
+        }
 
-                // Check if any previous record has the same UTC time (HH:mm)
-                val isDuplicate = allRecords.subList(0, index).any { prevRecord ->
-                    if (prevRecord.attendanceType == "default") {
-                        val prevTimeKey = try {
-                            prevRecord.time.substringBeforeLast(':').substringAfter('T')
-                        } catch (e: Exception) {
-                            prevRecord.localTime.substringBeforeLast(':')
-                        }
-                        // Compare UTC times to detect duplicates
-                        currentTimeKey == prevTimeKey
-                    } else false
-                }
+        Log.i(TAG, "📋 Sorted records by UTC timestamp (handles midnight crossover)")
 
-                if (isDuplicate) {
-                    Log.d(TAG, "❌ Duplicate UTC time $currentTimeKey, UUID: ${record.UUID} - DELETING from database")
-                    recordsToDelete.add(record.UUID) // Mark for deletion
+        // ✅ STEP 2: Separate default and non-default records
+        val defaultRecords = sortedRecords.filter { it.attendanceType == "default" }
+        val nonDefaultRecords = sortedRecords.filter { it.attendanceType != "default" }
+
+        Log.i(TAG, "📊 Default records: ${defaultRecords.size}, Non-default records: ${nonDefaultRecords.size}")
+
+        // ✅ STEP 3: Validate and fix default records
+        val validatedDefaultRecords = mutableListOf<DataRequest>()
+        val recordsToDelete = mutableListOf<String>()
+        val recordsToAdd = mutableListOf<RecordModel>()
+
+        for (i in defaultRecords.indices) {
+            val currentRecord = defaultRecords[i]
+
+            try {
+                // For the first record, just add it
+                if (i == 0) {
+                    validatedDefaultRecords.add(currentRecord)
+                    Log.d(TAG, "✅ First default record: ${currentRecord.localTime}")
                     continue
                 }
 
-                // ✅ FILTER 2: Enforce minimum 4-minute gap between consecutive default records
-                // This prevents sending multiple records within a short time span
-                try {
-                    val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
-                    val currentTime = LocalTime.parse(record.localTime, formatter)
+                val previousRecord = validatedDefaultRecords.last()
 
-                    if (lastDefaultTime != null) {
-                        val minutesDiff = Duration.between(lastDefaultTime, currentTime).toMinutes()
+                // Compare UTC times without seconds (HH:mm only)
+                val prevUtcTimeHHMM = getUtcTimeHHMM(previousRecord.time)
+                val currUtcTimeHHMM = getUtcTimeHHMM(currentRecord.time)
 
-                        // Reject if gap is less than 4 minutes
-                        if (minutesDiff < 4) {
-                            Log.d(TAG, "❌ Time gap ${minutesDiff} min (< 4 min) at ${record.localTime}, UUID: ${record.UUID} - DELETING from database")
-                            recordsToDelete.add(record.UUID) // Mark for deletion
-                            continue
-                        }
+                // Calculate minute difference using UTC time without seconds
+                val minutesDiff = calculateMinutesDifferenceHHMM(prevUtcTimeHHMM, currUtcTimeHHMM)
 
-                        Log.d(TAG, "✅ Record accepted: ${minutesDiff} minutes gap from previous record, UUID: ${record.UUID}")
+                Log.d(TAG, "⏱️ Comparing: ${previousRecord.localTime} (UTC: $prevUtcTimeHHMM) -> ${currentRecord.localTime} (UTC: $currUtcTimeHHMM) = $minutesDiff min")
+
+                if (minutesDiff == 5) {
+                    // Perfect 5-minute interval
+                    validatedDefaultRecords.add(currentRecord)
+                    Log.d(TAG, "✅ Perfect 5-min interval: ${currentRecord.localTime}")
+
+                } else if (minutesDiff > 5 && minutesDiff % 5 == 0) {
+                    // Gap detected - need to fill with dummy records
+                    val numberOfDummyRecords = (minutesDiff / 5) - 1
+                    Log.i(TAG, "⚠️ Gap detected: $minutesDiff minutes. Inserting $numberOfDummyRecords dummy records")
+
+                    // Create dummy records to fill the gap
+                    val dummyRecords = createDummyRecordsForGap(previousRecord, currentRecord, numberOfDummyRecords)
+                    recordsToAdd.addAll(dummyRecords)
+
+                    // Add dummy records to validated list
+                    dummyRecords.forEach { dummy ->
+                        validatedDefaultRecords.add(dummy.toDataRequest())
+                        Log.d(TAG, "✅ Dummy record added: ${dummy.localTime}")
                     }
 
-                    // Update the last processed time for next iteration
-                    lastDefaultTime = currentTime
-                    records.add(record)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error parsing time for record: ${record.localTime}", e)
-                    records.add(record) // Add anyway if parsing fails to avoid data loss
+                    // Add current record
+                    validatedDefaultRecords.add(currentRecord)
+                    Log.d(TAG, "✅ Current record added after gap fill: ${currentRecord.localTime}")
+
+                } else {
+                    // Invalid interval - delete this record
+                    Log.e(TAG, "❌ Invalid interval: $minutesDiff min (not a multiple of 5) - DELETING ${currentRecord.localTime}, UUID: ${currentRecord.UUID}")
+                    recordsToDelete.add(currentRecord.UUID)
                 }
-            } else {
-                // ✅ Non-default records (manual check-in/out) are always included
-                records.add(record)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error processing record ${currentRecord.localTime}: ${e.message}", e)
+                recordsToDelete.add(currentRecord.UUID)
             }
         }
 
-        // ✅ DELETE invalid records from database immediately
+        // ✅ STEP 4: Insert dummy records into database
+        if (recordsToAdd.isNotEmpty()) {
+            Log.i(TAG, "💾 Inserting ${recordsToAdd.size} dummy records into database")
+            recordsToAdd.forEach { dummy ->
+                try {
+                    dao.insertRecord(dummy)
+                    Log.d(TAG, "✅ Dummy saved to DB: ${dummy.localTime} (UTC: ${dummy.time})")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to insert dummy record: ${e.message}")
+                }
+            }
+        }
+
+        // ✅ STEP 5: Delete invalid records from database
         if (recordsToDelete.isNotEmpty()) {
-            Log.i(TAG, "Deleting ${recordsToDelete.size} invalid records from database")
+            Log.i(TAG, "🗑️ Deleting ${recordsToDelete.size} invalid records from database")
             recordsToDelete.forEach { uuid ->
-                dao.deleteRecordByUuid(uuid)
-            }
-        }
-
-        Log.i(TAG, "callApi: Total records: ${allRecords.size}, After deduplication and 4-min filter: ${records.size}")
-
-        // Round time differences to 5 minutes before sending to API
-        val adjustedRecords = mutableListOf<DataRequest>()
-        for (i in records.indices) {
-            val currentRecord = records[i]
-
-            if (i > 0) {
-                val previousRecord = adjustedRecords[i - 1]
-
                 try {
-                    // Parse UTC times to calculate difference
-                    val utcFormatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.getDefault())
-                    utcFormatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
-                    val prevUtcTime = utcFormatter.parse(previousRecord.time)
-                    val currUtcTime = utcFormatter.parse(currentRecord.time)
-
-                    if (prevUtcTime != null && currUtcTime != null) {
-                        val diffMinutes = ((currUtcTime.time - prevUtcTime.time) / (1000 * 60)).toInt()
-
-                        // Adjust time if difference is 4 or 6 minutes
-                        when (diffMinutes) {
-                            4 -> {
-                                // Increase by 1 minute to make it 5 minutes
-                                val calendar = java.util.Calendar.getInstance()
-                                calendar.time = currUtcTime
-                                calendar.add(java.util.Calendar.MINUTE, 1)
-
-                                val adjustedUtcTime = utcFormatter.format(calendar.time)
-
-                                // Adjust local time as well
-                                val localFormatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                                val currLocalTime = localFormatter.parse(currentRecord.localTime)
-                                if (currLocalTime != null) {
-                                    val localCalendar = java.util.Calendar.getInstance()
-                                    localCalendar.time = currLocalTime
-                                    localCalendar.add(java.util.Calendar.MINUTE, 1)
-                                    val adjustedLocalTime = localFormatter.format(localCalendar.time)
-
-                                    adjustedRecords.add(currentRecord.copy(
-                                        time = adjustedUtcTime,
-                                        localTime = adjustedLocalTime
-                                    ))
-                                    Log.i(TAG, "Adjusted record from 4 min to 5 min: ${currentRecord.localTime} -> $adjustedLocalTime")
-                                } else {
-                                    adjustedRecords.add(currentRecord.copy(time = adjustedUtcTime))
-                                }
-                            }
-                            6 -> {
-                                // Decrease by 1 minute to make it 5 minutes
-                                val calendar = java.util.Calendar.getInstance()
-                                calendar.time = currUtcTime
-                                calendar.add(java.util.Calendar.MINUTE, -1)
-
-                                val adjustedUtcTime = utcFormatter.format(calendar.time)
-
-                                // Adjust local time as well
-                                val localFormatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                                val currLocalTime = localFormatter.parse(currentRecord.localTime)
-                                if (currLocalTime != null) {
-                                    val localCalendar = java.util.Calendar.getInstance()
-                                    localCalendar.time = currLocalTime
-                                    localCalendar.add(java.util.Calendar.MINUTE, -1)
-                                    val adjustedLocalTime = localFormatter.format(localCalendar.time)
-
-                                    adjustedRecords.add(currentRecord.copy(
-                                        time = adjustedUtcTime,
-                                        localTime = adjustedLocalTime
-                                    ))
-                                    Log.i(TAG, "Adjusted record from 6 min to 5 min: ${currentRecord.localTime} -> $adjustedLocalTime")
-                                } else {
-                                    adjustedRecords.add(currentRecord.copy(time = adjustedUtcTime))
-                                }
-                            }
-                            else -> {
-                                // Keep as is for other differences
-                                adjustedRecords.add(currentRecord)
-                            }
-                        }
-                    } else {
-                        adjustedRecords.add(currentRecord)
-                    }
+                    dao.deleteRecordByUuid(uuid)
+                    Log.d(TAG, "✅ Deleted record UUID: $uuid")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error adjusting time difference: ${e.message}")
-                    adjustedRecords.add(currentRecord)
+                    Log.e(TAG, "❌ Failed to delete record: ${e.message}")
                 }
-            } else {
-                // First record, no adjustment needed
-                adjustedRecords.add(currentRecord)
             }
         }
+
+        // ✅ STEP 6: Combine validated default records with non-default records
+        val finalRecords = mutableListOf<DataRequest>()
+        finalRecords.addAll(validatedDefaultRecords)
+        finalRecords.addAll(nonDefaultRecords)
+
+        // ✅ STEP 7: Sort final list by local time (ascending order)
+        val sortedFinalRecords = finalRecords.sortedBy {
+            try {
+                Utils.parseFlexibleTime(it.localTime) ?: LocalTime.MAX
+            } catch (e: Exception) {
+                LocalTime.MAX // Put errors at the end
+            }
+        }
+
+        Log.i(TAG, "📤 VALIDATION COMPLETE:")
+        Log.i(TAG, "   - Original records: ${allRecords.size}")
+        Log.i(TAG, "   - Dummy records added: ${recordsToAdd.size}")
+        Log.i(TAG, "   - Invalid records deleted: ${recordsToDelete.size}")
+        Log.i(TAG, "   - Final records to send: ${sortedFinalRecords.size}")
+        Log.i(TAG, "   - Records sorted by local time in ascending order ✅")
+
+        // Log the final sequence for verification
+        sortedFinalRecords.forEachIndexed { index, record ->
+            Log.d(TAG, "   [$index] ${record.localTime} - ${record.attendanceType} - UTC: ${getUtcTimeHHMM(record.time)}")
+        }
+
+        val records = sortedFinalRecords
 
         if (Utils.isInternetAvailable(context)) {
             val token = SharedPref.getInstance(context)?.getToken() ?: ""
             try {
-                val response = repository.sendData(adjustedRecords, token)
+                val response = repository.sendData(records, token)
                 Log.i(TAG, "MRcallApi: apiResponse:${response.body()}")
 
                 if (response.isSuccessful) {
@@ -367,7 +561,6 @@ class AttendanceSyncManager @Inject constructor(
 
                     Log.i(TAG, "callApi: Response body message: ${body.message}")
 
-//                    apiCallInProgress = false
                     // ✅ Check if body contains an error-like status
                     val hasErrorInData = body.data.any { it.status.equals("error", ignoreCase = true) }
                     if (hasErrorInData) {
@@ -382,7 +575,7 @@ class AttendanceSyncManager @Inject constructor(
                         sendNotificationUpdate(errorMessages)
                     } else {
                         Log.i(TAG, "API call successful, handling response.")
-                        handleSuccessfulResponse(body, record)
+                        handleSuccessfulResponse(body)
                     }
                 } else {
 
@@ -402,8 +595,7 @@ class AttendanceSyncManager @Inject constructor(
     }
 
     private suspend fun handleSuccessfulResponse(
-        response: AttendaceResponseModel?,
-        record: RecordModel
+        response: AttendaceResponseModel?
     ) {
         response?.let { attendanceResponse ->
             // Get the main message from response
@@ -493,7 +685,7 @@ class AttendanceSyncManager @Inject constructor(
     }
 
 
-    private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel) {
+    private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel): Boolean {
         val todayDate = LocalDate.now()
         val activeMulti = user.multipleTimeTables?.find { mt ->
             val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
@@ -508,15 +700,23 @@ class AttendanceSyncManager @Inject constructor(
         val yesterdayShift = effectiveRange.find { it.day.equals(yesterdayName, ignoreCase = true) }
 
         val currentCal = Calendar.getInstance()
+        val currentTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(currentCal.time)
         var insideWindow = false
 
         if (todayShift?.start != null && todayShift.end != null) {
             insideWindow = ShiftUtils.isTimeWithinBufferRange(currentCal, todayShift.start, todayShift.end)
+            Log.d(TAG, "📅 Today ($todayName) shift check: ${todayShift.start} - ${todayShift.end} | Current: $currentTimeStr | Result: ${if (insideWindow) "✅ INSIDE" else "❌ OUTSIDE"}")
+        } else {
+            Log.d(TAG, "📅 Today ($todayName) has no shift configured")
         }
 
         // 🔹 if not inside today's shift, check if still inside yesterday's (overnight)
         if (!insideWindow && yesterdayShift?.start != null && yesterdayShift.end != null) {
-            insideWindow = ShiftUtils.isTimeWithinBufferRange(currentCal, yesterdayShift.start, yesterdayShift.end)
+            // ✅ CRITICAL FIX: Pass -1 to check yesterday's shift that extends into today
+            insideWindow = ShiftUtils.isTimeWithinBufferRange(currentCal, yesterdayShift.start, yesterdayShift.end, -1)
+            Log.d(TAG, "📅 Yesterday ($yesterdayName) shift check (overnight): ${yesterdayShift.start} - ${yesterdayShift.end} | Current: $currentTimeStr | Result: ${if (insideWindow) "✅ INSIDE" else "❌ OUTSIDE"}")
+        } else if (!insideWindow) {
+            Log.d(TAG, "📅 Yesterday ($yesterdayName) has no shift configured or already checked today's shift")
         }
 
         if (insideWindow) {
@@ -531,64 +731,62 @@ class AttendanceSyncManager @Inject constructor(
                             return@withLock
                         }
 
-                        // ✅ STEP 2: Get the latest record for time difference validation
-                        val latest = dao.getLatestRecord(record.user_id)
-                        val referenceRecord = if (latest != null && latest.attendanceType != StatusEnum.default.name) {
-                            val lastDefault = dao.getLatestDefaultRecord(record.user_id)
-                            Log.i(TAG, "Latest record is ${latest.attendanceType} type at ${latest.localTime}, using last DEFAULT record at ${lastDefault?.localTime} for comparison")
-                            lastDefault
-                        } else {
-                            Log.i(TAG, "Latest record is ${latest?.attendanceType} type at ${latest?.localTime}, using it as reference")
-                            latest
-                        }
 
-                        Log.i(TAG, "saveDataLocally: inside window using referenceRecord:$referenceRecord\nnewRecord:$record")
+                        // ✅ STEP 3: Insert the record directly
+                        // Note: Gap filling is handled during API sync (callApi), not here
+                        dao.insertRecord(record)
 
-                        // ✅ STEP 3: Insert dummy records if needed to fill gaps (only for default types)
                         if (record.attendanceType == StatusEnum.default.name) {
-                            insertDummyRecordsIfNeeded(referenceRecord, record)
+                            // ✅ Save last sync time to SharedPreferences (only for default records)
+                            SharedPref.getInstance(context)?.saveLastSyncTime(record.localTime)
+                            Log.i(TAG, "💾 Record saved at ${record.localTime} | Last sync time updated")
 
-                            // ✅ IMPORTANT: After inserting dummy records, we need to refresh the reference
-                            // to use the LAST INSERTED DUMMY RECORD for validation, not the old reference
-                            // This ensures proper gap validation
-                        }
-
-                        // ✅ STEP 4: Get the updated reference record after dummy insertion
-                        // This is critical because if dummy records were inserted, we need to validate
-                        // against the LAST dummy record, not the original reference
-                        val latestAfterDummy = dao.getLatestRecord(record.user_id)
-                        val updatedReferenceRecord = if (latestAfterDummy != null && latestAfterDummy.attendanceType != StatusEnum.default.name) {
-                            dao.getLatestDefaultRecord(record.user_id)
-                        } else {
-                            latestAfterDummy
-                        }
-
-                        // ✅ STEP 5: Validate using 4-minute gap enforcement
-                        // For DEFAULT records: compare against last DEFAULT record (which might be a dummy we just inserted)
-                        // For ARRIVAL/DEPARTURE: compare against the actual latest record
-                        val recordToCompare = if (record.attendanceType == StatusEnum.default.name) {
-                            updatedReferenceRecord // Use updated last default record for gap validation
-                        } else {
-                            latestAfterDummy // Use actual latest record for arrival/departure
-                        }
-
-                        if (shouldInsertRecord(recordToCompare, record)) {
-                            dao.insertRecord(record)
                             withContext(Dispatchers.Main) {
                                 sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
                             }
-                            callApi(record, user)
                         } else {
-                            Log.d(TAG, "❌ Record not inserted: Failed shouldInsertRecord validation (either time is before latest or gap < 4 minutes)")
+                            // For ARRIVAL/DEPARTURE records
+                            Log.i(TAG, "💾 ${record.attendanceType} record saved at ${record.localTime}")
+                            withContext(Dispatchers.Main) {
+                                sendNotificationUpdate("${record.attendanceType} recorded at ${Utils.getCurrentDateTime()}")
+                            }
                         }
+
+                        // Sync to API after insertion (API sync handles gap filling and validation)
+                        callApi(user)
 
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to save record/call API", e)
                     }
                 }
             }
+            return true // Inside shift window, service should continue
         } else {
-            sendFinishBroadcastAndLog("Current time is outside shift period, NOT scheduling API Worker.")
+            // Build detailed reason message
+            val reasonBuilder = StringBuilder()
+            reasonBuilder.append("❌ Current time is OUTSIDE shift period\n")
+            reasonBuilder.append("⏰ Current Time: $currentTimeStr\n")
+            reasonBuilder.append("📅 Today: $todayName\n")
+
+            if (todayShift != null) {
+                reasonBuilder.append("   Today's Shift: ${todayShift.start} - ${todayShift.end} (with ±1h buffer)\n")
+                reasonBuilder.append("   Status: ❌ OUTSIDE\n")
+            } else {
+                reasonBuilder.append("   Today's Shift: Not configured\n")
+            }
+
+            reasonBuilder.append("📅 Yesterday: $yesterdayName\n")
+            if (yesterdayShift != null) {
+                reasonBuilder.append("   Yesterday's Shift: ${yesterdayShift.start} - ${yesterdayShift.end} (with ±1h buffer)\n")
+                reasonBuilder.append("   Status: ❌ OUTSIDE\n")
+            } else {
+                reasonBuilder.append("   Yesterday's Shift: Not configured\n")
+            }
+
+            reasonBuilder.append("🛑 NOT scheduling API Worker - Service will stop")
+
+            sendFinishBroadcastAndLog(reasonBuilder.toString())
+            return false // Outside shift window, service should stop
         }
     }
 
@@ -607,160 +805,196 @@ class AttendanceSyncManager @Inject constructor(
         LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
     }
 
-    /**
-     * Inserts dummy records with 5-minute intervals between the last default record and the current record.
-     * This fills gaps when there's more than 5 minutes difference between consecutive records.
-     *
-     * IMPORTANT: This method should ALWAYS receive the last DEFAULT type record as reference,
-     * not arrival/departure records. The caller is responsible for filtering.
-     *
-     * @param lastDefaultRecord The last default record in the database
-     * @param currentRecord The new record that is about to be inserted
-     */
-    private suspend fun insertDummyRecordsIfNeeded(
-        lastDefaultRecord: RecordModel?,
-        currentRecord: RecordModel
-    ) {
-        // Only proceed if there's a previous default record
-        if (lastDefaultRecord == null) {
-            Log.d(TAG, "❌ No previous default record found, skipping dummy record insertion")
-            return
-        }
 
+
+    /**
+     * Calculates the difference in minutes between two UTC time strings in HH:mm format.
+     * This compares times WITHOUT seconds for more accurate 5-minute interval detection.
+     *
+     * @param utcTimeHHMM1 First UTC time in "HH:mm" format
+     * @param utcTimeHHMM2 Second UTC time in "HH:mm" format
+     * @return Difference in minutes (always positive)
+     */
+    private fun calculateMinutesDifferenceHHMM(utcTimeHHMM1: String, utcTimeHHMM2: String): Int {
+        return try {
+            val formatter = DateTimeFormatter.ofPattern("HH:mm")
+            val time1 = LocalTime.parse(utcTimeHHMM1, formatter)
+            val time2 = LocalTime.parse(utcTimeHHMM2, formatter)
+
+            Math.abs(java.time.Duration.between(time1, time2).toMinutes()).toInt()
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error calculating time difference: ${e.message}", e)
+            0
+        }
+    }
+
+    /**
+     * Calculates the difference in minutes between two UTC timestamp strings.
+     *
+     * @param utcTime1 First UTC time in format "yyyy-MM-dd'T'HH:mm:ss'Z'"
+     * @param utcTime2 Second UTC time in format "yyyy-MM-dd'T'HH:mm:ss'Z'"
+     * @return Difference in minutes (always positive)
+     */
+    private fun calculateMinutesDifference(utcTime1: String, utcTime2: String): Int {
         try {
-            // Parse UTC times using SimpleDateFormat
-            // Note: The format is "2025-10-23T12:25:10Z" (without milliseconds)
             val utcFormatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.getDefault())
             utcFormatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
 
-            val lastUtcTime = utcFormatter.parse(lastDefaultRecord.time)
-            val currentUtcTime = utcFormatter.parse(currentRecord.time)
+            val time1 = utcFormatter.parse(utcTime1)
+            val time2 = utcFormatter.parse(utcTime2)
 
-            if (lastUtcTime == null || currentUtcTime == null) {
-                Log.e(TAG, "❌ Failed to parse UTC times for dummy record insertion")
-                return
+            if (time1 != null && time2 != null) {
+                val diffMillis = Math.abs(time2.time - time1.time)
+                return (diffMillis / (1000 * 60)).toInt()
             }
-
-            // Calculate time difference in minutes
-            val diffMinutes = ((currentUtcTime.time - lastUtcTime.time) / (1000 * 60)).toInt()
-
-            Log.i(TAG, "⏱️ Gap Analysis: Last DEFAULT record: ${lastDefaultRecord.localTime} (${lastDefaultRecord.attendanceType})")
-            Log.i(TAG, "⏱️ Gap Analysis: Current record: ${currentRecord.localTime} (${currentRecord.attendanceType})")
-            Log.i(TAG, "⏱️ Gap Analysis: Time difference = $diffMinutes minutes")
-
-            // Only insert dummy records if gap is more than 5 minutes
-            if (diffMinutes <= 5) {
-                Log.i(TAG, "✅ Gap is $diffMinutes minutes (<= 5), no dummy records needed")
-                return
-            }
-
-            // Calculate how many dummy records we need to insert
-            val numberOfDummyRecords = (diffMinutes / 5) - 1
-
-            if (numberOfDummyRecords <= 0) {
-                Log.i(TAG, "✅ No dummy records needed for gap of $diffMinutes minutes")
-                return
-            }
-
-            Log.i(TAG, "📝 FILLING GAP: Inserting $numberOfDummyRecords dummy records to fill $diffMinutes minute gap")
-            Log.i(TAG, "📝 Template: Using last DEFAULT record data (lat=${lastDefaultRecord.lat}, lng=${lastDefaultRecord.lng})")
-
-            // Local time formatter
-            val localFormatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-
-            // Insert dummy records at 5-minute intervals
-            for (i in 1..numberOfDummyRecords) {
-                val utcCalendar = java.util.Calendar.getInstance()
-                utcCalendar.time = lastUtcTime
-                utcCalendar.add(java.util.Calendar.MINUTE, i * 5)
-                val dummyUtcTime = utcFormatter.format(utcCalendar.time)
-
-                // Calculate local time by adding same interval to last record's local time
-                val lastLocalTime = localFormatter.parse(lastDefaultRecord.localTime)
-                val localCalendar = java.util.Calendar.getInstance()
-                if (lastLocalTime != null) {
-                    localCalendar.time = lastLocalTime
-                    localCalendar.add(java.util.Calendar.MINUTE, i * 5)
-                }
-                val dummyLocalTime = localFormatter.format(localCalendar.time)
-
-                // Create dummy record using all data from last default record
-                val dummyRecord = RecordModel(
-                    uuid = Utils.generateRandomUuid(),
-                    user_id = lastDefaultRecord.user_id,
-                    lat = lastDefaultRecord.lat,
-                    lng = lastDefaultRecord.lng,
-                    localTime = dummyLocalTime,
-                    time = dummyUtcTime,
-                    attendanceType = "default",
-                    attendanceStatus = lastDefaultRecord.attendanceStatus,
-                    isForceAttendance = lastDefaultRecord.isForceAttendance,
-                    isLocation = lastDefaultRecord.isLocation,
-                    wifiService = lastDefaultRecord.wifiService,
-                    dataService = lastDefaultRecord.dataService,
-                    notification = lastDefaultRecord.notification,
-                    batterySaver = lastDefaultRecord.batterySaver,
-                    batteryOptimization = lastDefaultRecord.batteryOptimization,
-                    wifi_list = lastDefaultRecord.wifi_list
-                )
-
-                // Insert dummy record into database
-                dao.insertRecord(dummyRecord)
-                Log.i(TAG, "✅ Dummy record #$i inserted: LocalTime=$dummyLocalTime, UTC=$dummyUtcTime, Type=${dummyRecord.attendanceType}")
-            }
-
-            Log.i(TAG, "✅ Successfully inserted $numberOfDummyRecords dummy DEFAULT records with 5-minute intervals")
-
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error inserting dummy records: ${e.message}", e)
+            Log.e(TAG, "❌ Error calculating time difference: ${e.message}", e)
         }
+        return 0
     }
 
     /**
-     * Validates whether a new record should be inserted based on time comparison with the latest record.
+     * Creates dummy records to fill a gap between two records during API sync validation.
+     * Uses the NEXT record's data (current state) for all dummy records.
      *
-     * This function performs two critical checks:
-     * 1. Ensures the new record's time is not before the latest record (prevents out-of-order insertions)
-     * 2. Enforces a minimum 4-minute gap between consecutive records
-     *
-     * @param latestRecord The most recent record in the database for this user (can be null if no records exist)
-     * @param newRecord The new record that we want to insert
-     * @return true if the record should be inserted, false otherwise
+     * @param previousRecord The previous record in the sequence
+     * @param nextRecord The next record that comes after the gap
+     * @param numberOfRecords How many dummy records to create
+     * @return List of dummy RecordModel objects
      */
-    private fun shouldInsertRecord(
-        latestRecord: RecordModel?,
-        newRecord: RecordModel
-    ): Boolean {
-        // ✅ If no previous record exists, allow insertion
-        if (latestRecord == null) return true
+    private fun createDummyRecordsForGap(
+        previousRecord: DataRequest,
+        nextRecord: DataRequest,
+        numberOfRecords: Int
+    ): List<RecordModel> {
+        val dummyRecords = mutableListOf<RecordModel>()
 
-        val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
-        val latestTime = LocalTime.parse(latestRecord.localTime, formatter)
-        val newTime = LocalTime.parse(newRecord.localTime, formatter)
+        try {
+            // Get user and shift schedule for validation
+            val user = SharedPref.getInstance(context)?.getUser()
+            if (user == null) {
+                Log.e(TAG, "❌ No user found, cannot validate shift times for gap filling")
+                return emptyList()
+            }
 
-        // ✅ VALIDATION 1: Reject if new record time is BEFORE the latest record
-        // This prevents inserting records with earlier timestamps than what's already in the database
-        if (newTime.isBefore(latestTime)) {
-            Log.d(TAG, "Record not inserted: new record time ${newRecord.localTime} is before latest ${latestRecord.localTime}")
-            return false
+            val today = LocalDate.now()
+            val activeMulti = user.multipleTimeTables?.find { mt ->
+                val s = mt.startDate.toLocalDate()
+                val e = mt.endDate.toLocalDate()
+                today in s..e
+            }
+            val effectiveRange = activeMulti?.timetable?.range ?: user.timetable?.range
+
+            if (effectiveRange == null) {
+                Log.e(TAG, "❌ No timetable found, cannot validate shift times")
+                return emptyList()
+            }
+
+            // ✅ FIX: Parse the FULL UTC timestamp from previousRecord (not just time)
+            val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+            utcFormatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
+
+            val prevUtcDate = utcFormatter.parse(previousRecord.time)
+            if (prevUtcDate == null) {
+                Log.e(TAG, "❌ Failed to parse previous UTC time: ${previousRecord.time}")
+                return emptyList()
+            }
+
+            var skippedOffShift = 0
+
+            // Create dummy records at 5-minute intervals
+            for (i in 1..numberOfRecords) {
+                // ✅ Calculate BOTH UTC and local time from the UTC timestamp
+                val utcCalendar = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+                utcCalendar.time = prevUtcDate
+                utcCalendar.add(Calendar.MINUTE, i * 5)
+                val dummyUtcTime = utcFormatter.format(utcCalendar.time)
+
+                // Convert UTC to local time for the dummy record
+                val localCalendar = Calendar.getInstance()
+                localCalendar.timeInMillis = utcCalendar.timeInMillis
+
+                val localFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                val dummyLocalTime = localFormatter.format(localCalendar.time)
+
+                // ✅ CRITICAL: Validate if this time falls within ANY shift period
+                val todayName = localCalendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
+                val yesterdayCalendar = localCalendar.clone() as Calendar
+                yesterdayCalendar.add(Calendar.DAY_OF_YEAR, -1)
+                val yesterdayName = yesterdayCalendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
+
+                val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
+                val yesterdayShift = effectiveRange.find { it.day.equals(yesterdayName, ignoreCase = true) }
+
+                var isWithinShift = false
+
+                // Check today's shift
+                if (todayShift?.start != null && todayShift.end != null) {
+                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(localCalendar, todayShift.start, todayShift.end)
+                }
+
+                // If not in today's shift, check yesterday's overnight shift
+                if (!isWithinShift && yesterdayShift?.start != null && yesterdayShift.end != null) {
+                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(localCalendar, yesterdayShift.start, yesterdayShift.end, -1)
+                }
+
+                if (!isWithinShift) {
+                    Log.d(TAG, "⏭️ Skipping dummy at $dummyLocalTime - OUTSIDE shift period (off-shift time)")
+                    skippedOffShift++
+                    continue
+                }
+
+                Log.d(TAG, "✅ Creating dummy: Local=$dummyLocalTime, UTC=$dummyUtcTime")
+
+                // Create dummy record using NEXT record's data
+                val dummyRecord = RecordModel(
+                    uuid = Utils.generateRandomUuid(),
+                    user_id = nextRecord.user_id,
+                    lat = nextRecord.lat,
+                    lng = nextRecord.lng,
+                    localTime = dummyLocalTime,
+                    time = dummyUtcTime,
+                    attendanceType = "default",
+                    attendanceStatus = nextRecord.attendanceStatus,
+                    isForceAttendance = false,
+                    isLocation = nextRecord.isLocation,
+                    wifiService = nextRecord.wifiService,
+                    dataService = nextRecord.dataService,
+                    notification = nextRecord.notification,
+                    batterySaver = nextRecord.batterySaver,
+                    batteryOptimization = nextRecord.batteryOptimization,
+                    wifi_list = nextRecord.wifi_list
+                )
+
+                dummyRecords.add(dummyRecord)
+            }
+
+            if (skippedOffShift > 0) {
+                Log.i(TAG, "⏭️ Skipped $skippedOffShift dummy records (off-shift times)")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error creating dummy records: ${e.message}", e)
         }
 
-        // ✅ VALIDATION 2: Check if time difference is at least 4 minutes
-        // This ensures we don't insert records too frequently (minimum 4-minute gap required)
-        val duration = Duration.between(latestTime, newTime).toMinutes()
-        if (duration < 4) {
-            Log.d(TAG, "Record not inserted: Time difference is ${duration} minutes (< 4 minutes required)")
-            return false
+        return dummyRecords
+    }
+
+
+    /**
+     * Extracts UTC time in HH:mm format (without seconds and date) from a full UTC timestamp.
+     * Example: "2025-10-28T05:15:23Z" -> "05:15"
+     */
+    private fun getUtcTimeHHMM(utcTime: String): String {
+        return try {
+            val timePart = utcTime.substringAfter('T').substringBefore('Z')
+            timePart.substringBeforeLast(':')
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error extracting UTC HH:mm: ${e.message}", e)
+            "00:00"
         }
-
-        Log.d(TAG, "shouldInsertRecord validation passed: ${duration} minutes gap between records")
-        return true
     }
 
-    fun setWifiList(wifiList: MutableList<WifiModel>) {
-        wifiScanResults.clear()
-        wifiScanResults.addAll(wifiList);
-    }
 
 
 

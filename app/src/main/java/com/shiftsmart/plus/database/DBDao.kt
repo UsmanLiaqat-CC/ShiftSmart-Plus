@@ -44,6 +44,39 @@ interface DBDao {
     @Query("SELECT COUNT(*) FROM record WHERE time = :recordTime")
     suspend fun countRecordByTime(recordTime: String): Int
 
+    /**
+     * Counts records that match a specific UTC time in HH:mm format (ignoring seconds).
+     * This prevents duplicate records at the same UTC hour and minute.
+     *
+     * Example: If utcTimeHHMM = "05:15", it will match:
+     * - "2025-10-28T05:15:00Z"
+     * - "2025-10-28T05:15:23Z"
+     * - "2025-10-28T05:15:59Z"
+     *
+     * @param userId The user ID
+     * @param utcTimeHHMM The UTC time in HH:mm format (e.g., "05:15")
+     * @return Count of records matching this UTC HH:mm
+     */
+    @Query("SELECT COUNT(*) FROM record WHERE user_id = :userId AND substr(time, 12, 5) = :utcTimeHHMM")
+    suspend fun countRecordByUtcTimeHHMM(userId: String, utcTimeHHMM: String): Int
+
+    /**
+     * Counts records that match a specific LOCAL time for a user.
+     * This is used for duplicate detection during backfilling to prevent inserting
+     * records at the same local time, even if their UTC timestamps differ.
+     *
+     * This is critical for timezones with positive offsets (e.g., GMT+2) where
+     * UTC timestamps can overlap across midnight:
+     * - Oct 29 00:05 GMT+2 = Oct 28 22:05 UTC
+     * - Oct 28 22:05 GMT+2 = Oct 28 20:05 UTC
+     *
+     * @param userId The user ID
+     * @param localTime The local time in HH:mm:ss format (e.g., "00:05:00")
+     * @return Count of records matching this local time for this user
+     */
+    @Query("SELECT COUNT(*) FROM record WHERE user_id = :userId AND localTime = :localTime")
+    suspend fun countRecordByLocalTime(userId: String, localTime: String): Int
+
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertIssue(issue: IssueModel)

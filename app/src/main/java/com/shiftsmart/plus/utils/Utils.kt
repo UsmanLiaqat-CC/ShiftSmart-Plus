@@ -102,6 +102,40 @@ object Utils {
         val format = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         return format.format(Date())
     }
+
+    /**
+     * Parses a time string that can be in either "HH:mm" or "HH:mm:ss" format.
+     * This handles cases where LocalTime.toString() omits seconds when they are 0.
+     *
+     * @param timeString Time string in "HH:mm" or "HH:mm:ss" format
+     * @return LocalTime object or null if parsing fails
+     */
+    fun parseFlexibleTime(timeString: String): java.time.LocalTime? {
+        return try {
+            // Check the format by counting colons
+            val colonCount = timeString.count { it == ':' }
+
+            when (colonCount) {
+                1 -> {
+                    // Format is HH:mm
+                    val formatterWithoutSeconds = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+                    java.time.LocalTime.parse(timeString, formatterWithoutSeconds)
+                }
+                2 -> {
+                    // Format is HH:mm:ss
+                    val formatterWithSeconds = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+                    java.time.LocalTime.parse(timeString, formatterWithSeconds)
+                }
+                else -> {
+                    android.util.Log.e("Utils", "Invalid time format: $timeString")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("Utils", "Failed to parse time: $timeString", e)
+            null
+        }
+    }
     fun checkInternetAndSetStatus(context: Context): String {
         val isInternetAvailable = isInternetAvailable(context)
         return if (isInternetAvailable) {

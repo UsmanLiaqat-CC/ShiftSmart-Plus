@@ -97,15 +97,11 @@ object NetworkModule {
         context: Context,
         repository: MainRepository,
         dao: DBDao,
-        locationHelper: LocationHelper,
-        wifiManager: WifiManager
     ): AttendanceSyncManager {
         return AttendanceSyncManager(
             context,
             repository,
             dao,
-            locationHelper,
-            wifiManager
         )
     }
     @Provides

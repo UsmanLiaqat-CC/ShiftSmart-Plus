@@ -131,5 +131,6 @@
     <string name="sunday">Sunday:</string>
     <string name="up_coming_shifts">UpComing Shifts</string>
     <string name="all_shifts">All Shifts</string>
-
+    <string name="app_version">App Version</string>
+    <string name="version_format">%1$s (%2$d)</string>
 </resources>

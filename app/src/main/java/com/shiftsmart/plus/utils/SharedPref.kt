@@ -15,7 +15,9 @@ class SharedPref(private val ctx: Context) {
     private val USER = "user"
     private val TOKEN = "token"
     private val FINGERPRINT = "fingerprint"
-    private val LAST_API_CALL_TIME = "last_api_call_time" // <-- New Key for 5-minute check
+    private val LAST_API_CALL_TIME = "last_api_call_time"
+    private val LAST_SYNC_TIME = "last_sync_time" // Format: "2025-10-28 07:10:00" (with date)
+    private val LAST_SYNC_TIMESTAMP = "last_sync_timestamp" // Unix timestamp in milliseconds
 
     // Save Token
     fun saveToken(token: String?) {
@@ -48,16 +50,75 @@ class SharedPref(private val ctx: Context) {
         }
 
     }
-    // ✅ Save Last API Call Time
-    fun saveLastApiCallTime(time: Long) {
-        sharedPreferences.edit().apply {
-            putLong(LAST_API_CALL_TIME, time)
-        }.apply()
+
+    /**
+     * Save last successful sync time with FULL date and time.
+     * This is critical for overnight shifts that span midnight.
+     *
+     * Stores two values:
+     * 1. Full date-time string: "2025-10-28 07:10:00" (for debugging)
+     * 2. Unix timestamp: milliseconds since epoch (for accurate calculations)
+     *
+     * @param localTime Format: "HH:mm:ss" (e.g., "07:10:00")
+     */
+    fun saveLastSyncTime(localTime: String) {
+        try {
+            // Get current date and time
+            val currentDateTime = java.util.Calendar.getInstance()
+
+            // Parse the time components
+            val timeParts = localTime.split(":")
+            if (timeParts.size >= 2) {
+                val hour = timeParts[0].toIntOrNull() ?: 0
+                val minute = timeParts[1].toIntOrNull() ?: 0
+                val second = if (timeParts.size > 2) timeParts[2].toIntOrNull() ?: 0 else 0
+
+                // Set the time on today's date
+                currentDateTime.set(java.util.Calendar.HOUR_OF_DAY, hour)
+                currentDateTime.set(java.util.Calendar.MINUTE, minute)
+                currentDateTime.set(java.util.Calendar.SECOND, second)
+                currentDateTime.set(java.util.Calendar.MILLISECOND, 0)
+
+                // Format as "yyyy-MM-dd HH:mm:ss"
+                val dateTimeFormatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                val dateTimeString = dateTimeFormatter.format(currentDateTime.time)
+
+                // Save both the formatted string and the timestamp
+                sharedPreferences.edit().apply {
+                    putString(LAST_SYNC_TIME, dateTimeString)
+                    putLong(LAST_SYNC_TIMESTAMP, currentDateTime.timeInMillis)
+                }.apply()
+
+                android.util.Log.i("SharedPref", "💾 Saved last sync: $dateTimeString (timestamp: ${currentDateTime.timeInMillis})")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SharedPref", "Error saving last sync time", e)
+        }
     }
 
-    // ✅ Get Last API Call Time
-    fun getLastApiCallTime(): Long {
-        return sharedPreferences.getLong(LAST_API_CALL_TIME, 0L)
+
+
+    /**
+     * Get last successful sync as Unix timestamp (milliseconds).
+     * This is the RECOMMENDED method for gap calculations as it handles:
+     * - Overnight shifts (crossing midnight)
+     * - Date changes
+     * - Multi-day gaps
+     *
+     * @return Timestamp in milliseconds, or 0L if no sync recorded
+     */
+    fun getLastSyncTimestamp(): Long {
+        return sharedPreferences.getLong(LAST_SYNC_TIMESTAMP, 0L)
+    }
+
+    /**
+     * Get last successful sync as full date-time string.
+     * Format: "2025-10-28 07:10:00"
+     *
+     * @return Full date-time string, or null if no sync recorded
+     */
+    fun getLastSyncDateTime(): String? {
+        return sharedPreferences.getString(LAST_SYNC_TIME, null)
     }
 
     // 🔐 Save fingerprint enable/disable state

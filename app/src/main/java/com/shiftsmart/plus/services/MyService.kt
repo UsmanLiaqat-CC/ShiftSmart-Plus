@@ -31,7 +31,9 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.database.DBDao
+import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
+import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.periodicAction.AlarmReceiver
 import com.shiftsmart.plus.repository.MainRepository
@@ -58,6 +60,8 @@ import java.util.Date
 import java.util.Locale
 
 import javax.inject.Inject
+import kotlin.collections.addAll
+import kotlin.text.clear
 
 @AndroidEntryPoint
 class MyService : Service() {
@@ -100,7 +104,7 @@ class MyService : Service() {
                 wifiScanResults.clear()
                 wifiScanResults.addAll(wifiManager.scanResults.map { WifiModel(it.SSID, it.BSSID, it.level) })
 
-                attendanceSyncManager.setWifiList(wifiScanResults)
+                setWifiList(wifiScanResults)
             }
         }
     }
@@ -122,7 +126,10 @@ class MyService : Service() {
     @Inject lateinit var attendanceSyncManager: AttendanceSyncManager
 
 
-
+    fun setWifiList(wifiList: MutableList<WifiModel>) {
+        wifiScanResults.clear()
+        wifiScanResults.addAll(wifiList);
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -141,7 +148,13 @@ class MyService : Service() {
         Log.i(TAG, "Service command received: ${intent?.action}")
 
         // Determine appropriate message based on shift status
-        val isInShift = shouldRunCheck()
+        val user = SharedPref.getInstance(this)?.getUser()
+        val isInShift = if (user != null) {
+            attendanceSyncManager.shouldRunCheck(user)
+        } else {
+            false
+        }
+
         val initialMessage = when {
             !isInShift -> "Off-shift - Service idle"
             intent?.action == ACTION_CALL_API -> "Syncing attendance data..."
@@ -158,7 +171,14 @@ class MyService : Service() {
             ACTION_START -> handleServiceStart()
             ACTION_STOP -> handleServiceStop()
             ACTION_RESTART -> handleServiceRestart()
-            ACTION_CALL_API -> checkAndMaintainService()
+            ACTION_CALL_API -> {
+                // Extract parameters passed from AlarmReceiver
+                val lastRecordTimeStr = intent.getStringExtra("LAST_RECORD_TIME")
+                val targetTimeStr = intent.getStringExtra("TARGET_TIME")
+                val missingRecords = intent.getIntExtra("MISSING_RECORDS", 0)
+
+                checkAndMaintainService(lastRecordTimeStr, targetTimeStr, missingRecords)
+            }
 
             else -> handleRegularStart()
         }
@@ -303,27 +323,20 @@ class MyService : Service() {
         }
     }
 
-/*    private fun checkAndMaintainService() {
-
-        Log.d(TAG, "checkAndMaintainService: Keep-alive check.${Utils.getCurrentDateTime()}")
-
-        // 1. Check if service should be running based on shift times
-        if (!shouldRunCheck()) {
-            Log.d(TAG, "checkAndMaintainServiceNot in shift time, stopping service")
-            finishServiceOperations()
-            return
-        }
-
-        serviceScope.launch {
-            startLocationFetch()
-        }
-
-    }*/
-
     private var lastCheckDate: LocalDate? = null
 
-    private fun checkAndMaintainService() {
-        Log.d(TAG, "checkAndMaintainService: ${Utils.getCurrentDateTime()}")
+    /**
+     * checkAndMaintainService handles both regular checks and missing record insertion.
+     * When called from AlarmReceiver with parameters, it inserts missing records at exact times.
+     */
+    private fun checkAndMaintainService(
+        lastRecordTimeStr: String? = null,
+        targetTimeStr: String? = null,
+        missingRecords: Int = 0
+    ) {
+        Log.d(TAG, "🔄 checkAndMaintainService: ${Utils.getCurrentDateTime()}")
+        Log.d(TAG, "📊 Parameters: lastRecord=$lastRecordTimeStr, target=$targetTimeStr, missing=$missingRecords")
+
         val today = LocalDate.now()
 
         // Force re-sync at day change
@@ -334,16 +347,90 @@ class MyService : Service() {
         }
         lastCheckDate = today
 
-        if (!shouldRunCheck()) {
-            Log.d(TAG, "Off-shift - Stopping service")
+        // Check shift status using AttendanceSyncManager
+        val user = SharedPref.getInstance(this)?.getUser()
+        if (user == null) {
+            Log.e(TAG, "❌ No user found - Stopping service")
+            updateForegroundNotification(this, "No user - Service stopping...")
+            finishServiceOperations()
+            return
+        }
+
+        val isInsideShift = attendanceSyncManager.shouldRunCheck(user)
+        if (!isInsideShift) {
+            Log.d(TAG, "❌ Off-shift - Stopping service")
             updateForegroundNotification(this, "Off-shift - Service stopping...")
             finishServiceOperations()
             return
         }
 
-        updateForegroundNotification(this, "Tracking attendance...")
-        serviceScope.launch { startLocationFetch() }
+        updateForegroundNotification(this, "📝 Tracking attendance...")
+
+        // ✅ Handle missing records insertion if alarm detected a gap
+        if (missingRecords > 0 && lastRecordTimeStr != null && targetTimeStr != null) {
+            Log.i(TAG, "📝 Gap detected: Inserting $missingRecords missing record(s) from $lastRecordTimeStr to $targetTimeStr")
+
+            serviceScope.launch {
+                try {
+                    // First fetch current location and wifi data
+                    val location = if (locationHelper.hasLocationPermissions()) {
+                        try {
+                            locationHelper.fetchFreshLocation()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to fetch location, using last known", e)
+                            locationHelper.lastLocation
+                        }
+                    } else {
+                        locationHelper.lastLocation
+                    }
+
+                    // Create a template record with current data
+                    val templateRecord = RecordModel(
+                        uuid = Utils.generateRandomUuid(),
+                        user_id = user._id.toString(),
+                        lat = location.latitude,
+                        lng = location.longitude,
+                        localTime = Utils.getCurrent24HourTime(),
+                        time = Utils.getCurrentUtcTime(),
+                        attendanceType = StatusEnum.default.name,
+                        attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
+                        isForceAttendance = false,
+                        isLocation = locationHelper.hasLocationPermissions(),
+                        wifiService = wifiManager.isWifiEnabled,
+                        dataService = Utils.isMobileDataEnabled(this@MyService),
+                        notification = Utils.isNotificationPermissionGranted(this@MyService),
+                        batterySaver = !Utils.isBatterySaverOn(this@MyService),
+                        batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
+                        wifi_list = wifiScanResults.toList()
+                    )
+
+                    // Insert missing records at exact intervals (fills the gap)
+                    attendanceSyncManager.insertMissingRecordsAtExactIntervals(
+                        lastRecordTimeStr = lastRecordTimeStr,
+                        targetTimeStr = targetTimeStr,
+                        numberOfRecords = missingRecords,
+                        currentRecord = templateRecord,
+                        user = user
+                    )
+
+                    // After filling gap, insert current record at target time
+                    Log.i(TAG, "✅ Gap filled, now inserting current record at $targetTimeStr")
+                    startLocationFetch()
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error inserting missing records", e)
+                }
+            }
+        } else {
+            // No gap detected OR missingRecords = 0 - just insert current record normally
+            Log.i(TAG, "✅ No gap detected - inserting current record at ${Utils.getCurrent24HourTime()}")
+            serviceScope.launch {
+                startLocationFetch()
+            }
+        }
     }
+
+
 
     private fun forceMidnightSync() {
         serviceScope.launch {
@@ -358,31 +445,6 @@ class MyService : Service() {
             wakeLock.release()
         }
     }
-
-    private fun shouldRunCheck(): Boolean {
-        val user = SharedPref.getInstance(this)?.getUser() ?: return false
-        val today = LocalDate.now()
-
-        // Pick active multiple timetable (if any)
-        val activeMulti = user.multipleTimeTables?.find { mt ->
-            val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
-            today in s..e
-        }
-
-        // Get active timetable range (default if none)
-        val range = activeMulti?.timetable?.range ?: user.timetable?.range ?: return false
-        val now = Calendar.getInstance()
-
-        // ✅ Check if current time falls inside ANY shift window (handles overnight spans too)
-        val isInsideShift = range.any { shift ->
-            shift.start != null && shift.end != null &&
-                    ShiftUtils.isTimeWithinBufferRange(now, shift.start, shift.end)
-        }
-
-        Log.i("MyService", "shouldRunCheck → insideShift=$isInsideShift at ${Utils.getCurrentDateTime()}")
-        return isInsideShift
-    }
-
 
 
 
@@ -456,11 +518,62 @@ class MyService : Service() {
     }
 
 
+    /**
+     * Creates a new attendance record and passes it to AttendanceSyncManager.
+     * The manager handles all validation, gap filling, duplicate checking, and syncing.
+     * If off-shift is detected, the service will be stopped.
+     */
     private fun maybeTriggerApiCall() {
-        CoroutineScope(Dispatchers.IO).launch {
-            attendanceSyncManager.startSyncProcess()
-        }
+        serviceScope.launch {
+            try {
+                val user = SharedPref.getInstance(this@MyService)?.getUser()
+                if (user == null) {
+                    Log.e(TAG, "❌ No user found, skipping record save")
+                    return@launch
+                }
 
+                // Create record with current data
+                val record = RecordModel(
+                    uuid = Utils.generateRandomUuid(),
+                    user_id = user._id.toString(),
+                    lat = locationHelper.lastLocation.latitude,
+                    lng = locationHelper.lastLocation.longitude,
+                    localTime = Utils.getCurrent24HourTime(),
+                    time = Utils.getCurrentUtcTime(),
+                    attendanceType = StatusEnum.default.name,
+                    attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
+                    isForceAttendance = false,
+                    isLocation = locationHelper.hasLocationPermissions(),
+                    wifiService = wifiManager.isWifiEnabled,
+                    dataService = Utils.isMobileDataEnabled(this@MyService),
+                    notification = Utils.isNotificationPermissionGranted(this@MyService),
+                    batterySaver = !Utils.isBatterySaverOn(this@MyService),
+                    batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
+                    wifi_list = wifiScanResults.toList()
+                )
+
+                Log.i(TAG, "📝 Created record at ${record.localTime} (UTC: ${record.time})")
+
+                // ✅ AttendanceSyncManager handles:
+                // 1. Shift validation (checks if time is within shift window)
+                // 2. Duplicate checking (prevents same UTC time records)
+                // 3. Gap filling (inserts missing 5-minute interval records)
+                // 4. Database insertion
+                // 5. API sync (if internet available)
+                val isInsideShift = attendanceSyncManager.saveRecordLocally(record, user)
+
+                if (isInsideShift) {
+                    Log.i(TAG, "✅ Record saved successfully - Service continues")
+                } else {
+                    Log.w(TAG, "⚠️ Off-shift detected - Stopping service")
+                    updateForegroundNotification(this@MyService, "Off-shift - Service stopping...")
+                    finishServiceOperations()
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error creating record", e)
+            }
+        }
     }
 
 
@@ -494,27 +607,15 @@ class MyService : Service() {
             return
         }
 
-        val range = user.timetable?.range ?: run {
-            Log.w(TAG, "No timetable range found, stopping service")
-            updateForegroundNotification(this, "No schedule - Service stopping")
-            finishServiceOperations()
-            return
-        }
+        // Use AttendanceSyncManager to check shift status with detailed logging
+        val isInsideShift = attendanceSyncManager.shouldRunCheck(user)
 
-        val currentTime = Calendar.getInstance()
-
-        // ✅ Check if current time is inside ANY shift window (including overnight ones)
-        val activeShift = range.find { shift ->
-            shift.start != null && shift.end != null &&
-                    ShiftUtils.isTimeWithinBufferRange(currentTime, shift.start, shift.end)
-        }
-
-        if (activeShift != null) {
-            Log.i(TAG, "Within shift time (${activeShift.day}: ${activeShift.start}–${activeShift.end}), continuing service")
+        if (isInsideShift) {
+            Log.i(TAG, "✅ Within shift time, continuing service")
             updateForegroundNotification(this, "In-shift - Tracking active")
             // keep service alive, do nothing
         } else {
-            Log.i(TAG, "Outside all shift windows, stopping service")
+            Log.i(TAG, "❌ Outside shift window, stopping service")
             updateForegroundNotification(this, "Off-shift - Service stopping")
             finishServiceOperations()
         }
