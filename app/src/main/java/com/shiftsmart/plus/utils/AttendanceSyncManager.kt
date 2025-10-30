@@ -19,6 +19,7 @@ import com.shiftsmart.plus.models.ErrorModel
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
+import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
 import com.shiftsmart.plus.utils.Utils.toLocalDate
@@ -61,6 +62,9 @@ class AttendanceSyncManager @Inject constructor(
         val shifts = user.timetable?.range ?: emptyList()
         return saveDataLocally(record, shifts, user)
     }
+
+
+
 
     /**
      * Public method to trigger sync process manually (e.g., midnight sync, on-demand sync)
@@ -427,10 +431,9 @@ class AttendanceSyncManager @Inject constructor(
 
         Log.i(TAG, "📊 Default records: ${defaultRecords.size}, Non-default records: ${nonDefaultRecords.size}")
 
-        // ✅ STEP 3: Validate and fix default records
+        // ✅ STEP 3: Validate default records - only delete invalid ones, don't add dummy records
         val validatedDefaultRecords = mutableListOf<DataRequest>()
         val recordsToDelete = mutableListOf<String>()
-        val recordsToAdd = mutableListOf<RecordModel>()
 
         for (i in defaultRecords.indices) {
             val currentRecord = defaultRecords[i]
@@ -460,27 +463,32 @@ class AttendanceSyncManager @Inject constructor(
                     Log.d(TAG, "✅ Perfect 5-min interval: ${currentRecord.localTime}")
 
                 } else if (minutesDiff > 5 && minutesDiff % 5 == 0) {
-                    // Gap detected - need to fill with dummy records
-                    val numberOfDummyRecords = (minutesDiff / 5) - 1
-                    Log.i(TAG, "⚠️ Gap detected: $minutesDiff minutes. Inserting $numberOfDummyRecords dummy records")
+                    // Gap detected - just log it, don't fill with dummy records
+                    Log.i(TAG, "⚠️ Gap detected: $minutesDiff minutes - continuing without backfill")
 
-                    // Create dummy records to fill the gap
-                    val dummyRecords = createDummyRecordsForGap(previousRecord, currentRecord, numberOfDummyRecords)
-                    recordsToAdd.addAll(dummyRecords)
-
-                    // Add dummy records to validated list
-                    dummyRecords.forEach { dummy ->
-                        validatedDefaultRecords.add(dummy.toDataRequest())
-                        Log.d(TAG, "✅ Dummy record added: ${dummy.localTime}")
-                    }
-
-                    // Add current record
+                    // Add current record (skip the gap)
                     validatedDefaultRecords.add(currentRecord)
-                    Log.d(TAG, "✅ Current record added after gap fill: ${currentRecord.localTime}")
+                    Log.d(TAG, "✅ Current record added (gap not filled): ${currentRecord.localTime}")
+
+                } else if (minutesDiff > 5) {
+                    // Gap exists but not a clean multiple of 5 - still accept the record
+                    Log.i(TAG, "⚠️ Irregular gap: $minutesDiff minutes - accepting record anyway")
+                    validatedDefaultRecords.add(currentRecord)
+                    Log.d(TAG, "✅ Record accepted despite irregular gap: ${currentRecord.localTime}")
+
+                } else if (minutesDiff < 5 && minutesDiff > 0) {
+                    // Too close together - delete this record
+                    Log.e(TAG, "❌ Records too close: $minutesDiff min (< 5 min) - DELETING ${currentRecord.localTime}, UUID: ${currentRecord.UUID}")
+                    recordsToDelete.add(currentRecord.UUID)
+
+                } else if (minutesDiff <= 0) {
+                    // Duplicate or backwards time - delete this record
+                    Log.e(TAG, "❌ Invalid time sequence: $minutesDiff min - DELETING ${currentRecord.localTime}, UUID: ${currentRecord.UUID}")
+                    recordsToDelete.add(currentRecord.UUID)
 
                 } else {
-                    // Invalid interval - delete this record
-                    Log.e(TAG, "❌ Invalid interval: $minutesDiff min (not a multiple of 5) - DELETING ${currentRecord.localTime}, UUID: ${currentRecord.UUID}")
+                    // Any other invalid case
+                    Log.e(TAG, "❌ Invalid interval: $minutesDiff min - DELETING ${currentRecord.localTime}, UUID: ${currentRecord.UUID}")
                     recordsToDelete.add(currentRecord.UUID)
                 }
 
@@ -490,20 +498,7 @@ class AttendanceSyncManager @Inject constructor(
             }
         }
 
-        // ✅ STEP 4: Insert dummy records into database
-        if (recordsToAdd.isNotEmpty()) {
-            Log.i(TAG, "💾 Inserting ${recordsToAdd.size} dummy records into database")
-            recordsToAdd.forEach { dummy ->
-                try {
-                    dao.insertRecord(dummy)
-                    Log.d(TAG, "✅ Dummy saved to DB: ${dummy.localTime} (UTC: ${dummy.time})")
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Failed to insert dummy record: ${e.message}")
-                }
-            }
-        }
-
-        // ✅ STEP 5: Delete invalid records from database
+        // ✅ STEP 4: Delete invalid records from database
         if (recordsToDelete.isNotEmpty()) {
             Log.i(TAG, "🗑️ Deleting ${recordsToDelete.size} invalid records from database")
             recordsToDelete.forEach { uuid ->
@@ -516,12 +511,12 @@ class AttendanceSyncManager @Inject constructor(
             }
         }
 
-        // ✅ STEP 6: Combine validated default records with non-default records
+        // ✅ STEP 5: Combine validated default records with non-default records
         val finalRecords = mutableListOf<DataRequest>()
         finalRecords.addAll(validatedDefaultRecords)
         finalRecords.addAll(nonDefaultRecords)
 
-        // ✅ STEP 7: Sort final list by local time (ascending order)
+        // ✅ STEP 6: Sort final list by local time (ascending order)
         val sortedFinalRecords = finalRecords.sortedBy {
             try {
                 Utils.parseFlexibleTime(it.localTime) ?: LocalTime.MAX
@@ -532,10 +527,10 @@ class AttendanceSyncManager @Inject constructor(
 
         Log.i(TAG, "📤 VALIDATION COMPLETE:")
         Log.i(TAG, "   - Original records: ${allRecords.size}")
-        Log.i(TAG, "   - Dummy records added: ${recordsToAdd.size}")
         Log.i(TAG, "   - Invalid records deleted: ${recordsToDelete.size}")
         Log.i(TAG, "   - Final records to send: ${sortedFinalRecords.size}")
         Log.i(TAG, "   - Records sorted by local time in ascending order ✅")
+        Log.i(TAG, "   - Gaps preserved (no backfilling) ✅")
 
         // Log the final sequence for verification
         sortedFinalRecords.forEachIndexed { index, record ->
@@ -791,8 +786,18 @@ class AttendanceSyncManager @Inject constructor(
     }
 
     /** Small helper to keep the stop path tidy + consistent in logs */
+
+
     private fun sendFinishBroadcastAndLog(reason: String) {
         Log.i(TAG, reason)
+
+        // ✅ Schedule restart alarm before stopping service
+        val user = SharedPref.getInstance(context)?.getUser()
+        if (user != null) {
+            ShiftRestartAlarmManager.scheduleNextShiftAlarm(context, user)
+            Log.i(TAG, "✅ Scheduled next shift restart alarm before stopping service")
+        }
+
         val intent = Intent("com.shiftsmart.plus.ACTION_FINISH")
         context.sendBroadcast(intent)
     }
@@ -804,8 +809,6 @@ class AttendanceSyncManager @Inject constructor(
         intent.putExtra("message", message)
         LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
     }
-
-
 
     /**
      * Calculates the difference in minutes between two UTC time strings in HH:mm format.

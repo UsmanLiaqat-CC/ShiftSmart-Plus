@@ -73,7 +73,9 @@ import androidx.core.content.UnusedAppRestrictionsConstants
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.utils.GpsStatusMonitor
+import com.shiftsmart.plus.utils.MinuteMonitorHelper
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import kotlinx.coroutines.delay
@@ -130,6 +132,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val user = SharedPref.getInstance(requireContext())?.getUser()
+        if (user != null) {
+            ShiftRestartAlarmManager.scheduleNextShiftAlarm(requireContext(), user)
+        }
+
         gpsStatusMonitor = GpsStatusMonitor(requireContext())
     }
 
@@ -512,19 +520,18 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     time = Utils.getUTCFromTimestamp(it.timestamp)
                                 )
                             }
-                            val allRecords = dao.getAllRecords(user._id.toString())
-                                .map { it.toDataRequest(errorList) }
+                            val allRecords = dao.getAllRecords(user._id.toString()).map { it.toDataRequest(errorList) }
 
                             // ✅ COMPREHENSIVE VALIDATION: Recheck gaps, fill missing records,
                             // remove invalid ones, and sort by local time in ascending order
-                            val validatedRecords = validateAndPrepareRecordsForSync(allRecords)
+//                            val validatedRecords = validateAndPrepareRecordsForSync(allRecords)
 
                             val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
-                            Log.i(TAG, "callApiData: Sending ${validatedRecords.size} validated records to API")
+                            Log.i(TAG, "callApiData: Sending ${allRecords.size} validated records to API")
 
                             // Switch to Main thread before updating LiveData
                             withContext(Dispatchers.Main) {
-                                mainViewModel.sendAppData(validatedRecords, token, requireContext())
+                                mainViewModel.sendAppData(allRecords, token, requireContext())
                             }
                         } catch (e: Exception) {
                             dismissProgressDialog()
@@ -930,8 +937,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                 Log.i("Service", "Service is running. Stopping it now.")
                 requireContext().stopService(Intent(requireContext(), MyService::class.java))
             }
+
+            SharedPref.getInstance(requireContext())?.clearLastSyncTime() // Clear sync timestamps
             SharedPref.getInstance(requireContext())?.clearPrefrence()
             findNavController().navigate(R.id.action_homeFragment_to_loginFragment)
+            MinuteMonitorHelper.stopMonitoring(requireContext())
+
         }
     }
     fun fetchLocationData() {
@@ -1055,8 +1066,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     }
 
                                     Log.i(TAG, "callApiDataTEstError: errorList:${errorList.size}")
-                                    val allRecords = dao.getAllRecords(user._id.toString())
-                                        .map { it.toDataRequest(errorList) }
+                                    val allRecords = dao.getAllRecords(user._id.toString()).map { it.toDataRequest(errorList) }
 
                                     // Add the new record to the list
                                     val allRecordsWithNew = allRecords + record.toDataRequest(errorList)
@@ -1065,11 +1075,11 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
                                     // ✅ COMPREHENSIVE VALIDATION: Recheck gaps, fill missing records,
                                     // remove invalid ones, and sort by local time in ascending order
-                                    val validatedRecords = validateAndPrepareRecordsForSync(allRecordsWithNew)
+//                                    val validatedRecords = validateAndPrepareRecordsForSync(allRecordsWithNew)
 
                                     val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
                                     withContext(Dispatchers.Main) {
-                                        mainViewModel.sendAppData(validatedRecords, token, requireContext())
+                                        mainViewModel.sendAppData(allRecordsWithNew, token, requireContext())
                                     }
                                 } catch (e: Exception) {
                                     dismissProgressDialog()

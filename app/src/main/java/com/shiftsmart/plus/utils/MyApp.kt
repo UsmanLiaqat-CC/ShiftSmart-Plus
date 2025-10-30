@@ -22,6 +22,9 @@ class MyApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
 
+
+        // Start minute-by-minute monitoring
+        MinuteMonitorHelper.startMonitoring(this)
         // Initialize WorkManager
         WorkManager.initialize(this, workManagerConfiguration)
 

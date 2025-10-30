@@ -221,6 +221,7 @@ class MainActivity : AppCompatActivity() {
                 FirebaseMessaging.getInstance().unsubscribeFromTopic(it?._id.toString())
             }
             FingerprintHelper.setFingerprintEnabled(this@MainActivity, false)
+            SharedPref.getInstance(this@MainActivity)?.clearLastSyncTime() // Clear sync timestamps
             SharedPref.getInstance(this@MainActivity)?.clearPrefrence()
             val navController = findNavController(R.id.nav_host_fragment)
             navController.navigate(R.id.loginFragment)

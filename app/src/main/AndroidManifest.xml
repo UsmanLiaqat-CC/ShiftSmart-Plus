@@ -90,6 +90,25 @@
                 tools:node="remove" />
         </provider>
 
+        <receiver
+            android:name=".periodicAction.ShiftRestartReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <!-- Add this receiver -->
+        <receiver
+            android:name=".periodicAction.MinuteChangeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_TICK" />
+            </intent-filter>
+        </receiver>
+
+
         <service
             android:name=".services.MyService"
             android:exported="false"

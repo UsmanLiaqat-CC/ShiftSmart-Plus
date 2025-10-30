@@ -368,64 +368,12 @@ class MyService : Service() {
 
         updateForegroundNotification(this, "📝 Tracking attendance...")
 
-        // ✅ Handle ALL cases: whether gap exists or not, we need to insert records for all missing times
+        // ✅ Always insert current record only - NO gap filling
         serviceScope.launch {
             try {
-                // First fetch current location and wifi data
-                val location = if (locationHelper.hasLocationPermissions()) {
-                    try {
-                        locationHelper.fetchFreshLocation()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to fetch location, using last known", e)
-                        locationHelper.lastLocation
-                    }
-                } else {
-                    locationHelper.lastLocation
-                }
-
-                // Create a template record with current data
-                val templateRecord = RecordModel(
-                    uuid = Utils.generateRandomUuid(),
-                    user_id = user._id.toString(),
-                    lat = location.latitude,
-                    lng = location.longitude,
-                    localTime = Utils.getCurrent24HourTime(),
-                    time = Utils.getCurrentUtcTime(),
-                    attendanceType = StatusEnum.default.name,
-                    attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
-                    isForceAttendance = false,
-                    isLocation = locationHelper.hasLocationPermissions(),
-                    wifiService = wifiManager.isWifiEnabled,
-                    dataService = Utils.isMobileDataEnabled(this@MyService),
-                    notification = Utils.isNotificationPermissionGranted(this@MyService),
-                    batterySaver = !Utils.isBatterySaverOn(this@MyService),
-                    batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiScanResults.toList()
-                )
-
-                if (missingRecords > 0 && lastRecordTimeStr != null && targetTimeStr != null) {
-                    // Gap detected: Insert missing records PLUS current record at target time
-                    Log.i(TAG, "📝 Gap detected: Inserting $missingRecords missing record(s) from $lastRecordTimeStr to $targetTimeStr")
-
-                    // Insert missing records at exact intervals (fills the gap)
-                    // This will insert records at 5-min intervals BETWEEN last and target
-                    attendanceSyncManager.insertMissingRecordsAtExactIntervals(
-                        lastRecordTimeStr = lastRecordTimeStr,
-                        targetTimeStr = targetTimeStr,
-                        numberOfRecords = missingRecords,
-                        currentRecord = templateRecord,
-                        user = user
-                    )
-
-                    // ✅ IMPORTANT: Also insert current record at target time
-                    Log.i(TAG, "✅ Gap filled, now inserting current record at target time: $targetTimeStr")
-                    insertCurrentRecordAtTargetTime(templateRecord, targetTimeStr, user)
-
-                } else {
-                    // No gap detected - just insert current record normally
-                    Log.i(TAG, "✅ No gap detected - inserting current record at ${Utils.getCurrent24HourTime()}")
-                    startLocationFetch()
-                }
+                // Just insert current record normally - no dummy records for missing intervals
+                Log.i(TAG, "✅ Inserting current record at ${Utils.getCurrent24HourTime()}")
+                startLocationFetch()
 
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error in checkAndMaintainService", e)

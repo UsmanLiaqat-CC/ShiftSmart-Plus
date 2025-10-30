@@ -71,12 +71,13 @@ class SharedPref(private val ctx: Context) {
             if (timeParts.size >= 2) {
                 val hour = timeParts[0].toIntOrNull() ?: 0
                 val minute = timeParts[1].toIntOrNull() ?: 0
-                val second = if (timeParts.size > 2) timeParts[2].toIntOrNull() ?: 0 else 0
+                // ✅ ALWAYS set seconds to 0 to align with 5-minute boundaries
+                // This prevents misalignment issues with alarm scheduling
 
                 // Set the time on today's date
                 currentDateTime.set(java.util.Calendar.HOUR_OF_DAY, hour)
                 currentDateTime.set(java.util.Calendar.MINUTE, minute)
-                currentDateTime.set(java.util.Calendar.SECOND, second)
+                currentDateTime.set(java.util.Calendar.SECOND, 0)  // Always 0 for exact boundary
                 currentDateTime.set(java.util.Calendar.MILLISECOND, 0)
 
                 // Format as "yyyy-MM-dd HH:mm:ss"
@@ -94,6 +95,17 @@ class SharedPref(private val ctx: Context) {
         } catch (e: Exception) {
             android.util.Log.e("SharedPref", "Error saving last sync time", e)
         }
+    }
+
+    /**
+     * Clear last sync data (called on logout or service stop)
+     */
+    fun clearLastSyncTime() {
+        sharedPreferences.edit().apply {
+            remove(LAST_SYNC_TIME)
+            remove(LAST_SYNC_TIMESTAMP)
+        }.apply()
+        android.util.Log.i("SharedPref", "🗑️ Cleared last sync data")
     }
 
 

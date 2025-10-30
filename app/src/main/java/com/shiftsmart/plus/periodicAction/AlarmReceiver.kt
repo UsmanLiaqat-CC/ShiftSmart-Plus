@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.toLocalDate
+import java.text.SimpleDateFormat
 
 import java.time.Duration
 import java.time.LocalDate
@@ -27,6 +28,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Date
+import java.util.Locale
 
 /**
  * AlarmReceiver
@@ -199,27 +201,91 @@ class AlarmReceiver : BroadcastReceiver() {
                             }
 
                             if (lastRecordTime != null && lastRecordTimestamp > 0L) {
-                                // ✅ Calculate gap using TIMESTAMPS (handles overnight shifts correctly)
-                                val currentTimestamp = targetTime.timeInMillis
-                                val gapMillis = currentTimestamp - lastRecordTimestamp
+                                // ✅ Normalize BOTH timestamps to :00 seconds for accurate hour:minute comparison
+                                val normalizedLastTimestamp = Calendar.getInstance().apply {
+                                    timeInMillis = lastRecordTimestamp
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }.timeInMillis
+
+                                val normalizedCurrentTimestamp = Calendar.getInstance().apply {
+                                    timeInMillis = targetTime.timeInMillis
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }.timeInMillis
+
+                                // ✅ Calculate gap using NORMALIZED TIMESTAMPS (handles overnight shifts correctly)
+                                val gapMillis = normalizedCurrentTimestamp - normalizedLastTimestamp
                                 val minutesDiff = (gapMillis / (1000 * 60)).toInt()
 
-                                Log.i("AlarmReceiver", "⏱️ Last sync timestamp: $lastRecordTimestamp")
-                                Log.i("AlarmReceiver", "⏱️ Current timestamp: $currentTimestamp")
+                                Log.i("AlarmReceiver", "⏱️ Last sync timestamp: $normalizedLastTimestamp (original: $lastRecordTimestamp)")
+                                Log.i("AlarmReceiver", "⏱️ Current timestamp: $normalizedCurrentTimestamp")
                                 Log.i("AlarmReceiver", "⏱️ Gap: $minutesDiff minutes (${gapMillis / 1000} seconds)")
 
                                 // ✅ CHECK: Is current time a multiple of 5 minutes from last sync?
-                                if (minutesDiff % 5 != 0) {
-                                    // Current time is NOT aligned with 5-minute intervals from last sync
-                                    // Calculate the next proper sync time
-                                    val nextMultipleOf5 = ((minutesDiff / 5) + 1) * 5
-                                    val minutesToWait = nextMultipleOf5 - minutesDiff
+                                val remainder = minutesDiff % 5
+                                if (remainder != 0) {
+                                    // Check if it's just a small drift (< 2 minutes)
+                                    // This can happen due to seconds mismatch from old data
+                                    if (remainder <= 2 && minutesDiff >= 5) {
+                                        // Small drift - round down and proceed
+                                        val adjustedMinutesDiff = (minutesDiff / 5) * 5
+                                        Log.w("AlarmReceiver", "⚠️ Small time drift detected (${remainder} min). Adjusting gap from $minutesDiff to $adjustedMinutesDiff minutes")
 
-                                    Log.w("AlarmReceiver", "⏭️ SKIPPING: Current gap is $minutesDiff min (not a multiple of 5)")
-                                    Log.w("AlarmReceiver", "⏭️ Next valid sync is in $minutesToWait minutes (at ${nextMultipleOf5} min from last sync)")
+                                        // Update the last sync time to current boundary to re-align
+                                        sharedPref?.saveLastSyncTime(targetLocalTime.toString())
 
-                                    // Reschedule alarm for the correct time (aligned with last sync)
-                                    val nextSyncTime = lastRecordTimestamp + (nextMultipleOf5 * 60 * 1000L)
+                                        // Proceed with adjusted gap
+                                        val numberOfMissingRecords = (adjustedMinutesDiff / 5) - 1
+                                        if (numberOfMissingRecords > 0) {
+                                            Log.i("AlarmReceiver", "📝 Inserting $numberOfMissingRecords record(s) to fill adjusted $adjustedMinutesDiff minute gap")
+
+                                            val apiIntent = Intent(context, MyService::class.java).apply {
+                                                action = MyService.ACTION_CALL_API
+                                                putExtra("LAST_RECORD_TIME", lastRecordTime.toString())
+                                                putExtra("TARGET_TIME", targetLocalTime.toString())
+                                                putExtra("MISSING_RECORDS", numberOfMissingRecords)
+                                            }
+
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                                context.startForegroundService(apiIntent)
+                                            else
+                                                context.startService(apiIntent)
+                                        }
+                                        scheduleNextAlignedAlarm(context)
+                                        return@launch
+                                    }
+
+                                    // Large misalignment - reschedule to next 5-minute boundary from NOW
+                                    Log.w("AlarmReceiver", "⚠️ Large misalignment detected (gap: $minutesDiff min, remainder: $remainder min)")
+
+                                    // Calculate next 5-minute boundary from CURRENT time, not from last sync
+                                    val currentCal = Calendar.getInstance()
+                                    val currentMinute = currentCal.get(Calendar.MINUTE)
+
+                                    // Round up to next 5-minute boundary
+                                    val nextBoundaryMinute = ((currentMinute / 5) + 1) * 5
+
+                                    currentCal.set(Calendar.SECOND, 0)
+                                    currentCal.set(Calendar.MILLISECOND, 0)
+
+                                    if (nextBoundaryMinute >= 60) {
+                                        // Next boundary is in the next hour
+                                        currentCal.add(Calendar.HOUR_OF_DAY, 1)
+                                        currentCal.set(Calendar.MINUTE, nextBoundaryMinute - 60)
+                                    } else {
+                                        currentCal.set(Calendar.MINUTE, nextBoundaryMinute)
+                                    }
+
+                                    val nextSyncTime = currentCal.timeInMillis
+                                    val nextSyncTimeStr = SimpleDateFormat(
+                                        "HH:mm:ss",
+                                        Locale.getDefault()
+                                    ).format(Date(nextSyncTime))
+                                    val timeUntilNext = (nextSyncTime - System.currentTimeMillis()) / 1000 / 60
+
+                                    Log.w("AlarmReceiver", "⏭️ Rescheduling to next 5-minute boundary: $nextSyncTimeStr (in ~$timeUntilNext minutes)")
+
                                     rescheduleAlarmAtSpecificTime(context, nextSyncTime)
                                     return@launch
                                 }
@@ -227,53 +293,26 @@ class AlarmReceiver : BroadcastReceiver() {
                                 Log.i("AlarmReceiver", "✅ Gap is a multiple of 5 minutes - proceeding with sync")
 
                                 if (minutesDiff >= 5) {
-                                    // Calculate how many records we need to insert to FILL THE GAP
-                                    // Subtract 1 because the target time record will be created separately
-                                    val numberOfMissingRecords = (minutesDiff / 5) - 1
+                                    // Just insert current record - NO dummy records for missing intervals
 
-                                    if (numberOfMissingRecords > 0) {
-                                        if (minutesDiff > 60) {
-                                            Log.i("AlarmReceiver", "🌙 OVERNIGHT/DOZE RECOVERY: Need to insert $numberOfMissingRecords record(s) to fill $minutesDiff minute gap")
-                                        } else {
-                                            Log.i("AlarmReceiver", "📝 Need to insert $numberOfMissingRecords record(s) to fill $minutesDiff minute gap")
-                                        }
-
-                                        // Trigger service to insert missing records (NOT including target time)
-                                        val apiIntent = Intent(context, MyService::class.java).apply {
-                                            action = MyService.ACTION_CALL_API
-                                            putExtra("LAST_RECORD_TIME", lastRecordTime.toString())
-                                            putExtra("TARGET_TIME", targetLocalTime.toString())
-                                            putExtra("MISSING_RECORDS", numberOfMissingRecords)
-                                        }
-
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                            context.startForegroundService(apiIntent)
-                                        else
-                                            context.startService(apiIntent)
-                                    } else {
-                                        // Gap is exactly 5 minutes - no missing records to fill
-                                        // Just insert current record
-                                        Log.i("AlarmReceiver", "✅ Gap is exactly 5 minutes - inserting current record only")
-
-                                        val apiIntent = Intent(context, MyService::class.java).apply {
-                                            action = MyService.ACTION_CALL_API
-                                            // No LAST_RECORD_TIME or MISSING_RECORDS - regular insert
-                                        }
-
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                            context.startForegroundService(apiIntent)
-                                        else
-                                            context.startService(apiIntent)
-                                    }
-                                } else if (minutesDiff > 0 && minutesDiff < 5) {
-                                    Log.i("AlarmReceiver", "⏸️ Gap is $minutesDiff min (< 5 min) → Record already exists at correct boundary")
-                                } else if (minutesDiff < 0) {
-                                    Log.i("AlarmReceiver", "⚠\uFE0F Negative gap detected $minutesDiff mintes ")
+                                    Log.i("AlarmReceiver", "✅ Gap of $minutesDiff minutes detected - inserting current record only (no backfill)")
 
                                     val apiIntent = Intent(context, MyService::class.java).apply {
                                         action = MyService.ACTION_CALL_API
-                                        putExtra("TARGET_TIME", targetLocalTime.toString())
-                                        putExtra("MISSING_RECORDS", 1)
+                                        // No LAST_RECORD_TIME or MISSING_RECORDS - just insert current record
+                                    }
+
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                        context.startForegroundService(apiIntent)
+                                    else
+                                        context.startService(apiIntent)
+                                } else if (minutesDiff > 0 && minutesDiff < 5) {
+                                    Log.i("AlarmReceiver", "⏸️ Gap is $minutesDiff min (< 5 min) → Record already exists at correct boundary")
+                                } else if (minutesDiff < 0) {
+                                    Log.i("AlarmReceiver", "⚠\uFE0F Negative gap detected $minutesDiff minutes - inserting current record")
+
+                                    val apiIntent = Intent(context, MyService::class.java).apply {
+                                        action = MyService.ACTION_CALL_API
                                     }
 
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
