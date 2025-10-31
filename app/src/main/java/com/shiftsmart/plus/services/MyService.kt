@@ -64,6 +64,10 @@ import java.util.TimeZone
 import javax.inject.Inject
 import kotlin.collections.addAll
 import kotlin.text.clear
+import kotlin.text.format
+import kotlin.text.get
+import kotlin.text.set
+import kotlin.times
 
 @AndroidEntryPoint
 class MyService : Service() {
@@ -85,6 +89,7 @@ class MyService : Service() {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var wifiManager: WifiManager
     private var isWifiReceiverRegistered = false
+    private var currentIntent: Intent? = null  // ✅ Store intent for access in maybeTriggerApiCall
 
 
     private fun updateForegroundNotification(context: Context, message: String) {
@@ -147,6 +152,7 @@ class MyService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        currentIntent = intent  // ✅ Store intent for later use
         Log.i(TAG, "Service command received: ${intent?.action}")
 
         // Determine appropriate message based on shift status
@@ -383,74 +389,6 @@ class MyService : Service() {
 
 
 
-    /**
-     * Inserts the current record at the exact target time (not current system time)
-     * This ensures the record has the correct timestamp when filling gaps
-     */
-    private suspend fun insertCurrentRecordAtTargetTime(
-        templateRecord: RecordModel,
-        targetTimeStr: String,
-        user: UserModel
-    ) {
-        try {
-            // Parse target time to create exact timestamp
-            val targetTime = Utils.parseFlexibleTime(targetTimeStr)
-            if (targetTime == null) {
-                Log.e(TAG, "❌ Failed to parse target time: $targetTimeStr")
-                return
-            }
-
-            // Create timestamp at target time
-            val targetCalendar = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, targetTime.hour)
-                set(Calendar.MINUTE, targetTime.minute)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-
-            // Format times
-            val localTimeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-            val localTimeStr = localTimeFormatter.format(targetCalendar.time)
-
-            val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }
-            val utcTimeStr = utcFormatter.format(targetCalendar.time)
-
-            // Check if record already exists
-            val dao = ShiftSmartPlusDatabase.getInstance(this).dbDao()
-            val existingCount = dao.countRecordByTime(utcTimeStr)
-            if (existingCount > 0) {
-                Log.i(TAG, "⏭️ Record already exists at target time $localTimeStr - skipping")
-                // Trigger sync to upload existing records
-                attendanceSyncManager.startSyncProcess()
-                return
-            }
-
-            // Create record with exact target time
-            val recordAtTargetTime = templateRecord.copy(
-                uuid = Utils.generateRandomUuid(),
-                localTime = localTimeStr,
-                time = utcTimeStr,
-                attendanceType = StatusEnum.default.name // This is the actual alarm-triggered record
-            )
-
-            Log.i(TAG, "💾 Inserting current record at target time: $localTimeStr (UTC: $utcTimeStr)")
-
-            // Save to database
-            val shouldContinue = attendanceSyncManager.saveRecordLocally(recordAtTargetTime, user)
-
-            if (shouldContinue) {
-                Log.i(TAG, "✅ Record saved at target time: $localTimeStr")
-            } else {
-                Log.w(TAG, "⚠️ Saved but off-shift detected")
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error inserting record at target time", e)
-        }
-    }
-
     private fun forceMidnightSync() {
         serviceScope.launch {
             attendanceSyncManager.startSyncProcess() // or your backup save method
@@ -545,20 +483,68 @@ class MyService : Service() {
     private fun maybeTriggerApiCall() {
         serviceScope.launch {
             try {
+
+                val now = Calendar.getInstance()
+                val minute = now.get(Calendar.MINUTE)
+                val remainder = minute % 5
+
+                if (remainder != 0) {
+                    val nextBoundary = (5 - remainder)
+                    val nextAligned = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(
+                        Calendar.getInstance().apply {
+                            add(Calendar.MINUTE, nextBoundary)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }.time
+                    )
+
+                    Log.w(TAG, "⏭️ Current time ${minute}m not aligned — skipping API call, next boundary $nextAligned")
+                    return@launch  // ⛔ Skip record creation and API sync
+                }
+
+                // ✅ Proceed only if current time is aligned (multiple of 5)
                 val user = SharedPref.getInstance(this@MyService)?.getUser()
                 if (user == null) {
                     Log.e(TAG, "❌ No user found, skipping record save")
                     return@launch
                 }
 
-                // Create record with current data
+
+                // ✅ Use the aligned timestamp passed from AlarmReceiver
+                val alignedTimestamp = currentIntent?.getLongExtra("ALIGNED_TIMESTAMP", 0L) ?: 0L
+
+                val recordCalendar = if (alignedTimestamp > 0) {
+                    Calendar.getInstance().apply { timeInMillis = alignedTimestamp }
+                } else {
+                    // Fallback: calculate aligned time locally if not provided
+                    Calendar.getInstance().apply {
+                        val currentMinute = get(Calendar.MINUTE)
+                        val alignedMinute = (currentMinute / 5) * 5
+                        set(Calendar.MINUTE, alignedMinute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                }
+
+                // Format the aligned time
+                val localTimeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                val alignedLocalTime = localTimeFormatter.format(recordCalendar.time)
+
+                val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
+                val alignedUtcTime = utcFormatter.format(recordCalendar.time)
+
+                Log.i(TAG, "⏰ Using aligned timestamp: $alignedLocalTime (from ${if (alignedTimestamp > 0) "AlarmReceiver" else "fallback"})")
+
+                // Create record with ALIGNED time
                 val record = RecordModel(
                     uuid = Utils.generateRandomUuid(),
                     user_id = user._id.toString(),
                     lat = locationHelper.lastLocation.latitude,
                     lng = locationHelper.lastLocation.longitude,
-                    localTime = Utils.getCurrent24HourTime(),
-                    time = Utils.getCurrentUtcTime(),
+                    localTime = alignedLocalTime,  // ✅ Aligned to 5-min boundary
+                    time = alignedUtcTime,          // ✅ Aligned UTC time
                     attendanceType = StatusEnum.default.name,
                     attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
                     isForceAttendance = false,
