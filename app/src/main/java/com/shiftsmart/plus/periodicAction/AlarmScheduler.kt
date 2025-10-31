@@ -73,19 +73,29 @@ object AlarmScheduler {
         val todayShift = effectiveRange.find { it.day.equals(today, ignoreCase = true) }
 
         if (todayShift != null && todayShift.start != null && todayShift.end != null) {
+            Log.i(TAG, "========================================")
+            Log.i(TAG, "📅 TODAY: $today (${LocalDate.now()})")
             Log.i(TAG, "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
 
-            // -1h for START, +1h for STOP
-            val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1)
-            val endCalendar   = getCalendarForShift(todayShift.day, todayShift.end,   1)
+            // Check if this is an overnight shift
+            val startHour = todayShift.start.split(":")[0].toInt()
+            val endHour = todayShift.end.split(":")[0].toInt()
+            val isOvernightShift = endHour < startHour
+            Log.i(TAG, "🌙 Overnight shift: $isOvernightShift (start hour: $startHour, end hour: $endHour)")
 
-            Log.i(TAG, "startCalendar: ${startCalendar?.time} --> endCalendar: ${endCalendar?.time}")
+            // -1h for START, +1h for STOP
+            val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1, false)
+            val endCalendar   = getCalendarForShift(todayShift.day, todayShift.end, 1, isOvernightShift)
+
+            Log.i(TAG, "⏰ START alarm (shift start - 1h): ${startCalendar?.time}")
+            Log.i(TAG, "⏰ STOP alarm  (shift end + 1h):   ${endCalendar?.time}")
+            Log.i(TAG, "========================================")
 
             if (startCalendar != null && endCalendar != null) {
-                // Normalize overnight (e.g., end past midnight)
-                if (endCalendar.timeInMillis <= startCalendar.timeInMillis) {
-                    endCalendar.add(Calendar.DAY_OF_YEAR, 1)
-                }
+                Log.i(TAG, "🔍 Final calendar times:")
+                Log.i(TAG, "   Start millis: ${startCalendar.timeInMillis} (${startCalendar.time})")
+                Log.i(TAG, "   End millis:   ${endCalendar.timeInMillis} (${endCalendar.time})")
+
 
                 val now = System.currentTimeMillis()
 
@@ -195,7 +205,6 @@ object AlarmScheduler {
      *       actually fires (in receiver/service).
      */
     private fun scheduleService(context: Context, calendar: Calendar, isStart: Boolean) {
-//        Log.i(TAG, "Scheduling Service at ${calendar.time}, isStart: $isStart")
         try {
             val intent = Intent(context, MyService::class.java).apply {
                 action = if (isStart) "START_SERVICE" else "STOP_SERVICE"
@@ -208,7 +217,18 @@ object AlarmScheduler {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
 
-            Log.i(TAG, "Scheduled ${if (isStart) "start" else "stop"} service at: ${calendar.time}")
+            val dateFormat = java.text.SimpleDateFormat("EEE MMM dd HH:mm:ss yyyy", java.util.Locale.getDefault())
+            Log.i(TAG, "========================================")
+            Log.i(TAG, "📝 SCHEDULED ${if (isStart) "START" else "STOP"} SERVICE")
+            Log.i(TAG, "   Request Code: $requestCode")
+            Log.i(TAG, "   Alarm Time: ${dateFormat.format(calendar.time)}")
+            Log.i(TAG, "   Millis: ${calendar.timeInMillis}")
+            Log.i(TAG, "   Year: ${calendar.get(Calendar.YEAR)}")
+            Log.i(TAG, "   Month: ${calendar.get(Calendar.MONTH) + 1}")
+            Log.i(TAG, "   Day: ${calendar.get(Calendar.DAY_OF_MONTH)}")
+            Log.i(TAG, "   Hour: ${calendar.get(Calendar.HOUR_OF_DAY)}")
+            Log.i(TAG, "   Minute: ${calendar.get(Calendar.MINUTE)}")
+            Log.i(TAG, "========================================")
 
             // ⛔️ Consider removing this: wake lock at schedule-time does not help at fire-time.
             // Prefer acquiring/releasing in AlarmReceiver/MyService when the alarm actually fires.
@@ -410,6 +430,19 @@ object AlarmScheduler {
         }
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pi = PendingIntent.getService(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE)
+
+        val dateFormat = java.text.SimpleDateFormat("EEE MMM dd HH:mm:ss yyyy", java.util.Locale.getDefault())
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "📝 SCHEDULED ${if (isStart) "START" else "STOP"} SERVICE (CUSTOM CODE)")
+        Log.i(TAG, "   Request Code: $requestCode")
+        Log.i(TAG, "   Alarm Time: ${dateFormat.format(calendar.time)}")
+        Log.i(TAG, "   Millis: ${calendar.timeInMillis}")
+        Log.i(TAG, "   Year: ${calendar.get(Calendar.YEAR)}")
+        Log.i(TAG, "   Month: ${calendar.get(Calendar.MONTH) + 1}")
+        Log.i(TAG, "   Day: ${calendar.get(Calendar.DAY_OF_MONTH)}")
+        Log.i(TAG, "   Hour: ${calendar.get(Calendar.HOUR_OF_DAY)}")
+        Log.i(TAG, "   Minute: ${calendar.get(Calendar.MINUTE)}")
+        Log.i(TAG, "========================================")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
             val showIntent = PendingIntent.getActivity(

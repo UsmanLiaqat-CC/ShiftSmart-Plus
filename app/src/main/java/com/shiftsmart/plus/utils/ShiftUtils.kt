@@ -84,21 +84,54 @@ object ShiftUtils {
         return inside
     }
 
-    fun getCalendarForShift(dayName: String, time: String, offsetHours: Int): Calendar {
+    fun getCalendarForShift(
+        dayName: String,
+        time: String,
+        offsetHours: Int,
+        isEndOfOvernightShift: Boolean = false
+    ): Calendar {
         val (hh, mm) = time.split(":").map { it.toInt() }
         val cal = Calendar.getInstance(TimeZone.getDefault())
 
+        val dateFormat = SimpleDateFormat("EEE MMM dd HH:mm:ss yyyy", Locale.getDefault())
+        Log.i("ShiftUtils", "========================================")
+        Log.i("ShiftUtils", "🔧 getCalendarForShift()")
+        Log.i("ShiftUtils", "   Input: dayName='$dayName', time='$time', offsetHours=$offsetHours")
+        Log.i("ShiftUtils", "   isEndOfOvernightShift: $isEndOfOvernightShift")
+        Log.i("ShiftUtils", "   Starting from NOW: ${dateFormat.format(cal.time)}")
+
+        var daysSearched = 0
         // Move calendar to the correct weekday for this shift
         while (!cal.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH)
                 .equals(dayName, ignoreCase = true)) {
             cal.add(Calendar.DAY_OF_YEAR, -1)
+            daysSearched++
+            if (daysSearched > 7) {
+                Log.e("ShiftUtils", "⚠️ WARNING: Searched more than 7 days backwards!")
+                break
+            }
         }
+
+        Log.i("ShiftUtils", "   Found day '$dayName' after going back $daysSearched days: ${dateFormat.format(cal.time)}")
 
         cal.set(Calendar.HOUR_OF_DAY, hh)
         cal.set(Calendar.MINUTE, mm)
         cal.set(Calendar.SECOND, 0)
         cal.set(Calendar.MILLISECOND, 0)
+
+        Log.i("ShiftUtils", "   After setting time to $hh:$mm: ${dateFormat.format(cal.time)}")
+
+        // For overnight shifts, the end time is actually the next day
+        if (isEndOfOvernightShift) {
+            Log.i("ShiftUtils", "   🌙 This is end of overnight shift, adding 1 day")
+            cal.add(Calendar.DAY_OF_YEAR, 1)
+            Log.i("ShiftUtils", "   After adding 1 day: ${dateFormat.format(cal.time)}")
+        }
+
         cal.add(Calendar.HOUR_OF_DAY, offsetHours)
+
+        Log.i("ShiftUtils", "   After adding offset ($offsetHours hours): ${dateFormat.format(cal.time)}")
+        Log.i("ShiftUtils", "========================================")
         return cal
     }
 }
