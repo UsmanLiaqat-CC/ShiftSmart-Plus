@@ -137,11 +137,7 @@ object AlarmScheduler {
         else context.startService(intent)
     }
 
-    /**
-     * cancelServiceAlarm(...)
-     * WHEN: Before scheduling TODAY’s start/stop to avoid duplicates.
-     * WHAT: Cancels TODAY’s START/STOP PendingIntents (request codes 1001/1002).
-     */
+
     private fun cancelServiceAlarm(context: Context, isStart: Boolean) {
         val intent = Intent(context, MyService::class.java).apply {
             action = if (isStart) "START_SERVICE" else "STOP_SERVICE"
