@@ -77,7 +77,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     AlarmScheduler.scheduleTomorrowFromPrefs(context)
                 }
 
-                "CALL_API" -> {
+              /*  "CALL_API" -> {
                     Log.i("AlarmReceiver", "🔔 Received CALL_API at ${Utils.getCurrentDateTime()}")
 
                     val user = SharedPref.getInstance(context)?.getUser()
@@ -263,7 +263,7 @@ class AlarmReceiver : BroadcastReceiver() {
                             scheduleNextAlignedAlarm(context)
                         }
                     }
-                }
+                }*/
 
 
             }

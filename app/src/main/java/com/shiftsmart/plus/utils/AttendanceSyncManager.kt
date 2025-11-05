@@ -64,8 +64,6 @@ class AttendanceSyncManager @Inject constructor(
     }
 
 
-
-
     /**
      * Public method to trigger sync process manually (e.g., midnight sync, on-demand sync)
      */

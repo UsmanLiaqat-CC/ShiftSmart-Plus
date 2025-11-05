@@ -51,7 +51,10 @@ import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.LocalDate
@@ -60,6 +63,8 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.Timer
+import java.util.TimerTask
 
 import javax.inject.Inject
 import kotlin.collections.addAll
@@ -69,13 +74,11 @@ import kotlin.text.get
 import kotlin.text.set
 import kotlin.times
 
+
 @AndroidEntryPoint
 class MyService : Service() {
 
-    @Inject
-    lateinit var repository: MainRepository
-    @Inject
-    lateinit var track: LocationTrack
+
     @Inject
     lateinit var db: ShiftSmartPlusDatabase
 
@@ -133,6 +136,62 @@ class MyService : Service() {
     @Inject lateinit var attendanceSyncManager: AttendanceSyncManager
 
 
+    private var fiveMinuteJob: Job? = null
+
+    private fun startFiveMinuteAlignedJob() {
+        fiveMinuteJob?.cancel()
+
+        fiveMinuteJob = serviceScope.launch {
+            while (isActive) {
+
+                val now = Calendar.getInstance()
+                val currentMinute = now.get(Calendar.MINUTE)
+
+                // ✅ Calculate next global 5-min boundary
+                val nextBoundaryMinute = ((currentMinute / 5) + 1) * 5
+
+                val nextRunTime = Calendar.getInstance().apply {
+                    set(Calendar.MINUTE, nextBoundaryMinute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+
+                // ⭐ Special Debug Log
+                Log.i("startFiveMinuteAlignedJob", "🧭 ALIGN CHECK >> Now: ${
+                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                } | Next boundary: ${
+                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(nextRunTime.time)
+                }")
+
+                val delayMillis = nextRunTime.timeInMillis - System.currentTimeMillis()
+
+                // ⭐ Special Log for delay
+                Log.i("startFiveMinuteAlignedJob", "⏱ Waiting ${(delayMillis / 1000)}s until first CALL_API")
+
+                delay(delayMillis.coerceAtLeast(0))
+
+                // 🚀 Execute FIRST aligned call
+                Log.i("startFiveMinuteAlignedJob", "🔥 FIRST CALL_API at exact boundary: ${
+                    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                }")
+                maybeTriggerApiCall()
+
+                // 🔁 Continue repeating every 5 mins
+                while (isActive) {
+                    delay(5 * 60 * 1000L)
+
+                    // ⭐ Log exact execution time
+                    Log.i("startFiveMinuteAlignedJob", "🔁 REPEAT CALL_API at: ${
+                        SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                    }")
+
+                    maybeTriggerApiCall()
+                }
+            }
+        }
+    }
+
+
     fun setWifiList(wifiList: MutableList<WifiModel>) {
         wifiScanResults.clear()
         wifiScanResults.addAll(wifiList);
@@ -152,48 +211,38 @@ class MyService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        currentIntent = intent  // ✅ Store intent for later use
+        currentIntent = intent
         Log.i(TAG, "Service command received: ${intent?.action}")
 
-        // Determine appropriate message based on shift status
         val user = SharedPref.getInstance(this)?.getUser()
-        val isInShift = if (user != null) {
-            attendanceSyncManager.shouldRunCheck(user)
-        } else {
-            false
-        }
+        val isInShift = if (user != null) attendanceSyncManager.shouldRunCheck(user) else false
 
-        val initialMessage = when {
-            !isInShift -> "Off-shift - Service idle"
-            intent?.action == ACTION_CALL_API -> "Syncing attendance data..."
-            intent?.action == ACTION_START -> "Starting attendance tracking..."
-            intent?.action == ACTION_STOP -> "Stopping service..."
-            else -> "Attendance tracking active"
+        // ✅ Only update notification when START/STOP/RESTART — NOT on CALL_API
+        if (intent?.action != ACTION_CALL_API) {
+            val initialMessage = when {
+                !isInShift -> "Off-shift - Service idle"
+                intent?.action == ACTION_START -> "Starting attendance tracking..."
+                intent?.action == ACTION_STOP -> "Stopping service..."
+                else -> "Attendance tracking active"
+            }
+            val notification = createNotification(initialMessage)
+            startForeground(NOTIFICATION_ID, notification)
         }
-
-        // Always start foreground early to avoid crash
-        val notification = createNotification(initialMessage)
-        startForeground(NOTIFICATION_ID, notification)
 
         when (intent?.action) {
             ACTION_START -> handleServiceStart()
             ACTION_STOP -> handleServiceStop()
             ACTION_RESTART -> handleServiceRestart()
             ACTION_CALL_API -> {
-                // Extract parameters passed from AlarmReceiver
-                val lastRecordTimeStr = intent.getStringExtra("LAST_RECORD_TIME")
-                val targetTimeStr = intent.getStringExtra("TARGET_TIME")
-                val missingRecords = intent.getIntExtra("MISSING_RECORDS", 0)
-
-                checkAndMaintainService(lastRecordTimeStr, targetTimeStr, missingRecords)
+                // ✅ Only trigger work, DO NOT touch notification
+                Log.i(TAG, "🔄 CALL_API invoked — service already running, no notification update")
+                checkAndMaintainService(silent = true) // or directly maybeTriggerApiCall()
             }
-
             else -> handleRegularStart()
         }
 
         return START_STICKY
     }
-
 
     private fun acquireWakeLock() {
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
@@ -236,10 +285,13 @@ class MyService : Service() {
             serviceJob.cancel()
             // Unregister receivers
             unregisterReceivers()
-
+            fiveMinuteJob?.cancel()
+            fiveMinuteJob = null
             // Stop foreground service
             stopForeground(true)
             stopSelf()
+
+
 
             Log.d(TAG, "Service stopped successfully")
         } catch (e: Exception) {
@@ -247,6 +299,7 @@ class MyService : Service() {
         } finally {
             isServiceRunning = false
         }
+
     }
 
     private fun unregisterReceivers() {
@@ -337,29 +390,21 @@ class MyService : Service() {
      * checkAndMaintainService handles both regular checks and missing record insertion.
      * When called from AlarmReceiver with parameters, it inserts missing records at exact times.
      */
-    private fun checkAndMaintainService(
-        lastRecordTimeStr: String? = null,
-        targetTimeStr: String? = null,
-        missingRecords: Int = 0
-    ) {
-        Log.d(TAG, "🔄 checkAndMaintainService: ${Utils.getCurrentDateTime()}")
-        Log.d(TAG, "📊 Parameters: lastRecord=$lastRecordTimeStr, target=$targetTimeStr, missing=$missingRecords")
+    private fun checkAndMaintainService(silent: Boolean = false) {
 
         val today = LocalDate.now()
 
-        // Force re-sync at day change
         if (lastCheckDate != null && today.isAfter(lastCheckDate)) {
             Log.i(TAG, "🕛 Day changed → forcing midnight sync.")
-            updateForegroundNotification(this, "Day changed - Syncing data...")
+            if (!silent) updateForegroundNotification(this, "Day changed - Syncing data...")
             forceMidnightSync()
         }
         lastCheckDate = today
 
-        // Check shift status using AttendanceSyncManager
         val user = SharedPref.getInstance(this)?.getUser()
         if (user == null) {
             Log.e(TAG, "❌ No user found - Stopping service")
-            updateForegroundNotification(this, "No user - Service stopping...")
+            if (!silent) updateForegroundNotification(this, "No user - Service stopping...")
             finishServiceOperations()
             return
         }
@@ -367,23 +412,19 @@ class MyService : Service() {
         val isInsideShift = attendanceSyncManager.shouldRunCheck(user)
         if (!isInsideShift) {
             Log.d(TAG, "❌ Off-shift - Stopping service")
-            updateForegroundNotification(this, "Off-shift - Service stopping...")
+            if (!silent) updateForegroundNotification(this, "Off-shift - Service stopping...")
             finishServiceOperations()
             return
         }
 
-        updateForegroundNotification(this, "📝 Tracking attendance...")
+        // ✅ Only update notification if called from START/RESTART
+        if (!silent) {
+            updateForegroundNotification(this, "📝 Tracking attendance...")
+        }
 
-        // ✅ Always insert current record only - NO gap filling
         serviceScope.launch {
-            try {
-                // Just insert current record normally - no dummy records for missing intervals
-                Log.i(TAG, "✅ Inserting current record at ${Utils.getCurrent24HourTime()}")
-                startLocationFetch()
-
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error in checkAndMaintainService", e)
-            }
+            Log.i(TAG, "✅ Inserting current record at ${Utils.getCurrent24HourTime()}")
+            startLocationFetch()
         }
     }
 
@@ -586,6 +627,7 @@ class MyService : Service() {
         Log.i(TAG, "Starting service")
         updateForegroundNotification(this, "Attendance tracking started")
         startForegroundService()
+        startFiveMinuteAlignedJob() // ✅
     }
 
     private fun handleServiceStop() {
@@ -650,10 +692,10 @@ class MyService : Service() {
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun handleRegularStart() {
 
-
         startForegroundService()
         startWifiScanning()
         checkShiftAndScheduleTasks()
+        startFiveMinuteAlignedJob() // ✅
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -695,7 +737,6 @@ class ServiceReceiver : BroadcastReceiver() {
         }
     }
 }
-
 
 
 

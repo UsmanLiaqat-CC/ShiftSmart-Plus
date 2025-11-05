@@ -1,74 +1,65 @@
 package com.shiftsmart.plus.periodicAction
 
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.AttendanceSyncManager
+import com.shiftsmart.plus.utils.Constants.TAG
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
 import com.shiftsmart.plus.utils.Utils.toLocalDate
-import dagger.hilt.android.AndroidEntryPoint
-import dagger.hilt.android.EntryPointAccessors
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.util.Calendar
 import java.util.Locale
-import javax.inject.Inject
-import kotlin.jvm.java
 
+class ShiftStatusWorker(
+    context: Context,
+    workerParams: WorkerParameters
+) : CoroutineWorker(context, workerParams) {
 
-class MinuteChangeReceiver : BroadcastReceiver() {
+    override suspend fun doWork(): Result {
+        val context = applicationContext
+        val user = SharedPref.getInstance(context)?.getUser() ?: return Result.success()
 
+        val inShift = shouldRunCheck(user)
+        val isRunning = isMyServiceRunning(context, MyService::class.java)
 
+        Log.i("ShiftStatusWorker", "🟢 In shift ${inShift} --->🔄 Service running ${isRunning} at:${Utils.getCurrentDateTime()}")
+        when {
+            inShift && !isRunning -> {
+                Log.i("ShiftStatusWorker", "🟢 In shift → Start service")
+                val i = Intent(context, MyService::class.java).apply { action = MyService.ACTION_START }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
+                else context.startService(i)
+            }
 
-    private val TAG = "MinuteChangeReceiver"
+            inShift && isRunning -> {
+                Log.i("ShiftStatusWorker", "🔄 In shift → Refresh service")
+                val i = Intent(context, MyService::class.java).apply { action = MyService.ACTION_CALL_API }
+                context.startService(i)
+            }
 
-    override fun onReceive(context: Context?, intent: Intent?) {
-        if (context == null || intent?.action != Intent.ACTION_TIME_TICK) return
+            !inShift && isRunning -> {
+                Log.i("ShiftStatusWorker", "🔴 Out of shift → Stop service")
+                val i = Intent(context, MyService::class.java).apply { action = MyService.ACTION_STOP }
+                context.startService(i)
+            }
 
-        Log.d(TAG, "⏰ Minute changed - Checking shift status")
-
-        val user = SharedPref.getInstance(context)?.getUser()
-        if (user == null) {
-            Log.w(TAG, "❌ No user found - skipping check")
-            return
-        }
-
-
-
-        // Check if currently in shift using AttendanceSyncManager
-        val isInShift =shouldRunCheck(user)
-
-        if (isInShift) {
-            Log.i(TAG, "✅ In active shift - Checking service status")
-            
-            // Check if service is running
-            val isServiceRunning = isMyServiceRunning(context, MyService::class.java)
-            
-            if (!isServiceRunning) {
-                Log.w(TAG, "⚠️ Service not running during shift - Starting service")
-                startMyService(context)
-            } else {
-                Log.d(TAG, "✅ Service already running")
+            else -> {
+                Log.i("ShiftStatusWorker", "⚪ Out of shift & service not running → No action")
             }
         }
-        else {
-            Log.d(TAG, "❌ Outside shift - Ensuring service is stopped")
-            
-            val isServiceRunning = isMyServiceRunning(context, MyService::class.java)
-            if (isServiceRunning) {
-                Log.i(TAG, "🛑 Stopping service as shift ended")
-                stopMyService(context)
-            }
-        }
+
+        return Result.success()
     }
-
     fun shouldRunCheck(user: UserModel): Boolean {
         val today = LocalDate.now()
         val currentTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(java.util.Date())
@@ -146,7 +137,6 @@ class MinuteChangeReceiver : BroadcastReceiver() {
         Log.i(TAG, "shouldRunCheck → insideShift=$isInsideShift at ${Utils.getCurrentDateTime()}")
         return isInsideShift
     }
-
     private fun isMyServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
         val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
         @Suppress("DEPRECATION")
@@ -154,24 +144,4 @@ class MinuteChangeReceiver : BroadcastReceiver() {
             .any { it.service.className == serviceClass.name }
     }
 
-    private fun startMyService(context: Context) {
-        val serviceIntent = Intent(context, MyService::class.java).apply {
-            action = MyService.ACTION_START
-        }
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent)
-        } else {
-            context.startService(serviceIntent)
-        }
-        Log.i(TAG, "📲 Service start command sent")
-    }
-
-    private fun stopMyService(context: Context) {
-        val serviceIntent = Intent(context, MyService::class.java).apply {
-            action = MyService.ACTION_STOP
-        }
-        context.startService(serviceIntent)
-        Log.i(TAG, "🛑 Service stop command sent")
-    }
 }

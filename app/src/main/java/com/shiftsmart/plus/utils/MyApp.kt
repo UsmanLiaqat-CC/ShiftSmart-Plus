@@ -23,8 +23,6 @@ class MyApp : Application(), Configuration.Provider {
         super.onCreate()
 
 
-        // Start minute-by-minute monitoring
-        MinuteMonitorHelper.startMonitoring(this)
         // Initialize WorkManager
         WorkManager.initialize(this, workManagerConfiguration)
 

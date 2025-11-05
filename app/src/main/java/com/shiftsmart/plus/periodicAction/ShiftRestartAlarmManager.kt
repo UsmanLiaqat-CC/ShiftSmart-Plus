@@ -178,32 +178,4 @@ object ShiftRestartAlarmManager {
         }
     }
 
-    /**
-     * Cancels all scheduled restart alarms.
-     */
-    fun cancelAllAlarms(context: Context) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-        // Cancel shift restart alarm
-        val restartIntent = Intent(context, ShiftRestartReceiver::class.java)
-        val restartPendingIntent = PendingIntent.getBroadcast(
-            context,
-            RESTART_REQUEST_CODE,
-            restartIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        alarmManager.cancel(restartPendingIntent)
-
-        // Cancel midnight check alarm
-        val midnightIntent = Intent(context, ShiftRestartReceiver::class.java)
-        val midnightPendingIntent = PendingIntent.getBroadcast(
-            context,
-            MIDNIGHT_CHECK_REQUEST_CODE,
-            midnightIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        alarmManager.cancel(midnightPendingIntent)
-
-        Log.i(TAG, "❌ Cancelled all restart alarms")
-    }
 }
