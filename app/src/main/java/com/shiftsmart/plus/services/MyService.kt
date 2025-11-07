@@ -73,6 +73,7 @@ import kotlin.text.format
 import kotlin.text.get
 import kotlin.text.set
 import kotlin.times
+import kotlin.toString
 
 
 @AndroidEntryPoint
@@ -154,7 +155,8 @@ class MyService : Service() {
 
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int
+    {
         currentIntent = intent
         Log.i(TAG, "Service command received: ${intent?.action}")
 
@@ -328,10 +330,13 @@ class MyService : Service() {
 
     private var lastCheckDate: LocalDate? = null
 
-    /**
+
+
+    // for version 8
+/*    *//**
      * checkAndMaintainService handles both regular checks and missing record insertion.
      * When called from AlarmReceiver with parameters, it inserts missing records at exact times.
-     */
+     *//*
     private fun checkAndMaintainService() {
 
         val today = LocalDate.now()
@@ -368,74 +373,6 @@ class MyService : Service() {
         }
     }
 
-
-
-    private fun forceMidnightSync() {
-        serviceScope.launch {
-            attendanceSyncManager.startSyncProcess() // or your backup save method
-            Log.i(TAG, "Midnight sync completed.")
-        }
-    }
-
-
-    private fun releaseWakeLock() {
-        if (::wakeLock.isInitialized && wakeLock.isHeld) {
-            wakeLock.release()
-        }
-    }
-
-
-
-    private fun createNotification(message: String): Notification {
-        val notificationIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            notificationIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(
-            this,
-            getString(R.string.breakfast_notification_channel_id)
-        )
-            .setContentTitle("ShiftSmart Plus Service")
-            .setContentText(message)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setOngoing(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-                }
-            }
-            .build()
-    }
-
-    // Function to make API call only once
-
-    @SuppressLint("MissingPermission")
-    private fun startWifiScanning() {
-        try {
-            if (wifiManager.isWifiEnabled) {
-                wifiManager.startScan()
-                Log.d(TAG, "WiFi scan started")
-            } else {
-                Log.d(TAG, "WiFi is disabled, cannot scan")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start WiFi scan", e)
-        }
-    }
-
     private fun startLocationFetch() {
         if (!locationHelper.hasLocationPermissions()) {
             Log.w(TAG, "MrXXX: Location permission not granted — skipping location fetch")
@@ -455,12 +392,11 @@ class MyService : Service() {
         }
     }
 
-
-    /**
+    *//**
      * Creates a new attendance record and passes it to AttendanceSyncManager.
      * The manager handles all validation, gap filling, duplicate checking, and syncing.
      * If off-shift is detected, the service will be stopped.
-     */
+     *//*
     private fun maybeTriggerApiCall() {
         serviceScope.launch {
             try {
@@ -560,7 +496,210 @@ class MyService : Service() {
                 Log.e(TAG, "❌ Error creating record", e)
             }
         }
+    }*/
+
+
+// In MyService.kt
+
+    private fun checkAndMaintainService(
+    ) {
+        Log.d(TAG, "🔄 checkAndMaintainService: ${Utils.getCurrentDateTime()}")
+
+        val today = LocalDate.now()
+
+        if (lastCheckDate != null && today.isAfter(lastCheckDate)) {
+            Log.i(TAG, "🕛 Day changed → forcing midnight sync.")
+            updateForegroundNotification(this, "Day changed - Syncing data...")
+            forceMidnightSync()
+        }
+        lastCheckDate = today
+
+        val user = SharedPref.getInstance(this)?.getUser()
+        if (user == null) {
+            Log.e(TAG, "❌ No user found - Stopping service")
+            updateForegroundNotification(this, "No user - Service stopping...")
+            finishServiceOperations()
+            return
+        }
+
+        val isInsideShift = attendanceSyncManager.shouldRunCheck(user)
+        if (!isInsideShift) {
+            Log.d(TAG, "❌ Off-shift - Stopping service")
+            updateForegroundNotification(this, "Off-shift - Service stopping...")
+            finishServiceOperations()
+            return
+        }
+
+        updateForegroundNotification(this, "📝 Tracking attendance...")
+
+        // ✅ Use Handler instead of coroutine scope for critical operations
+        Handler(Looper.getMainLooper()).post {
+            Thread {
+                try {
+                    Log.i(TAG, "✅ Starting location fetch on background thread")
+                    startLocationFetchSync() // Synchronous version
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error in checkAndMaintainService", e)
+                    // Fallback: try to save record without location
+                    maybeTriggerApiCallSync()
+                }
+            }.start()
+        }
     }
+
+    // Add synchronous version of location fetch
+    private fun startLocationFetchSync() {
+        if (!locationHelper.hasLocationPermissions()) {
+            Log.w(TAG, "MrXXX: Location permission not granted — skipping location fetch")
+            maybeTriggerApiCallSync()
+            return
+        }
+
+        try {
+            // Use blocking call or callback-based approach
+            val latch = java.util.concurrent.CountDownLatch(1)
+            var locationObtained = false
+
+            locationHelper.fetchFreshLocation { latLng, error ->
+                if (error == null && latLng != null) {
+                    Log.i(TAG, "MrXXX: Fresh location obtained: ${latLng.latitude}, ${latLng.longitude}")
+                    locationObtained = true
+                } else {
+                    Log.e(TAG, "MrXXX: Failed to fetch location: $error")
+                }
+                latch.countDown()
+            }
+
+            // Wait max 10 seconds for location
+            latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            maybeTriggerApiCallSync()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "MrXXX: Location fetch exception", e)
+            maybeTriggerApiCallSync()
+        }
+    }
+
+    // Synchronous version of API call
+    private fun maybeTriggerApiCallSync() {
+        try {
+            val user = SharedPref.getInstance(this@MyService)?.getUser()
+            if (user == null) {
+                Log.e(TAG, "❌ No user found, skipping record save")
+                return
+            }
+
+            val record = RecordModel(
+                uuid = Utils.generateRandomUuid(),
+                user_id = user._id.toString(),
+                lat = locationHelper.lastLocation.latitude,
+                lng = locationHelper.lastLocation.longitude,
+                localTime = Utils.getCurrent24HourTime(),
+                time = Utils.getCurrentUtcTime(),
+                attendanceType = StatusEnum.default.name,
+                attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
+                isForceAttendance = false,
+                isLocation = locationHelper.hasLocationPermissions(),
+                wifiService = wifiManager.isWifiEnabled,
+                dataService = Utils.isMobileDataEnabled(this@MyService),
+                notification = Utils.isNotificationPermissionGranted(this@MyService),
+                batterySaver = !Utils.isBatterySaverOn(this@MyService),
+                batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
+                wifi_list = wifiScanResults.toList()
+            )
+
+            Log.i(TAG, "📝 Created record at ${record.localTime}")
+
+            // Run on IO thread pool
+            Thread {
+                // In maybeTriggerApiCallSync()
+                attendanceSyncManager.saveRecordLocally(record, user) { isInsideShift ->
+                    if (isInsideShift) {
+                        Log.i(TAG, "✅ Record saved successfully")
+                    } else {
+                        Log.w(TAG, "⚠️ Off-shift detected - Stopping service")
+                        Handler(Looper.getMainLooper()).post {
+                            updateForegroundNotification(this@MyService, "Off-shift - Service stopping...")
+                            finishServiceOperations()
+                        }
+                    }
+                }
+
+            }.start()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error creating record", e)
+        }
+    }
+
+
+
+    private fun forceMidnightSync() {
+        serviceScope.launch {
+            attendanceSyncManager.startSyncProcess() // or your backup save method
+            Log.i(TAG, "Midnight sync completed.")
+        }
+    }
+
+
+    private fun releaseWakeLock() {
+        if (::wakeLock.isInitialized && wakeLock.isHeld) {
+            wakeLock.release()
+        }
+    }
+
+
+
+    private fun createNotification(message: String): Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(
+            this,
+            getString(R.string.breakfast_notification_channel_id)
+        )
+            .setContentTitle("ShiftSmart Plus Service")
+            .setContentText(message)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+                }
+            }
+            .build()
+    }
+
+    // Function to make API call only once
+
+    @SuppressLint("MissingPermission")
+    private fun startWifiScanning() {
+        try {
+            if (wifiManager.isWifiEnabled) {
+                wifiManager.startScan()
+                Log.d(TAG, "WiFi scan started")
+            } else {
+                Log.d(TAG, "WiFi is disabled, cannot scan")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start WiFi scan", e)
+        }
+    }
+
 
 
     private fun handleServiceStart() {
