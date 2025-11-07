@@ -34,7 +34,7 @@ class ShiftStatusWorker(
 
         Log.i("ShiftStatusWorker", "🟢 In shift ${inShift} --->🔄 Service running ${isRunning} at:${Utils.getCurrentDateTime()}")
         when {
-            inShift && !isRunning -> {
+           /* inShift && !isRunning -> {
                 Log.i("ShiftStatusWorker", "🟢 In shift → Start service")
                 val i = Intent(context, MyService::class.java).apply { action = MyService.ACTION_START }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
@@ -48,6 +48,20 @@ class ShiftStatusWorker(
             }
 
             !inShift && isRunning -> {
+                Log.i("ShiftStatusWorker", "🔴 Out of shift → Stop service")
+                val i = Intent(context, MyService::class.java).apply { action = MyService.ACTION_STOP }
+                context.startService(i)
+            }*/
+
+            inShift -> {
+                Log.i("ShiftStatusWorker", "🟢 In shift → Start service")
+                val i = Intent(context, MyService::class.java).apply { action = MyService.ACTION_START }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i)
+                else context.startService(i)
+            }
+
+
+            !inShift -> {
                 Log.i("ShiftStatusWorker", "🔴 Out of shift → Stop service")
                 val i = Intent(context, MyService::class.java).apply { action = MyService.ACTION_STOP }
                 context.startService(i)
