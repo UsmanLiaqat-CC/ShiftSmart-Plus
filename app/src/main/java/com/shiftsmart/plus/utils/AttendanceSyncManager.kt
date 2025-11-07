@@ -40,7 +40,6 @@ import java.util.Calendar
 import java.util.Locale
 import javax.inject.Inject
 
-
 class AttendanceSyncManager @Inject constructor(
     private val context: Context,
     private val repository: MainRepository,
@@ -59,35 +58,10 @@ class AttendanceSyncManager @Inject constructor(
      *
      * @return true if inside shift window (service should continue), false if off-shift (service should stop)
      */
-
-    // for version app 8
-/*
     suspend fun saveRecordLocally(record: RecordModel, user: UserModel): Boolean {
         val shifts = user.timetable?.range ?: emptyList()
         return saveDataLocally(record, shifts, user)
     }
-*/
-
-
-
-// In AttendanceSyncManager.kt
-    fun saveRecordLocally(
-        record: RecordModel,
-        user: UserModel,
-        callback: (isInsideShift: Boolean) -> Unit
-    ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val shifts = user.timetable?.range ?: emptyList()
-                val result = saveDataLocally(record, shifts, user)
-                callback(result)
-            } catch (e: Exception) {
-                Log.e("AttendanceSyncManager", "Error saving record", e)
-                callback(false)
-            }
-        }
-    }
-
 
 
     /**
@@ -102,210 +76,7 @@ class AttendanceSyncManager @Inject constructor(
         }
     }
 
-    /**
-     * Inserts missing records at exact 5-minute intervals.
-     * Called from MyService when alarm detects gaps.
-     *
-     * @param lastRecordTimeStr The time of the last record (HH:mm or HH:mm:ss)
-     * @param targetTimeStr The target time we want to save (HH:mm or HH:mm:ss)
-     * @param numberOfRecords Number of records to insert to fill the gap
-     * @param currentRecord The current record data to use for dummy records
-     * @param user The user object
-     */
-    suspend fun insertMissingRecordsAtExactIntervals(
-        lastRecordTimeStr: String,
-        targetTimeStr: String,
-        numberOfRecords: Int,
-        currentRecord: RecordModel,
-        user: UserModel
-    ) {
-        Log.i(TAG, "⏰ insertMissingRecordsAtExactIntervals: Inserting $numberOfRecords records from $lastRecordTimeStr to $targetTimeStr")
 
-        try {
-            val today = LocalDate.now()
-            val activeMulti = user.multipleTimeTables?.find { mt ->
-                val s = mt.startDate.toLocalDate()
-                val e = mt.endDate.toLocalDate()
-                today in s..e
-            }
-            val effectiveRange = activeMulti?.timetable?.range ?: user.timetable?.range
-
-            if (effectiveRange == null) {
-                Log.e(TAG, "❌ No timetable found, cannot validate shift times")
-                return
-            }
-
-            // ✅ Get the actual last record timestamp - parse from ACTUAL UTC TIME in database
-            val lastDefaultRecord = dao.getLatestDefaultRecord(user._id.toString())
-            val lastRecordCalendar = if (lastDefaultRecord != null) {
-                // Parse the UTC time from the database record to get the EXACT timestamp
-                try {
-                    val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                        timeZone = java.util.TimeZone.getTimeZone("UTC")
-                    }
-                    val utcDate = utcFormatter.parse(lastDefaultRecord.time)
-
-                    if (utcDate != null) {
-                        // Convert UTC to local Calendar
-                        Calendar.getInstance().apply {
-                            time = utcDate
-                        }
-                    } else {
-                        // Fallback: use local time with current date
-                        val lastTime = Utils.parseFlexibleTime(lastDefaultRecord.localTime)
-                        Calendar.getInstance().apply {
-                            if (lastTime != null) {
-                                set(Calendar.HOUR_OF_DAY, lastTime.hour)
-                                set(Calendar.MINUTE, lastTime.minute)
-                                set(Calendar.SECOND, 0)
-                                set(Calendar.MILLISECOND, 0)
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to parse last record UTC time: ${e.message}")
-                    // Fallback: use local time with current date
-                    val lastTime = Utils.parseFlexibleTime(lastDefaultRecord.localTime)
-                    Calendar.getInstance().apply {
-                        if (lastTime != null) {
-                            set(Calendar.HOUR_OF_DAY, lastTime.hour)
-                            set(Calendar.MINUTE, lastTime.minute)
-                            set(Calendar.SECOND, 0)
-                            set(Calendar.MILLISECOND, 0)
-                        }
-                    }
-                }
-            } else {
-                // Fallback to parsing the provided time string with current date
-                val lastTime = Utils.parseFlexibleTime(lastRecordTimeStr)
-                if (lastTime != null) {
-                    Calendar.getInstance().apply {
-                        set(Calendar.HOUR_OF_DAY, lastTime.hour)
-                        set(Calendar.MINUTE, lastTime.minute)
-                        set(Calendar.SECOND, 0)
-                        set(Calendar.MILLISECOND, 0)
-                    }
-                } else {
-                    Calendar.getInstance()
-                }
-            }
-
-            Log.i(TAG, "📍 Starting from: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(lastRecordCalendar.time)}")
-            Log.i(TAG, "📍 Starting UTC: ${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(lastRecordCalendar.time)}")
-
-            // Calculate all missing timestamps at exact 5-minute intervals
-            val allMissingTimestamps = mutableListOf<Calendar>()
-
-            for (i in 1..numberOfRecords) {
-                val timestamp = lastRecordCalendar.clone() as Calendar
-                timestamp.add(Calendar.MINUTE, i * 5)
-                allMissingTimestamps.add(timestamp)
-            }
-
-            Log.i(TAG, "📝 Found ${allMissingTimestamps.size} potential time slots")
-
-            // Filter timestamps to only include those within shift periods
-            val validTimestamps = mutableListOf<Calendar>()
-            var skippedOffShift = 0
-
-            for (timestamp in allMissingTimestamps) {
-                // Check if this time falls within ANY shift period
-                val todayName = timestamp.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
-                val yesterdayCalendar = timestamp.clone() as Calendar
-                yesterdayCalendar.add(Calendar.DAY_OF_YEAR, -1)
-                val yesterdayName = yesterdayCalendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
-
-                val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
-                val yesterdayShift = effectiveRange.find { it.day.equals(yesterdayName, ignoreCase = true) }
-
-                var isWithinShift = false
-
-                // Check today's shift
-                if (todayShift?.start != null && todayShift.end != null) {
-                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(timestamp, todayShift.start, todayShift.end)
-                }
-
-                // If not in today's shift, check yesterday's overnight shift
-                if (!isWithinShift && yesterdayShift?.start != null && yesterdayShift.end != null) {
-                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(timestamp, yesterdayShift.start, yesterdayShift.end, -1)
-                }
-
-                if (isWithinShift) {
-                    validTimestamps.add(timestamp)
-                } else {
-                    skippedOffShift++
-                }
-            }
-
-            Log.i(TAG, "✅ ${validTimestamps.size} times are within shift periods")
-            if (skippedOffShift > 0) {
-                Log.i(TAG, "⏭️ Skipped $skippedOffShift times (off-shift period)")
-            }
-
-            if (validTimestamps.isEmpty()) {
-                Log.i(TAG, "⏭️ No records to insert - all times are outside shift periods")
-                return
-            }
-
-            // For each valid timestamp, create and save a record
-            var insertedCount = 0
-            for ((index, timestamp) in validTimestamps.withIndex()) {
-                try {
-                    // Format local time for database
-                    val localTimeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-                    val localTimeStr = localTimeFormatter.format(timestamp.time)
-
-                    // Convert to UTC
-                    val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                        timeZone = java.util.TimeZone.getTimeZone("UTC")
-                    }
-                    val utcTimeStr = utcFormatter.format(timestamp.time)
-
-                    // Check for duplicate
-                    val existingCount = dao.countRecordByTime(utcTimeStr)
-                    if (existingCount > 0) {
-                        Log.i(TAG, "⏭️ Skipping $localTimeStr - record already exists")
-                        continue
-                    }
-
-                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                    Log.i(TAG, "⏱️ [${index + 1}/${validTimestamps.size}] Inserting record at ${dateFormatter.format(timestamp.time)} → Local: $localTimeStr, UTC: $utcTimeStr")
-
-                    // Create record with exact time but using current record's data
-                    val backfilledRecord = currentRecord.copy(
-                        uuid = Utils.generateRandomUuid(),
-                        localTime = localTimeStr,
-                        time = utcTimeStr,
-                        attendanceType = StatusEnum.default.name
-                    )
-
-                    // Insert the backfilled record
-                    dao.insertRecord(backfilledRecord)
-
-                    // Save last sync time
-                    SharedPref.getInstance(context)?.saveLastSyncTime(localTimeStr)
-
-                    insertedCount++
-                    Log.i(TAG, "✅ Backfilled record inserted: $localTimeStr")
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error inserting record at ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(timestamp.time)}", e)
-                }
-            }
-
-            Log.i(TAG, "✅ Gap filling complete: Inserted $insertedCount records (skipped $skippedOffShift off-shift times)")
-
-            withContext(Dispatchers.Main) {
-                sendNotificationUpdate("✅ Saved $insertedCount records")
-            }
-
-            // Sync to API after inserting missing records
-            callApi(user)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error in insertMissingRecordsAtExactIntervals", e)
-        }
-    }
 
     /**
      * Checks if current time is within shift window with comprehensive logging.
@@ -808,8 +579,6 @@ class AttendanceSyncManager @Inject constructor(
             return false // Outside shift window, service should stop
         }
     }
-
-    /** Small helper to keep the stop path tidy + consistent in logs */
 
 
     private fun sendFinishBroadcastAndLog(reason: String) {

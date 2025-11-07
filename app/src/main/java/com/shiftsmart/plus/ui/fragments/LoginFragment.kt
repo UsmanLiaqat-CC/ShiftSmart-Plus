@@ -32,7 +32,6 @@ import com.shiftsmart.plus.databinding.FragmentLoginBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.services.LocationTrack
-import com.shiftsmart.plus.utils.MinuteMonitorHelper
 import com.shiftsmart.plus.utils.PasswordToggleHandler
 import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
@@ -156,7 +155,6 @@ class LoginFragment : Fragment() {
                                 multipleTimeTables = multiTimeTables!!
                             )
 
-                            MinuteMonitorHelper.startMonitoring(requireContext())
 
                         } else {
                             Utils.showSnackBar(

@@ -9,6 +9,11 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.services.MyService
@@ -21,6 +26,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Date
+import java.util.concurrent.TimeUnit
 
 /**
  * AlarmScheduler
@@ -117,7 +123,9 @@ object AlarmScheduler {
 
                 if (reschedulePeriodic) {
                     // Schedules one-shot CALL_API aligned to next 5-min mark (receiver re-arms)
-                    schedulePeriodicAlarm(context)
+//                    schedulePeriodicAlarm(context)
+
+                    schedulePeriodicWork(context)
                 }
             }
         } else {
@@ -137,11 +145,7 @@ object AlarmScheduler {
         else context.startService(intent)
     }
 
-    /**
-     * cancelServiceAlarm(...)
-     * WHEN: Before scheduling TODAY’s start/stop to avoid duplicates.
-     * WHAT: Cancels TODAY’s START/STOP PendingIntents (request codes 1001/1002).
-     */
+
     private fun cancelServiceAlarm(context: Context, isStart: Boolean) {
         val intent = Intent(context, MyService::class.java).apply {
             action = if (isStart) "START_SERVICE" else "STOP_SERVICE"
@@ -157,53 +161,26 @@ object AlarmScheduler {
         }
     }
 
-    /**
-     * schedulePeriodicAlarm(...)
-     * WHEN: After (re)arming alarms if you want the 5-min CALL_API heartbeat to persist.
-     * WHAT: Cancels any existing CALL_API PI and (re)schedules a one-shot exact alarm aligned
-     *       with the last sync time (multiple of 5 minutes from last sync).
-     */
-    fun schedulePeriodicAlarm(context: Context) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-        // Cancel any existing CALL_API first (rc=1234)
-        val cancelIntent = Intent(context, AlarmReceiver::class.java).apply { action = "CALL_API" }
-        val cancelPendingIntent = PendingIntent.getBroadcast(
-            context, 1234, cancelIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        alarmManager.cancel(cancelPendingIntent)
+    fun schedulePeriodicWork(context: Context) {
+        val workRequest = PeriodicWorkRequestBuilder<ShiftStatusWorker>(
+            15, TimeUnit.MINUTES
+        ).setConstraints(
+            Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.NOT_REQUIRED) // optional
+                .build()
+        ).build()
 
-        // Exact-alarm permission gate (S+); you already redirect to settings elsewhere if needed
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                data = Uri.parse("package:${context.packageName}")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-            return
-        }
-
-        // Arm next aligned CALL_API
-        val intent = Intent(context, AlarmReceiver::class.java).apply { action = "CALL_API" }
-        val pendingIntent = PendingIntent.getBroadcast(
-            context, 1234, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            "ShiftStatusWork",
+            ExistingPeriodicWorkPolicy.UPDATE, // always keep latest
+            workRequest
         )
 
-        // ✅ IMPROVED: Align with last sync time if available
-        val triggerTime = getNextAlignedTimeWithLastSync(context)
-        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-        Log.i(TAG, "Scheduled CALL_API alarm at ${Date(triggerTime)}")
+        Log.i(TAG, "⏱ WorkManager periodic shift check scheduled (every 15 min)")
     }
 
-    /**
-     * scheduleService(...)
-     * WHEN: Used for TODAY’s start (rc=1001) / stop (rc=1002).
-     * WHAT: Schedules exact alarms; NOTE currently acquires a wake lock at *schedule* time,
-     *       which is generally not needed — prefer holding a short PARTIAL_WAKE_LOCK when the alarm
-     *       actually fires (in receiver/service).
-     */
+
     private fun scheduleService(context: Context, calendar: Calendar, isStart: Boolean) {
         try {
             val intent = Intent(context, MyService::class.java).apply {
@@ -255,57 +232,6 @@ object AlarmScheduler {
         }
     }
 
-    /**
-     * getNextFiveMinuteAlignedTime()
-     * WHAT: Returns epoch millis for the next exact 5-min boundary from now (sec/ms = 0).
-     * WHO: Used by schedulePeriodicAlarm().
-     */
-    private fun getNextFiveMinuteAlignedTime(): Long {
-        val now = Calendar.getInstance()
-        val minutes = now.get(Calendar.MINUTE)
-        val extra = 5 - (minutes % 5)
-        now.add(Calendar.MINUTE, extra)
-        now.set(Calendar.SECOND, 0)
-        now.set(Calendar.MILLISECOND, 0)
-        return now.timeInMillis
-    }
-
-    /**
-     * getNextAlignedTimeWithLastSync(...)
-     * WHAT: Returns epoch millis for the next alarm that is aligned with last sync time.
-     *       Ensures syncs always happen at multiples of 5 minutes from the last successful sync.
-     * WHO: Used by schedulePeriodicAlarm().
-     */
-    private fun getNextAlignedTimeWithLastSync(context: Context): Long {
-        val sharedPref = SharedPref.getInstance(context)
-        val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
-
-        if (lastSyncTimestamp > 0L) {
-            // We have a last sync time - calculate next time that's a multiple of 5 minutes from it
-            val currentTime = System.currentTimeMillis()
-            val timeSinceLastSync = currentTime - lastSyncTimestamp
-            val minutesSinceLastSync = (timeSinceLastSync / (60 * 1000)).toInt()
-
-            // Calculate next multiple of 5 minutes from last sync
-            val nextMultipleOf5 = ((minutesSinceLastSync / 5) + 1) * 5
-            val nextAlignedTime = lastSyncTimestamp + (nextMultipleOf5 * 60 * 1000L)
-
-            Log.i(TAG, "⏰ Last sync was ${minutesSinceLastSync} minutes ago")
-            Log.i(TAG, "⏰ Next sync aligned with last sync: ${Date(nextAlignedTime)} (${nextMultipleOf5} min from last sync)")
-
-            return nextAlignedTime
-        } else {
-            // No last sync time - use standard 5-minute boundary alignment
-            Log.i(TAG, "⏰ No last sync found, using standard 5-minute boundary")
-            return getNextFiveMinuteAlignedTime()
-        }
-    }
-
-    /**
-     * getCalendarForDate(...)
-     * WHAT: Build a Calendar for a specific LocalDate + "HH:mm" time and apply ±offset hours.
-     * WHO: Used by scheduleDay()/tomorrow helpers.
-     */
     private fun getCalendarForDate(date: LocalDate, time: String, offsetHours: Int): Calendar {
         val (hh, mm) = time.split(":").map { it.toInt() }
         return Calendar.getInstance().apply {
@@ -458,10 +384,6 @@ object AlarmScheduler {
         }
     }
 
-    /**
-     * cancelServiceAlarmByCode(...)
-     * WHAT: Cancels a specific PI identified by (action, requestCode). Used to clear TOMORROW (1101/1102).
-     */
     private fun cancelServiceAlarmByCode(context: Context, action: String, requestCode: Int) {
         val intent = Intent(context, MyService::class.java).apply { this.action = action }
         val pi = PendingIntent.getService(

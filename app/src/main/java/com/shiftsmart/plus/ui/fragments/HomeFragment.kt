@@ -75,7 +75,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.utils.GpsStatusMonitor
-import com.shiftsmart.plus.utils.MinuteMonitorHelper
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import kotlinx.coroutines.delay
@@ -941,7 +940,6 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             SharedPref.getInstance(requireContext())?.clearLastSyncTime() // Clear sync timestamps
             SharedPref.getInstance(requireContext())?.clearPrefrence()
             findNavController().navigate(R.id.action_homeFragment_to_loginFragment)
-            MinuteMonitorHelper.stopMonitoring(requireContext())
 
         }
     }

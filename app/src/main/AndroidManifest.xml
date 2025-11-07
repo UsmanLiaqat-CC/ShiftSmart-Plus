@@ -67,15 +67,6 @@
             </intent-filter>
         </receiver>
 
-        <receiver
-            android:name=".periodicAction.DateChangeReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.DATE_CHANGED" />
-                <action android:name="android.intent.action.TIME_SET" />
-                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
-            </intent-filter>
-        </receiver>
 
         <provider
             android:name="androidx.startup.InitializationProvider"
@@ -98,16 +89,6 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
-        <!-- Add this receiver -->
-        <receiver
-            android:name=".periodicAction.MinuteChangeReceiver"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.TIME_TICK" />
-            </intent-filter>
-        </receiver>
-
 
         <service
             android:name=".services.MyService"

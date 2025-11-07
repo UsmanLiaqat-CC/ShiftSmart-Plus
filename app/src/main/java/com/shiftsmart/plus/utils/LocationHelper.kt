@@ -1,6 +1,7 @@
 package com.shiftsmart.plus.utils
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -8,93 +9,26 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.ActivityCompat
-import com.google.android.gms.location.Priority
+import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
+/*
 class LocationHelper(private val context: Context) {
 
     var lastLocation: LatLng = LatLng(0.0, 0.0)
 
-// In LocationHelper.kt
-
-    // Add this NEW method (keep your existing suspend fun too)
-    fun fetchFreshLocation(callback: (latLng: LatLng?, error: String?) -> Unit) {
-        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-
-        if (!hasLocationPermissions()) {
-            Log.w("LocationHelper", "Missing location permissions. Attempting last known location fallback.")
-            val lastKnown = getLastKnownLocation(locationManager)
-            callback(lastKnown?.let { LatLng(it.latitude, it.longitude) } ?: LatLng(0.0, 0.0), "No permissions")
-            return
-        }
-
-        val isResumed = AtomicBoolean(false)
-        val timeoutHandler = Handler(Looper.getMainLooper())
-
-        val listener = object : LocationListener {
-            override fun onLocationChanged(location: Location) {
-                if (isResumed.compareAndSet(false, true)) {
-                    timeoutHandler.removeCallbacksAndMessages(null)
-                    locationManager.removeUpdates(this)
-                    lastLocation = LatLng(location.latitude, location.longitude)
-                    callback(lastLocation, null)
-                }
-            }
-
-            override fun onProviderDisabled(provider: String) {
-                if (isResumed.compareAndSet(false, true)) {
-                    timeoutHandler.removeCallbacksAndMessages(null)
-                    locationManager.removeUpdates(this)
-                    val lastKnown = getLastKnownLocation(locationManager)
-                    val result = lastKnown?.let { LatLng(it.latitude, it.longitude) } ?: lastLocation
-                    callback(result, "Provider disabled")
-                }
-            }
-
-            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-            override fun onProviderEnabled(provider: String) {}
-        }
-
-        try {
-            locationManager.requestLocationUpdates(
-                LocationManager.NETWORK_PROVIDER,
-                0L,
-                0f,
-                listener,
-                Looper.getMainLooper()
-            )
-
-            // 10 second timeout
-            timeoutHandler.postDelayed({
-                if (isResumed.compareAndSet(false, true)) {
-                    locationManager.removeUpdates(listener)
-                    val lastKnown = getLastKnownLocation(locationManager)
-                    val result = lastKnown?.let { LatLng(it.latitude, it.longitude) } ?: lastLocation
-                    Log.w("LocationHelper", "Location fetch timeout, using fallback")
-                    callback(result, "Timeout")
-                }
-            }, 10000)
-
-        } catch (e: SecurityException) {
-            Log.e("LocationHelper", "SecurityException while requesting updates: ${e.message}")
-            callback(lastLocation, e.message)
-        }
-    }
-
-    // for version app 8
-/*
     suspend fun fetchFreshLocation(): LatLng = withContext(Dispatchers.Main) {
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
@@ -157,18 +91,7 @@ class LocationHelper(private val context: Context) {
             lastLocation
         } ?: LatLng(0.0, 0.0)
     }
-*/
 
-
-    // In LocationHelper.kt
-
-/*
-    private fun getLastKnownLocation(locationManager: LocationManager): Location? {
-        return if (hasLocationPermissions()) {
-            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-        } else null
-    }
-*/
 
     private fun getLastKnownLocation(locationManager: LocationManager): Location? {
         return try {
@@ -185,4 +108,130 @@ class LocationHelper(private val context: Context) {
                 ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
 
+}
+*/
+class LocationHelper(private val context: Context) {
+
+    var lastLocation: LatLng = LatLng(0.0, 0.0)
+
+    private val fusedClient by lazy {
+        LocationServices.getFusedLocationProviderClient(context)
+    }
+
+    suspend fun fetchFreshLocation(): LatLng = withContext(Dispatchers.Main) {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+        if (!hasLocationPermissions()) {
+            Log.w("LocationHelper", "Missing permissions → Using last known location fallback")
+            return@withContext getBestAvailableLocation()  // ✅ fallback
+        }
+
+        val isResumed = AtomicBoolean(false)
+
+        suspendCancellableCoroutine { continuation ->
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    if (isResumed.compareAndSet(false, true)) {
+                        locationManager.removeUpdates(this)
+                        continuation.resume(location)
+                    }
+                }
+
+                override fun onProviderDisabled(provider: String) {
+                    if (isResumed.compareAndSet(false, true)) {
+                        continuation.resume(null)
+                    }
+                }
+            }
+
+            try {
+                locationManager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    0L,
+                    0f,
+                    listener,
+                    Looper.getMainLooper()
+                )
+            } catch (e: SecurityException) {
+                continuation.resume(null)
+            }
+
+            continuation.invokeOnCancellation {
+                locationManager.removeUpdates(listener)
+            }
+
+            // Timeout 10s → fallback
+            CoroutineScope(Dispatchers.IO).launch {
+                delay(10000)
+                if (isResumed.compareAndSet(false, true)) {
+                    val fallback = getBestAvailableLocation()  // ✅ fallback call
+                    withContext(Dispatchers.Main) {
+                        locationManager.removeUpdates(listener)
+                        continuation.resume(fallback?.let { latLng ->
+                            Location(LocationManager.GPS_PROVIDER).apply {
+                                latitude = latLng.latitude
+                                longitude = latLng.longitude
+                            }
+                        })
+
+                    }
+                }
+            }
+        }?.let { location ->
+            lastLocation = LatLng(location.latitude, location.longitude)
+            lastLocation
+        } ?: run {
+            Log.w("LocationHelper", "No live location — using fallback")
+            getBestAvailableLocation()
+        }
+    }
+
+    // ✅ BEST Last Known Location Provider (Permission Safe)
+    @SuppressLint("MissingPermission")
+    private suspend fun getBestAvailableLocation(): LatLng = withContext(Dispatchers.IO) {
+
+        // If no permission → just return last stored safe value
+        if (!hasLocationPermissions()) {
+            Log.w("LocationHelper", "⚠ No location permission → Using last stored location fallback")
+            return@withContext lastLocation
+        }
+
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+        // Try GPS first
+        val gps = try {
+            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+        } catch (_: SecurityException) {
+            null
+        }
+
+        // Try Network next
+        val network = try {
+            locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        } catch (_: SecurityException) {
+            null
+        }
+
+        // Try Fused Provider last
+        val fuse = try {
+            fusedClient.lastLocation.await()
+        } catch (_: Exception) {
+            null
+        }
+
+        val best = gps ?: network ?: fuse
+
+        if (best != null) {
+            lastLocation = LatLng(best.latitude, best.longitude)
+            lastLocation
+        } else {
+            Log.w("LocationHelper", "⚠ No last-known-location available → Using previous stored lastLocation")
+            lastLocation   // ✅ Previously known safe location
+        }
+    }
+
+    fun hasLocationPermissions(): Boolean {
+        return ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    }
 }
