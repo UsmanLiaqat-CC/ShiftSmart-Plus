@@ -30,6 +30,13 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.div
+import kotlin.text.compareTo
+import kotlin.text.format
+import kotlin.text.get
+import kotlin.text.set
+import kotlin.text.toInt
+import kotlin.times
 
 /**
  * AlarmReceiver
@@ -192,7 +199,7 @@ class AlarmReceiver : BroadcastReceiver() {
                                 else -> Pair(null, 0L)
                             }
 
-                            // ✅ STEP 3: Compare normalized times and ensure correct boundary
+                            /*// ✅ STEP 3: Compare normalized times and ensure correct boundary
                             if (lastRecordTime != null && lastRecordTimestamp > 0L) {
                                 val normalizedLastTimestamp = Calendar.getInstance().apply {
                                     timeInMillis = lastRecordTimestamp
@@ -244,7 +251,116 @@ class AlarmReceiver : BroadcastReceiver() {
                                 } else {
                                     Log.i("AlarmReceiver", "⏸️ Gap < 5 min → skipping duplicate insert")
                                 }
-                            } else {
+                            }
+                            else {
+                                // ✅ No previous record → insert first record
+                                Log.i("AlarmReceiver", "🆕 No previous record found — inserting first one")
+                                val apiIntent = Intent(context, MyService::class.java).apply {
+                                    action = MyService.ACTION_CALL_API
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                    context.startForegroundService(apiIntent)
+                                else context.startService(apiIntent)
+                            }*/
+
+
+//                            Checks if the last record was aligned to a 5-minute boundary
+//If not aligned (e.g., 10:41), clears SharedPreferences and proceeds with API call if current time is aligned
+//This allows the system to "reset" and start fresh from the next aligned boundary
+//No more infinite rescheduling loop
+// ✅ STEP 3: Compare normalized times and ensure correct boundary
+                            if (lastRecordTime != null && lastRecordTimestamp > 0L) {
+                                // ✅ Check if last record was aligned to 5-min boundary
+                                val lastRecordCal = Calendar.getInstance().apply {
+                                    timeInMillis = lastRecordTimestamp
+                                }
+                                val lastRecordMinute = lastRecordCal.get(Calendar.MINUTE)
+                                val wasLastRecordAligned = (lastRecordMinute % 5 == 0)
+
+                                // ✅ Normalize LAST record to 5-min boundary (round down)
+                                val normalizedLastTimestamp = Calendar.getInstance().apply {
+                                    timeInMillis = lastRecordTimestamp
+                                    val minute = get(Calendar.MINUTE)
+                                    val roundedMinute = (minute / 5) * 5
+                                    set(Calendar.MINUTE, roundedMinute)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }.timeInMillis
+
+                                // ✅ Normalize CURRENT time to 5-min boundary (round down)
+                                val currentCal = Calendar.getInstance().apply {
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }
+                                val currentMinute = currentCal.get(Calendar.MINUTE)
+                                val roundedMinute = (currentMinute / 5) * 5
+                                currentCal.set(Calendar.MINUTE, roundedMinute)
+                                val normalizedCurrentTimestamp = currentCal.timeInMillis
+
+                                val gapMillis = normalizedCurrentTimestamp - normalizedLastTimestamp
+                                val minutesDiff = (gapMillis / (1000 * 60)).toInt()
+
+                                Log.i("AlarmReceiver", "⏱️ Gap: $minutesDiff minutes (last record aligned: $wasLastRecordAligned)")
+
+                                // ✅ If last record was misaligned, clear SharedPref and proceed
+                                if (!wasLastRecordAligned) {
+                                    Log.w("AlarmReceiver", "⚠️ Last record was misaligned (${lastRecordMinute}m) → clearing SharedPref")
+                                    sharedPref?.clearLastSyncTime()
+
+                                    // Proceed with API call if current time is aligned
+                                    if (currentMinute % 5 == 0) {
+                                        Log.i("AlarmReceiver", "✅ Current time aligned — calling API")
+
+                                        val apiIntent = Intent(context, MyService::class.java).apply {
+                                            action = MyService.ACTION_CALL_API
+                                        }
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                            context.startForegroundService(apiIntent)
+                                        else context.startService(apiIntent)
+                                    } else {
+                                        Log.w("AlarmReceiver", "⏭️ Current time not aligned → scheduling next boundary")
+                                        scheduleNextAlignedAlarm(context)
+                                        return@launch
+                                    }
+                                } else {
+                                    // Last record was aligned, check if current interval is aligned
+                                    val remainder = minutesDiff % 5
+                                    if (remainder != 0) {
+                                        Log.w("AlarmReceiver", "⚠️ Misaligned: remainder=$remainder → rescheduling next boundary")
+
+                                        val nextAlignedCal = Calendar.getInstance().apply {
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }
+                                        val nextMinute = nextAlignedCal.get(Calendar.MINUTE)
+                                        val minutesToAdd = if (nextMinute % 5 == 0) 5 else (5 - nextMinute % 5)
+                                        nextAlignedCal.add(Calendar.MINUTE, minutesToAdd)
+
+                                        val nextSyncTime = nextAlignedCal.timeInMillis
+                                        val nextSyncTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                                            .format(Date(nextSyncTime))
+
+                                        Log.w("AlarmReceiver", "⏭️ Rescheduling to next boundary: $nextSyncTimeStr")
+                                        rescheduleAlarmAtSpecificTime(context, nextSyncTime)
+                                        return@launch
+                                    }
+
+                                    // ✅ If perfectly aligned and >=5 min gap → perform sync
+                                    if (minutesDiff >= 5) {
+                                        Log.i("AlarmReceiver", "✅ Aligned on boundary — calling API")
+
+                                        val apiIntent = Intent(context, MyService::class.java).apply {
+                                            action = MyService.ACTION_CALL_API
+                                        }
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                            context.startForegroundService(apiIntent)
+                                        else context.startService(apiIntent)
+                                    } else {
+                                        Log.i("AlarmReceiver", "⏸️ Gap < 5 min → skipping duplicate insert")
+                                    }
+                                }
+                            }
+                            else {
                                 // ✅ No previous record → insert first record
                                 Log.i("AlarmReceiver", "🆕 No previous record found — inserting first one")
                                 val apiIntent = Intent(context, MyService::class.java).apply {
@@ -254,6 +370,7 @@ class AlarmReceiver : BroadcastReceiver() {
                                     context.startForegroundService(apiIntent)
                                 else context.startService(apiIntent)
                             }
+
 
                             // ✅ Always reschedule next alarm aligned to 5-min boundary
                             scheduleNextAlignedAlarm(context)
