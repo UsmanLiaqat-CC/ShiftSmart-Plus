@@ -48,10 +48,17 @@ object AlarmScheduler {
      * scheduleAlarms(...)
      *
      * WHEN: Call on login, after FCM user/timetable updates, or any time you want to (re)arm today.
-     * WHAT: Schedules TODAY’s START/STOP for the effective shift.
+     * WHAT: Schedules TODAY's START/STOP for the effective shift using DUAL REDUNDANCY:
+     *       1. AlarmManager (primary - exact timing)
+     *       2. WorkManager (fallback - survives device restrictions)
+     *
+     * SHIFT BUFFER: Applies ±1 hour buffer automatically via getCalendarForShift()
+     *  - Shift 08:00-18:00 → Service runs 07:00-19:00
+     *  - Shift 20:00-02:00 (overnight) → Service runs 19:00-03:00 (next day)
      *  - If NOW is inside window: start service immediately and only schedule STOP.
      *  - Else: schedule both START and STOP.
-     * SIDE: Optionally (re)schedules the 5-min CALL_API alarm (one-shot; your receiver re-arms).
+     *
+     * SIDE: Optionally (re)schedules the 5-min CALL_API alarm (one-shot; receiver re-arms).
      */
     fun scheduleAlarms(
         context: Context,
@@ -83,7 +90,10 @@ object AlarmScheduler {
         if (todayShift != null && todayShift.start != null && todayShift.end != null) {
             Log.i(TAG, "========================================")
             Log.i(TAG, "📅 TODAY: $today (${LocalDate.now()})")
-            Log.i(TAG, "Today's Shift -> day:${todayShift.day}, start:${todayShift.start}, end:${todayShift.end}")
+            Log.i(TAG, "Shift configured: ${todayShift.start} - ${todayShift.end}")
+            Log.i(TAG, "⏰ ±1 HOUR BUFFER APPLIED:")
+            Log.i(TAG, "   • Service will START at: ${todayShift.start} - 1 hour")
+            Log.i(TAG, "   • Service will STOP at: ${todayShift.end} + 1 hour")
 
             // Check if this is an overnight shift
             val startHour = todayShift.start.split(":")[0].toInt()
@@ -91,6 +101,7 @@ object AlarmScheduler {
             val isOvernightShift = endHour < startHour
             Log.i(TAG, "🌙 Overnight shift: $isOvernightShift (start hour: $startHour, end hour: $endHour)")
 
+            // ✅ getCalendarForShift applies the ±1 hour buffer automatically
             // -1h for START, +1h for STOP
             val startCalendar = getCalendarForShift(todayShift.day, todayShift.start, -1, false)
             val endCalendar   = getCalendarForShift(todayShift.day, todayShift.end, 1, isOvernightShift)
@@ -113,15 +124,18 @@ object AlarmScheduler {
 
                 if (now in startCalendar.timeInMillis until endCalendar.timeInMillis) {
                     // Inside window → start immediately; only schedule STOP
-                    Log.i(TAG, "Inside window → starting service NOW, scheduling STOP at ${endCalendar.time}")
+                    Log.i(TAG, "✅ Inside window → starting service NOW, scheduling STOP at ${endCalendar.time}")
                     startServiceNow(context)
                     scheduleService(context, endCalendar, false)
                 } else {
                     // Outside window → schedule both START and STOP
-                    Log.i(TAG, "Outside window → scheduling START ${startCalendar.time} and STOP ${endCalendar.time}")
+                    Log.i(TAG, "⏭️ Outside window → scheduling START ${startCalendar.time} and STOP ${endCalendar.time}")
                     scheduleService(context, startCalendar, true)
                     scheduleService(context, endCalendar, false)
                 }
+
+                // ✅ DUAL REDUNDANCY: Schedule WorkManager as backup (survives device restrictions)
+                scheduleShiftWorkerBackup(context, startCalendar, endCalendar)
 
                 if (reschedulePeriodic) {
                     // Schedules one-shot CALL_API aligned to next 5-min mark (receiver re-arms)
@@ -293,6 +307,56 @@ object AlarmScheduler {
         }
     }
 
+    /**
+     * scheduleShiftWorkerBackup(...)
+     *
+     * DUAL REDUNDANCY - WorkManager Backup
+     * ═════════════════════════════════════
+     * WHY: Some devices (Samsung, Xiaomi, Oppo, etc.) may kill AlarmManager alarms
+     *      or prevent them from firing during doze mode.
+     *
+     * WHAT: Schedules a WorkManager task to check if service should start:
+     *  - Runs periodically (every 15 minutes minimum per Android restrictions)
+     *  - Checks if current time is within shift window (with ±1 hour buffer)
+     *  - Starts service if AlarmManager failed to trigger it
+     *
+     * APPROACH:
+     *  1. PRIMARY: AlarmManager (exact timing at shift start - 1 hour)
+     *  2. FALLBACK: WorkManager checks every 15min, starts if needed
+     */
+    private fun scheduleShiftWorkerBackup(
+        context: Context,
+        startCalendar: Calendar,
+        endCalendar: Calendar
+    ) {
+        try {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.NOT_REQUIRED) // Works offline
+                .setRequiresBatteryNotLow(false) // Works even on low battery
+                .build()
+
+            // ✅ Schedule periodic worker (minimum 15 minutes per Android)
+            val workRequest = PeriodicWorkRequestBuilder<ShiftStatusWorker>(
+                15, TimeUnit.MINUTES,
+                5, TimeUnit.MINUTES // Flex interval
+            )
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "ShiftStatusWorker",
+                ExistingPeriodicWorkPolicy.KEEP, // Keep existing if already scheduled
+                workRequest
+            )
+
+            Log.i(TAG, "✅ DUAL REDUNDANCY: WorkManager backup scheduled (15min interval)")
+            Log.i(TAG, "   • If AlarmManager fails, WorkManager will start service")
+            Log.i(TAG, "   • Shift window: ${startCalendar.time} to ${endCalendar.time}")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error scheduling WorkManager backup", e)
+        }
+    }
+
     private fun acquireWakeLock(context: Context) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakeLock = powerManager.newWakeLock(
@@ -305,11 +369,6 @@ object AlarmScheduler {
         }
     }
 
-    /**
-     * getNextFiveMinuteAlignedTime()
-     * WHAT: Returns epoch millis for the next exact 5-min boundary from now (sec/ms = 0).
-     * WHO: Used by schedulePeriodicAlarm().
-     */
     private fun getNextFiveMinuteAlignedTime(): Long {
         val now = Calendar.getInstance()
         val minutes = now.get(Calendar.MINUTE)
@@ -520,18 +579,6 @@ object AlarmScheduler {
             )
         }
 
-      /*  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
-            val showIntent = PendingIntent.getActivity(
-                context, 0,
-                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                    data = Uri.parse("package:${context.packageName}")
-                },
-                PendingIntent.FLAG_IMMUTABLE
-            )
-            am.setAlarmClock(AlarmManager.AlarmClockInfo(calendar.timeInMillis, showIntent), pi)
-        } else {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pi)
-        }*/
     }
 
     /**
@@ -558,6 +605,4 @@ object AlarmScheduler {
         cancelServiceAlarmByCode(context, "STOP_SERVICE", 1102)
     }
 }
-
-
 

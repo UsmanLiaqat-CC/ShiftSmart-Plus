@@ -20,6 +20,38 @@ import java.time.LocalDate
 import java.util.Calendar
 import java.util.Locale
 
+/**
+ * ShiftStatusWorker - DUAL REDUNDANCY FALLBACK
+ * ══════════════════════════════════════════════
+ *
+ * PURPOSE: Acts as a backup when AlarmManager fails to trigger on some devices
+ *
+ * SHIFT TIMING WITH ±1 HOUR BUFFER:
+ * ─────────────────────────────────
+ * • If shift is 08:00-18:00 → Check window is 07:00-19:00
+ * • If shift is 20:00-02:00 (overnight) → Check window is 19:00-03:00 (next day)
+ *
+ * HOW IT WORKS:
+ * ────────────
+ * 1. Scheduled every 15 minutes by WorkManager (Android minimum)
+ * 2. Checks if current time is within shift window (using ShiftUtils.isTimeWithinBufferRange)
+ * 3. If inside shift AND service not running → Start service
+ * 4. If outside shift AND service running → Stop service
+ *
+ * DUAL APPROACH:
+ * ──────────────
+ * • PRIMARY: AlarmManager schedules at exact shift start time (shift - 1 hour)
+ * • FALLBACK: This worker runs every 15min, checks shift window, starts if missed
+ *
+ * EXAMPLE SCENARIO:
+ * ────────────────
+ * Shift: Monday 08:00 - 18:00
+ * • AlarmManager should fire: Monday 07:00 (shift start - 1 hour)
+ * • If AlarmManager fails (device killed it):
+ *   - Worker runs at 07:15, detects inside window (07:00-19:00), starts service
+ *   - Worker runs at 07:30, detects service already running, no action
+ * • Service stops: Monday 19:00 (shift end + 1 hour)
+ */
 class ShiftStatusWorker(
     context: Context,
     workerParams: WorkerParameters

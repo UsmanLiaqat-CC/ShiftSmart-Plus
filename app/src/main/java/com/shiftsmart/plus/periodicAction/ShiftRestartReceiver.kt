@@ -8,6 +8,7 @@ import android.util.Log
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.SharedPref
+import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import java.time.LocalDate
@@ -74,22 +75,17 @@ class ShiftRestartReceiver : BroadcastReceiver() {
                 return false
             }
 
-            val now = java.time.LocalTime.now()
-            val shiftStart = Utils.parseFlexibleTime(todayShift.start)
-            val shiftEnd = Utils.parseFlexibleTime(todayShift.end)
+            // ✅ Use ShiftUtils to apply ±1 hour buffer
+            // If shift is 08:00-18:00, service runs 07:00-19:00
+            // If shift is overnight 20:00-04:00, service runs 19:00-05:00 (next day)
+            val now = java.util.Calendar.getInstance()
+            val isInShift = ShiftUtils.isTimeWithinBufferRange(
+                now,
+                todayShift.start,
+                todayShift.end
+            )
 
-            if (shiftStart == null || shiftEnd == null) {
-                Log.e(TAG, "❌ Failed to parse shift times")
-                return false
-            }
-
-            val isInShift = if (shiftEnd.isBefore(shiftStart)) {
-                now.isAfter(shiftStart) || now.isBefore(shiftEnd)
-            } else {
-                now.isAfter(shiftStart) && now.isBefore(shiftEnd)
-            }
-
-            Log.i(TAG, "🕐 Current: $now, Shift: $shiftStart-$shiftEnd, Inside: $isInShift")
+            Log.i(TAG, "🕐 Shift: ${todayShift.start}-${todayShift.end} (with ±1h buffer), Inside: $isInShift")
             return isInShift
 
         } catch (e: Exception) {

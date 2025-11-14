@@ -118,12 +118,12 @@ object Utils {
             when (colonCount) {
                 1 -> {
                     // Format is HH:mm
-                    val formatterWithoutSeconds = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+                    val formatterWithoutSeconds = DateTimeFormatter.ofPattern("HH:mm")
                     java.time.LocalTime.parse(timeString, formatterWithoutSeconds)
                 }
                 2 -> {
                     // Format is HH:mm:ss
-                    val formatterWithSeconds = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+                    val formatterWithSeconds = DateTimeFormatter.ofPattern("HH:mm:ss")
                     java.time.LocalTime.parse(timeString, formatterWithSeconds)
                 }
                 else -> {

@@ -84,6 +84,29 @@ object ShiftUtils {
         return inside
     }
 
+    /**
+     * getCalendarForShift(...)
+     *
+     * Builds a Calendar for a specific day and time with buffer offset applied.
+     *
+     * ±1 HOUR BUFFER APPLICATION:
+     * ═══════════════════════════
+     * • offsetHours = -1: Shift START (1 hour before actual start)
+     * • offsetHours = +1: Shift END (1 hour after actual end)
+     *
+     * OVERNIGHT SHIFT HANDLING:
+     * ════════════════════════
+     * • isEndOfOvernightShift = true: Adds 1 day to end time
+     * • Example: Monday 20:00 - Tuesday 02:00
+     *   - START: getCalendarForShift("Monday", "20:00", -1, false) → Monday 19:00
+     *   - END: getCalendarForShift("Monday", "02:00", +1, true) → Tuesday 03:00
+     *
+     * @param dayName Day of week (e.g., "Monday", "Tuesday")
+     * @param time Time in HH:mm format (e.g., "08:00")
+     * @param offsetHours Hours to add/subtract for buffer (-1 for start, +1 for end)
+     * @param isEndOfOvernightShift true if this is the end time of an overnight shift
+     * @return Calendar set to the calculated date/time with buffer applied
+     */
     fun getCalendarForShift(
         dayName: String,
         time: String,

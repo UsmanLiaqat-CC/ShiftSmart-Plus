@@ -151,8 +151,6 @@ class MyService : Service() {
         initializeComponents()
         registerReceivers()
         checkBatteryOptimizations()
-
-
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int
@@ -332,173 +330,6 @@ class MyService : Service() {
 
 
 
-    // for version 8
-/*    *//**
-     * checkAndMaintainService handles both regular checks and missing record insertion.
-     * When called from AlarmReceiver with parameters, it inserts missing records at exact times.
-     *//*
-    private fun checkAndMaintainService() {
-
-        val today = LocalDate.now()
-
-        if (lastCheckDate != null && today.isAfter(lastCheckDate)) {
-            Log.i(TAG, "🕛 Day changed → forcing midnight sync.")
-             updateForegroundNotification(this, "Day changed - Syncing data...")
-            forceMidnightSync()
-        }
-        lastCheckDate = today
-
-        val user = SharedPref.getInstance(this)?.getUser()
-        if (user == null) {
-            Log.e(TAG, "❌ No user found - Stopping service")
-           updateForegroundNotification(this, "No user - Service stopping...")
-            finishServiceOperations()
-            return
-        }
-
-        val isInsideShift = attendanceSyncManager.shouldRunCheck(user)
-        if (!isInsideShift) {
-            Log.d(TAG, "❌ Off-shift - Stopping service")
-            updateForegroundNotification(this, "Off-shift - Service stopping...")
-            finishServiceOperations()
-            return
-        }
-
-        updateForegroundNotification(this, "📝 Tracking attendance...")
-
-
-        serviceScope.launch {
-            Log.i(TAG, "✅ Inserting current record at ${Utils.getCurrent24HourTime()}")
-            startLocationFetch()
-        }
-    }
-
-    private fun startLocationFetch() {
-        if (!locationHelper.hasLocationPermissions()) {
-            Log.w(TAG, "MrXXX: Location permission not granted — skipping location fetch")
-            maybeTriggerApiCall()
-            return
-        }
-
-        serviceScope.launch {
-            try {
-                val freshLatLng = locationHelper.fetchFreshLocation()
-                Log.i(TAG, "MrXXX: Fresh location obtained: ${freshLatLng.latitude}, ${freshLatLng.longitude} at: ${Utils.getCurrentDateTime()}")
-                maybeTriggerApiCall()
-            } catch (e: Exception) {
-                Log.e(TAG, "MrXXX: Failed to fetch location", e)
-                maybeTriggerApiCall()
-            }
-        }
-    }
-
-    *//**
-     * Creates a new attendance record and passes it to AttendanceSyncManager.
-     * The manager handles all validation, gap filling, duplicate checking, and syncing.
-     * If off-shift is detected, the service will be stopped.
-     *//*
-    private fun maybeTriggerApiCall() {
-        serviceScope.launch {
-            try {
-
-                val now = Calendar.getInstance()
-                val minute = now.get(Calendar.MINUTE)
-                val remainder = minute % 5
-
-                if (remainder != 0) {
-                    val nextBoundary = (5 - remainder)
-                    val nextAligned = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(
-                        Calendar.getInstance().apply {
-                            add(Calendar.MINUTE, nextBoundary)
-                            set(Calendar.SECOND, 0)
-                            set(Calendar.MILLISECOND, 0)
-                        }.time
-                    )
-
-                    Log.w(TAG, "⏭️ Current time ${minute}m not aligned — skipping API call, next boundary $nextAligned")
-                    return@launch  // ⛔ Skip record creation and API sync
-                }
-
-                // ✅ Proceed only if current time is aligned (multiple of 5)
-                val user = SharedPref.getInstance(this@MyService)?.getUser()
-                if (user == null) {
-                    Log.e(TAG, "❌ No user found, skipping record save")
-                    return@launch
-                }
-
-
-                // ✅ Use the aligned timestamp passed from AlarmReceiver
-                val alignedTimestamp = currentIntent?.getLongExtra("ALIGNED_TIMESTAMP", 0L) ?: 0L
-
-                val recordCalendar = if (alignedTimestamp > 0) {
-                    Calendar.getInstance().apply { timeInMillis = alignedTimestamp }
-                } else {
-                    // Fallback: calculate aligned time locally if not provided
-                    Calendar.getInstance().apply {
-                        val currentMinute = get(Calendar.MINUTE)
-                        val alignedMinute = (currentMinute / 5) * 5
-                        set(Calendar.MINUTE, alignedMinute)
-                        set(Calendar.SECOND, 0)
-                        set(Calendar.MILLISECOND, 0)
-                    }
-                }
-
-                // Format the aligned time
-                val localTimeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-                val alignedLocalTime = localTimeFormatter.format(recordCalendar.time)
-
-                val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                    timeZone = TimeZone.getTimeZone("UTC")
-                }
-                val alignedUtcTime = utcFormatter.format(recordCalendar.time)
-
-                Log.i(TAG, "⏰ Using aligned timestamp: $alignedLocalTime (from ${if (alignedTimestamp > 0) "AlarmReceiver" else "fallback"})")
-
-                // Create record with ALIGNED time
-                val record = RecordModel(
-                    uuid = Utils.generateRandomUuid(),
-                    user_id = user._id.toString(),
-                    lat = locationHelper.lastLocation.latitude,
-                    lng = locationHelper.lastLocation.longitude,
-                    localTime = alignedLocalTime,  // ✅ Aligned to 5-min boundary
-                    time = alignedUtcTime,          // ✅ Aligned UTC time
-                    attendanceType = StatusEnum.default.name,
-                    attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
-                    isForceAttendance = false,
-                    isLocation = locationHelper.hasLocationPermissions(),
-                    wifiService = wifiManager.isWifiEnabled,
-                    dataService = Utils.isMobileDataEnabled(this@MyService),
-                    notification = Utils.isNotificationPermissionGranted(this@MyService),
-                    batterySaver = !Utils.isBatterySaverOn(this@MyService),
-                    batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiScanResults.toList()
-                )
-
-                Log.i(TAG, "📝 Created record at ${record.localTime} (UTC: ${record.time})")
-
-                // ✅ AttendanceSyncManager handles:
-                // 1. Shift validation (checks if time is within shift window)
-                // 2. Duplicate checking (prevents same UTC time records)
-                // 3. Gap filling (inserts missing 5-minute interval records)
-                // 4. Database insertion
-                // 5. API sync (if internet available)
-                val isInsideShift = attendanceSyncManager.saveRecordLocally(record, user)
-
-                if (isInsideShift) {
-                    Log.i(TAG, "✅ Record saved successfully - Service continues")
-                } else {
-                    Log.w(TAG, "⚠️ Off-shift detected - Stopping service")
-                    updateForegroundNotification(this@MyService, "Off-shift - Service stopping...")
-                    finishServiceOperations()
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error creating record", e)
-            }
-        }
-    }*/
-
-
 // In MyService.kt
 
     private fun checkAndMaintainService(
@@ -532,19 +363,19 @@ class MyService : Service() {
 
         updateForegroundNotification(this, "📝 Tracking attendance...")
 
-        // ✅ Use Handler instead of coroutine scope for critical operations
-        Handler(Looper.getMainLooper()).post {
-            Thread {
-                try {
-                    Log.i(TAG, "✅ Starting location fetch on background thread")
-                    startLocationFetchSync() // Synchronous version
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error in checkAndMaintainService", e)
-                    // Fallback: try to save record without location
-                    maybeTriggerApiCallSync()
-                }
-            }.start()
+        // ✅ Execute directly on background thread without Handler wrapper
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                Log.i(TAG, "✅ Starting location fetch on IO dispatcher")
+                startLocationFetchSync()
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error in checkAndMaintainService", e)
+                updateForegroundNotification(this@MyService, "Error tracking - retrying...")
+                // Fallback: try to save record without location
+                maybeTriggerApiCallSync()
+            }
         }
+
     }
 
     // Add synchronous version of location fetch
@@ -610,22 +441,20 @@ class MyService : Service() {
 
             Log.i(TAG, "📝 Created record at ${record.localTime}")
 
-            // Run on IO thread pool
-            Thread {
-                // In maybeTriggerApiCallSync()
+            serviceScope.launch(Dispatchers.IO) {
                 attendanceSyncManager.saveRecordLocally(record, user) { isInsideShift ->
                     if (isInsideShift) {
                         Log.i(TAG, "✅ Record saved successfully")
+                        updateForegroundNotification(this@MyService, "Data stored at ${Utils.getCurrentDateTime()}")
                     } else {
                         Log.w(TAG, "⚠️ Off-shift detected - Stopping service")
-                        Handler(Looper.getMainLooper()).post {
-                            updateForegroundNotification(this@MyService, "Off-shift - Service stopping...")
-                            finishServiceOperations()
-                        }
+                        updateForegroundNotification(this@MyService, "Off-shift - Service stopping...")
+                        finishServiceOperations()
                     }
                 }
+            }
 
-            }.start()
+
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error creating record", e)
