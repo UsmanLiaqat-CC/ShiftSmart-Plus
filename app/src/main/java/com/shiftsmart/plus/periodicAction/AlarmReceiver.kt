@@ -11,6 +11,7 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
+import com.shiftsmart.plus.models.UserModel
 
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.ui.activities.WakeUpActivity
@@ -83,7 +84,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
                     // Check if we're inside shift before starting
                     val user = SharedPref.getInstance(context)?.getUser()
-                    if (user != null && isInsideShiftWindow(context, user)) {
+                    if (user != null && isInsideShiftWindow(user)) {
                         Log.i("AlarmReceiver", "✅ Inside shift - starting service")
 
                         val wakeIntent = Intent(context, WakeUpActivity::class.java).apply {
@@ -125,162 +126,121 @@ class AlarmReceiver : BroadcastReceiver() {
                         return
                     }
 
+                    // ✅ Check if we're inside shift window before processing
+                    if (!isInsideShiftWindow( user)) {
+                        Log.i("AlarmReceiver", "⏭️ Outside shift window - skipping CALL_API")
+                        scheduleNextAlignedAlarm(context)
+                        return
+                    }
+
+                    Log.i("AlarmReceiver", "✅ Inside shift window - processing CALL_API")
+
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            val db = ShiftSmartPlusDatabase.getInstance(context)
-                            val dao = db.dbDao()
                             val sharedPref = SharedPref.getInstance(context)
 
                             val currentTime = Calendar.getInstance()
                             val currentMinute = currentTime.get(Calendar.MINUTE)
+                            val currentSecond = currentTime.get(Calendar.SECOND)
 
-                            // ✅ STRICT: Only process if current minute is EXACTLY on a 5-minute boundary
+                            Log.i(
+                                "AlarmReceiver",
+                                "📍 Processing at: ${Utils.getCurrent24HourTime()} (minute: $currentMinute, second: $currentSecond)"
+                            )
+
+                            // ✅ STRICT BOUNDARY CHECK: Only process if current time is on 5-minute boundary
                             if (currentMinute % 5 != 0) {
                                 Log.w("AlarmReceiver", "⏭️ Current time NOT on 5-min boundary (${currentMinute}m) → skipping and rescheduling")
-                                scheduleNextAlignedAlarm(context)
+
+                                // Calculate next 5-minute boundary
+                                val nextBoundaryMinute = ((currentMinute / 5) + 1) * 5
+                                val nextBoundaryTime = Calendar.getInstance().apply {
+                                    if (nextBoundaryMinute >= 60) {
+                                        add(Calendar.HOUR_OF_DAY, 1)
+                                        set(Calendar.MINUTE, 0)
+                                    } else {
+                                        set(Calendar.MINUTE, nextBoundaryMinute)
+                                    }
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }
+
+                                val nextTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(nextBoundaryTime.time)
+                                Log.i("AlarmReceiver", "⏰ Scheduling next alarm at: $nextTimeStr")
+
+                                // Schedule alarm at the exact next 5-minute boundary and CANCEL any existing ones
+                                scheduleAtExactTime(context, nextBoundaryTime.timeInMillis)
                                 return@launch
                             }
 
-                            // ✅ Always normalize to current 5-min boundary
+                            Log.i("AlarmReceiver", "✅ On 5-minute boundary - proceeding with API call")
+
+                            // ✅ Normalize to current 5-min boundary for record timestamp
                             val targetTime = Calendar.getInstance().apply {
                                 set(Calendar.MINUTE, currentMinute)
                                 set(Calendar.SECOND, 0)
                                 set(Calendar.MILLISECOND, 0)
                             }
 
-                            val targetLocalTime = LocalTime.of(
-                                targetTime.get(Calendar.HOUR_OF_DAY),
-                                targetTime.get(Calendar.MINUTE),
-                                0
-                            )
-
-                            Log.i(
-                                "AlarmReceiver",
-                                "📍 Target 5-min boundary: $targetLocalTime (Current: ${Utils.getCurrent24HourTime()})"
-                            )
-
-                            // ✅ STEP 1: Ensure current time is within active shift
-                            val today = LocalDate.now()
-                            val activeMulti = user.multipleTimeTables?.find { mt ->
-                                val s = mt.startDate.toLocalDate()
-                                val e = mt.endDate.toLocalDate()
-                                today in s..e
-                            }
-                            val effectiveRange = activeMulti?.timetable?.range ?: user.timetable?.range
-
-                            if (effectiveRange != null) {
-                                val todayName = targetTime.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
-                                val yesterdayCalendar = targetTime.clone() as Calendar
-                                yesterdayCalendar.add(Calendar.DAY_OF_YEAR, -1)
-                                val yesterdayName = yesterdayCalendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
-
-                                val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
-                                val yesterdayShift = effectiveRange.find { it.day.equals(yesterdayName, ignoreCase = true) }
-
-                                var isWithinShift = false
-                                if (todayShift?.start != null && todayShift.end != null) {
-                                    isWithinShift = com.shiftsmart.plus.utils.ShiftUtils.isTimeWithinBufferRange(
-                                        targetTime,
-                                        todayShift.start,
-                                        todayShift.end
-                                    )
-                                }
-                                if (!isWithinShift && yesterdayShift?.start != null && yesterdayShift.end != null) {
-                                    isWithinShift = com.shiftsmart.plus.utils.ShiftUtils.isTimeWithinBufferRange(
-                                        targetTime,
-                                        yesterdayShift.start,
-                                        yesterdayShift.end,
-                                        -1
-                                    )
-                                }
-
-                                if (!isWithinShift) {
-                                    Log.i("AlarmReceiver", "⏭️ Outside shift period - skipping record insertion")
-                                    scheduleNextAlignedAlarm(context)
-                                    return@launch
-                                }
-
-                                Log.i("AlarmReceiver", "✅ Within shift period - proceeding")
-                            }
-
-                            // ✅ STEP 2: Get last recorded timestamp (DB → SharedPref fallback)
+                            // ✅ STEP 1: Get last recorded timestamp from SharedPref only
                             val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
-                            val lastSyncDateTime = sharedPref?.getLastSyncDateTime()
-                            val latestDefaultRecord = dao.getLatestDefaultRecord(user._id.toString())
 
-                            val (lastRecordTime, lastRecordTimestamp) = when {
-                                latestDefaultRecord?.localTime != null && latestDefaultRecord.time != null -> {
-                                    try {
-                                        val time = Utils.parseFlexibleTime(latestDefaultRecord.localTime)
-                                        val utcFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
-                                        utcFormatter.timeZone = TimeZone.getTimeZone("UTC")
-                                        val utcDate = utcFormatter.parse(latestDefaultRecord.time)
+                            if (lastSyncTimestamp == 0L) {
+                                // ✅ SCENARIO 1: No last record → Fresh start
+                                Log.i("AlarmReceiver", "🆕 No previous record found — starting fresh")
 
-                                        if (time != null && utcDate != null) {
-                                            val localCal = Calendar.getInstance().apply { timeInMillis = utcDate.time }
-                                            Log.i("AlarmReceiver", "📌 Using last DB record: ${latestDefaultRecord.localTime}")
-                                            Pair(time, localCal.timeInMillis)
-                                        } else Pair(null, 0L)
-                                    } catch (e: Exception) {
-                                        Log.e("AlarmReceiver", "Failed to parse DB record: ${e.message}")
-                                        Pair(null, 0L)
-                                    }
-                                }
-
-                                lastSyncTimestamp > 0L -> {
-                                    val lastCal = Calendar.getInstance().apply { timeInMillis = lastSyncTimestamp }
-                                    val time = LocalTime.of(lastCal.get(Calendar.HOUR_OF_DAY), lastCal.get(Calendar.MINUTE), 0)
-                                    Log.i("AlarmReceiver", "📌 Using SharedPref fallback: $lastSyncDateTime")
-                                    Pair(time, lastSyncTimestamp)
-                                }
-
-                                else -> Pair(null, 0L)
-                            }
-
-// ✅ STEP 3: Strict 5-minute gap enforcement
-                            if (lastRecordTime != null && lastRecordTimestamp > 0L) {
-                                // Calculate exact time difference
-                                val currentTimestamp = targetTime.timeInMillis
-                                val gapMillis = currentTimestamp - lastRecordTimestamp
-                                val minutesDiff = (gapMillis / (60 * 1000)).toInt()
-
-                                Log.i("AlarmReceiver", "⏱️ Last sync: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(lastRecordTimestamp))}")
-                                Log.i("AlarmReceiver", "⏱️ Current: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(currentTimestamp))}")
-                                Log.i("AlarmReceiver", "⏱️ Gap: $minutesDiff minutes")
-
-                                // ✅ STRICT: Only proceed if gap is EXACTLY a multiple of 5 minutes AND >= 5
-                                if (minutesDiff >= 5 && minutesDiff % 5 == 0) {
-                                    Log.i("AlarmReceiver", "✅ Gap is valid (${minutesDiff} min) — calling API")
-
-                                    val apiIntent = Intent(context, MyService::class.java).apply {
-                                        action = MyService.ACTION_CALL_API
-                                    }
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                        context.startForegroundService(apiIntent)
-                                    else context.startService(apiIntent)
-                                } else if (minutesDiff < 5) {
-                                    Log.w("AlarmReceiver", "⏸️ Gap too small ($minutesDiff min < 5) → skipping")
-                                } else {
-                                    // Gap is not a multiple of 5 - need to realign
-                                    Log.w("AlarmReceiver", "⚠️ Gap not multiple of 5 ($minutesDiff min) → realigning")
-
-                                    // Calculate next valid time (multiple of 5 from last sync)
-                                    val nextValidMinutes = ((minutesDiff / 5) + 1) * 5
-                                    val nextValidTime = lastRecordTimestamp + (nextValidMinutes * 60 * 1000)
-
-                                    Log.w("AlarmReceiver", "⏭️ Rescheduling to: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(nextValidTime))}")
-                                    rescheduleAlarmAtSpecificTime(context, nextValidTime)
-                                    return@launch
-                                }
-                            } else {
-                                // ✅ No previous record → insert first record
-                                Log.i("AlarmReceiver", "🆕 No previous record found — inserting first one")
                                 val apiIntent = Intent(context, MyService::class.java).apply {
                                     action = MyService.ACTION_CALL_API
                                 }
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                                     context.startForegroundService(apiIntent)
                                 else context.startService(apiIntent)
+
+                            } else {
+                                // ✅ SCENARIO 2: Last record exists - check gap
+                                val currentTimestamp = targetTime.timeInMillis
+                                val gapMillis = currentTimestamp - lastSyncTimestamp
+                                val minutesDiff = (gapMillis / (60 * 1000)).toInt()
+
+                                Log.i("AlarmReceiver", "⏱️ Last sync: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(lastSyncTimestamp))}")
+                                Log.i("AlarmReceiver", "⏱️ Current: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(currentTimestamp))}")
+                                Log.i("AlarmReceiver", "⏱️ Gap: $minutesDiff minutes")
+
+                                when {
+                                    minutesDiff < 5 -> {
+                                        // Gap is less than 5 minutes - skip
+                                        Log.w("AlarmReceiver", "⏸️ Gap too small ($minutesDiff min < 5) → skipping")
+                                    }
+
+                                    minutesDiff % 5 == 0 -> {
+                                        // Gap is exactly a multiple of 5 (5, 10, 15, 20...) - call API
+                                        Log.i("AlarmReceiver", "✅ Gap is valid multiple of 5 ($minutesDiff min) — calling API")
+
+                                        val apiIntent = Intent(context, MyService::class.java).apply {
+                                            action = MyService.ACTION_CALL_API
+                                        }
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                            context.startForegroundService(apiIntent)
+                                        else context.startService(apiIntent)
+                                    }
+
+                                    else -> {
+                                        // Gap is >= 5 but NOT a multiple of 5 (e.g., 6, 7, 11, 13...)
+                                        // Skip and schedule at next aligned time
+                                        Log.w("AlarmReceiver", "⚠️ Gap not aligned ($minutesDiff min) → skipping to next aligned time")
+
+                                        // Calculate next valid time: next multiple of 5 from last sync
+                                        val nextValidMinutes = ((minutesDiff / 5) + 1) * 5
+                                        val nextValidTime = lastSyncTimestamp + (nextValidMinutes * 60 * 1000)
+
+                                        val nextTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(nextValidTime))
+                                        Log.i("AlarmReceiver", "⏭️ Next aligned time: $nextTimeStr (${nextValidMinutes} min from last sync)")
+
+                                        // Schedule alarm at the next aligned time
+                                        scheduleAtExactTime(context, nextValidTime)
+                                        return@launch
+                                    }
+                                }
                             }
 
 
@@ -309,7 +269,7 @@ class AlarmReceiver : BroadcastReceiver() {
          * If shift is overnight 20:00-04:00, service runs 19:00-05:00 (next day)
          */
         @JvmStatic
-        private fun isInsideShiftWindow(context: Context, user: com.shiftsmart.plus.models.UserModel): Boolean {
+        fun isInsideShiftWindow( user: UserModel): Boolean {
             return try {
                 val today = LocalDate.now()
                 val activeMulti = user.multipleTimeTables?.find { mt ->
@@ -319,18 +279,49 @@ class AlarmReceiver : BroadcastReceiver() {
                 }
                 val effectiveRange = activeMulti?.timetable?.range ?: user.timetable?.range ?: return false
 
-                val todayName = Utils.getCurrentDayName()
+                val now = Calendar.getInstance()
+
+                // ✅ Check today's shift
+                val todayName = now.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
                 val todayShift = effectiveRange.find { it.day.equals(todayName, ignoreCase = true) }
 
-                if (todayShift?.start == null || todayShift.end == null) return false
+                var isWithinShift = false
 
-                // ✅ Use ShiftUtils to apply ±1 hour buffer
-                val now = Calendar.getInstance()
-                ShiftUtils.isTimeWithinBufferRange(
-                    now,
-                    todayShift.start,
-                    todayShift.end
-                )
+                if (todayShift?.start != null && todayShift.end != null) {
+                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(
+                        now,
+                        todayShift.start,
+                        todayShift.end,
+                        0 // Today
+                    )
+                    if (isWithinShift) {
+                        Log.i("AlarmReceiver", "✅ Within today's shift (${todayName})")
+                        return true
+                    }
+                }
+
+                // ✅ Check yesterday's shift (for overnight shifts)
+                val yesterdayCalendar = now.clone() as Calendar
+                yesterdayCalendar.add(Calendar.DAY_OF_YEAR, -1)
+                val yesterdayName = yesterdayCalendar.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.LONG, Locale.ENGLISH) ?: ""
+                val yesterdayShift = effectiveRange.find { it.day.equals(yesterdayName, ignoreCase = true) }
+
+                if (yesterdayShift?.start != null && yesterdayShift.end != null) {
+                    isWithinShift = ShiftUtils.isTimeWithinBufferRange(
+                        now,
+                        yesterdayShift.start,
+                        yesterdayShift.end,
+                        -1 // Yesterday
+                    )
+                    if (isWithinShift) {
+                        Log.i("AlarmReceiver", "✅ Within yesterday's overnight shift (${yesterdayName})")
+                        return true
+                    }
+                }
+
+                Log.i("AlarmReceiver", "❌ Not within any shift window")
+                false
+
             } catch (e: Exception) {
                 Log.e("AlarmReceiver", "❌ Error checking shift window", e)
                 false
@@ -397,6 +388,54 @@ class AlarmReceiver : BroadcastReceiver() {
         }
 
         /**
+         * scheduleAtExactTime(...)
+         * WHEN: When alarm triggers but is not on 5-minute boundary
+         * WHAT: Cancels ALL existing CALL_API alarms and schedules ONE alarm at exact target time
+         * WHY: Prevents infinite retriggering loop
+         */
+        @JvmStatic
+        fun scheduleAtExactTime(context: Context, targetTimestamp: Long) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, AlarmReceiver::class.java).apply { action = "CALL_API" }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                1234,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            // ✅ CRITICAL: Cancel any existing alarms to prevent retriggering
+            alarmManager.cancel(pendingIntent)
+            Log.i("AlarmReceiver", "🚫 Cancelled existing CALL_API alarms")
+
+            // ✅ Schedule ONE alarm at exact target time
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        targetTimestamp,
+                        pendingIntent
+                    )
+                } else {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        targetTimestamp,
+                        pendingIntent
+                    )
+                }
+            } else {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    targetTimestamp,
+                    pendingIntent
+                )
+            }
+
+            val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(targetTimestamp))
+            Log.i("AlarmReceiver", "✅ Single CALL_API alarm scheduled at: $timeStr")
+        }
+
+        /**
          * rescheduleAlarmAtSpecificTime(...)
          * WHEN: When current alarm time is not aligned with last sync time (not a multiple of 5 minutes)
          * WHAT: Cancels existing CALL_API PI and schedules alarm at the exact time that aligns with last sync
@@ -451,3 +490,4 @@ class AlarmReceiver : BroadcastReceiver() {
 
     }
 }
+

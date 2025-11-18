@@ -254,7 +254,7 @@ object ShiftRestartAlarmManager {
      */
     private fun scheduleWorkManagerBackup(context: Context, delayMillis: Long) {
         try {
-            val workRequest = OneTimeWorkRequestBuilder<ShiftStartWorker>()
+            val workRequest = OneTimeWorkRequestBuilder<ShiftStartOneTimeWorker>()
                 .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
                 .addTag(WORK_NAME_SHIFT_START)
                 .build()

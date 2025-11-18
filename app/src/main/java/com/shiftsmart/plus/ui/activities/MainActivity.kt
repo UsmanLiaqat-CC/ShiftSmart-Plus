@@ -32,6 +32,7 @@ import com.shiftsmart.plus.databinding.ActivityMainBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.databinding.LogoutDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.periodicAction.ServiceHealthWorkerManager
 import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.FingerprintHelper
@@ -182,6 +183,10 @@ class MainActivity : AppCompatActivity() {
                             defaultShifts = defaultShifts!!,
                             multipleTimeTables = multiTimeTables!!
                         )
+
+                        // ✅ Start 15-minute periodic health check worker
+                        ServiceHealthWorkerManager.schedulePeriodicHealthCheck(this)
+                        Log.i(TAG, "✅ Periodic health check worker scheduled")
                     }
 
                 }
@@ -220,6 +225,11 @@ class MainActivity : AppCompatActivity() {
             user?.let {
                 FirebaseMessaging.getInstance().unsubscribeFromTopic(it?._id.toString())
             }
+
+            // ✅ Cancel periodic health check worker
+            ServiceHealthWorkerManager.cancelPeriodicHealthCheck(this@MainActivity)
+            Log.i(TAG, "✅ Periodic health check worker cancelled on logout")
+
             FingerprintHelper.setFingerprintEnabled(this@MainActivity, false)
             SharedPref.getInstance(this@MainActivity)?.clearLastSyncTime() // Clear sync timestamps
             SharedPref.getInstance(this@MainActivity)?.clearPrefrence()
@@ -553,6 +563,10 @@ class MainActivity : AppCompatActivity() {
                 user.timetable?.range?.let {
                     AlarmScheduler.scheduleAlarms(this, it,user.multipleTimeTables!!)
                     Log.i(TAG, "startMyService: Alarms scheduled with range = ${it}")
+
+                    // ✅ Start 15-minute periodic health check worker
+                    ServiceHealthWorkerManager.schedulePeriodicHealthCheck(this)
+                    Log.i(TAG, "✅ Periodic health check worker scheduled (offline mode)")
                 }
             }
         }

@@ -15,115 +15,157 @@ import com.shiftsmart.plus.utils.Utils.toLocalDate
 import java.time.LocalDate
 
 /**
- * WorkManager Worker that acts as a BACKUP mechanism to start the service
- * when shift begins. This runs as a fallback if AlarmManager fails due to
- * aggressive battery optimization on some devices.
+ * ⏰ PERIODIC SERVICE HEALTH MONITOR (Every 15 Minutes)
  *
- * This provides redundancy to ensure service starts even on:
- * - Xiaomi/MIUI devices with strict battery optimization
- * - Samsung devices with aggressive Doze mode
- * - Other manufacturers that may delay/cancel AlarmManager
+ * PURPOSE:
+ * ════════
+ * Acts as a watchdog to ensure MyService stays running during shift hours.
+ * Runs every 15 minutes to detect and recover from service failures caused by:
+ * - Device entering Doze mode
+ * - Manufacturer battery optimization killing the service
+ * - Service crashes or unexpected stops
+ *
+ * APPROACH:
+ * ═════════
+ * 1. Check if current time is within shift (including overnight shifts)
+ * 2. Verify if service is actually running (not just isServiceRunning flag)
+ * 3. If service should be running but isn't → Restart it
+ * 4. Use multiple detection methods to avoid false positives
+ *
+ * DOZE MODE HANDLING:
+ * ══════════════════
+ * - Uses WorkManager which has better Doze survival than AlarmManager
+ * - Runs as PeriodicWorkRequest with 15-minute intervals
+ * - Flex interval allows system to batch work for battery efficiency
+ * - setRequiredNetworkType(NOT_REQUIRED) to run even without internet
+ *
+ * WHY 15 MINUTES:
+ * ══════════════
+ * - Minimum interval for PeriodicWorkRequest is 15 minutes (Android restriction)
+ * - Frequent enough to catch service failures quickly
+ * - Infrequent enough to not drain battery
  */
-class ShiftStartWorker(
+class ServiceHealthWorker(
     context: Context,
     workerParams: WorkerParameters
 ) : Worker(context, workerParams) {
 
-    private val TAG = "ShiftStartWorker"
+    private val TAG = "ServiceHealthWorker"
 
     override fun doWork(): Result {
-        Log.i(TAG, "⏰ WorkManager triggered for shift check at ${Utils.getCurrentDateTime()}")
+        Log.i(TAG, "⏰ 15-min health check at ${Utils.getCurrentDateTime()}")
 
         val user = SharedPref.getInstance(applicationContext)?.getUser()
         if (user == null) {
-            Log.e(TAG, "❌ No user found, cannot check shift status")
+            Log.e(TAG, "❌ No user found - cannot check shift status")
             return Result.failure()
         }
 
-        // Check if we're currently in shift time
-        val shouldStartService = isInsideShiftWindow(user)
+        // ✅ Check if we're currently within shift window (handles overnight shifts)
+        val isInsideShift = AlarmReceiver.isInsideShiftWindow(user)
 
-        if (shouldStartService) {
-            // Check if service is already running
-            val isServiceRunning = Utils.isServiceRunning(applicationContext, MyService::class.java)
+        if (isInsideShift) {
+            Log.i(TAG, "✅ Currently INSIDE shift window")
 
-            if (isServiceRunning) {
-                Log.i(TAG, "✅ Service already running - WorkManager backup not needed")
+            // ✅ Check if service is actually running (robust detection)
+            val isServiceActuallyRunning = isServiceReallyRunning()
+
+            if (isServiceActuallyRunning) {
+                Log.i(TAG, "✅ Service confirmed running - all good")
             } else {
-                Log.i(TAG, "🚨 Service NOT running but should be - Starting via WorkManager BACKUP")
-                startMyService()
+                Log.w(TAG, "🚨 Service NOT running but should be - Restarting service!")
+                restartService()
             }
         } else {
-            Log.i(TAG, "⏭️ Outside shift window - no action needed")
-        }
+            Log.i(TAG, "⏭️ Currently OUTSIDE shift window - no action needed")
 
-        // Always reschedule next alarm/worker regardless
-        ShiftRestartAlarmManager.scheduleNextShiftAlarm(applicationContext, user)
+            // Optional: Stop service if it's somehow still running outside shift
+            val isServiceRunning = Utils.isServiceRunning(applicationContext, MyService::class.java)
+            if (isServiceRunning) {
+                Log.w(TAG, "⚠️ Service running outside shift - stopping it")
+                stopService()
+            }
+        }
 
         return Result.success()
     }
 
-    private fun isInsideShiftWindow(user: UserModel): Boolean {
-        return try {
-            val today = LocalDate.now()
+    /**
+     * Robust service detection that checks multiple indicators.
+     * This is more reliable than just isServiceRunning() which can return
+     * false positives on some devices (especially in Doze mode).
+     */
+    private fun isServiceReallyRunning(): Boolean {
+        // Method 1: Standard Android API check
+        val apiCheck = Utils.isServiceRunning(applicationContext, MyService::class.java)
 
-            val activeMulti = user.multipleTimeTables?.find { mt ->
-                val s = mt.startDate.toLocalDate()
-                val e = mt.endDate.toLocalDate()
-                today in s..e
+        // Method 2: Check last sync timestamp (if service is running, it should be updating)
+        val lastSyncTimestamp = SharedPref.getInstance(applicationContext)?.getLastSyncTimestamp() ?: 0L
+        val now = System.currentTimeMillis()
+        val minutesSinceLastSync = ((now - lastSyncTimestamp) / (60 * 1000)).toInt()
+
+        // If last sync was within 10 minutes, service is likely running
+        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < 10
+
+        Log.i(TAG, "   🔍 Service check: API=$apiCheck, RecentSync=$recentSyncCheck (${minutesSinceLastSync}m ago)")
+
+        // Service is considered running if EITHER check passes
+        // This reduces false negatives in Doze mode
+        return apiCheck || recentSyncCheck
+    }
+
+    /**
+     * Restart the service by stopping (if running) and starting fresh.
+     * This is more reliable than just starting, as it clears any stuck state.
+     */
+    private fun restartService() {
+        try {
+            Log.i(TAG, "🔄 Restarting service...")
+
+            // Step 1: Stop existing service (if any)
+            try {
+                val stopIntent = Intent(applicationContext, MyService::class.java).apply {
+                    action = MyService.ACTION_STOP
+                }
+                applicationContext.startService(stopIntent)
+                Log.i(TAG, "   📤 Stop signal sent")
+
+                // Small delay to let service stop cleanly
+                Thread.sleep(1000)
+            } catch (e: Exception) {
+                Log.w(TAG, "   ⚠️ Stop failed (may not be running): ${e.message}")
             }
 
-            val effectiveRange = activeMulti?.timetable?.range ?: user.timetable?.range
-
-            when {
-                effectiveRange.isNullOrEmpty() -> {
-                    Log.w(TAG, "⚠️ No timetable found")
-                    false
-                }
-                else -> {
-                    val todayDayName = Utils.getCurrentDayName()
-                    val todayShift = effectiveRange.find {
-                        it.day.equals(todayDayName, ignoreCase = true)
-                    }
-
-                    when {
-                        todayShift?.start.isNullOrBlank() || todayShift?.end.isNullOrBlank() -> {
-                            Log.i(TAG, "📅 No shift scheduled for today ($todayDayName)")
-                            false
-                        }
-                        else -> {
-                            // ✅ Use ShiftUtils to apply ±1 hour buffer
-                            // If shift is 08:00-18:00, service runs 07:00-19:00
-                            // If shift is overnight 20:00-04:00, service runs 19:00-05:00 (next day)
-                            val now = java.util.Calendar.getInstance()
-                            val isInShift = ShiftUtils.isTimeWithinBufferRange(
-                                now,
-                                todayShift.start!!,
-                                todayShift.end!!
-                            )
-
-                            Log.i(TAG, "🕐 Shift: ${todayShift.start}-${todayShift.end} (with ±1h buffer)")
-                            Log.i(TAG, "   Inside: $isInShift")
-                            isInShift
-                        }
-                    }
-                }
+            // Step 2: Start service fresh
+            val startIntent = Intent(applicationContext, MyService::class.java).apply {
+                action = MyService.ACTION_START
             }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                applicationContext.startForegroundService(startIntent)
+            } else {
+                applicationContext.startService(startIntent)
+            }
+
+            Log.i(TAG, "   ✅ Service restart initiated")
+
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error checking shift window", e)
-            false
+            Log.e(TAG, "   ❌ Error restarting service", e)
         }
     }
 
-    private fun startMyService() {
+    /**
+     * Stop the service (used when service is running outside shift hours)
+     */
+    private fun stopService() {
         try {
-            val serviceIntent = Intent(applicationContext, MyService::class.java).apply {
-                action = MyService.ACTION_START
+            val stopIntent = Intent(applicationContext, MyService::class.java).apply {
+                action = MyService.ACTION_STOP
             }
-            applicationContext.startForegroundService(serviceIntent)
-            Log.i(TAG, "✅ MyService started via WorkManager backup")
+            applicationContext.startService(stopIntent)
+            Log.i(TAG, "✅ Service stop signal sent")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error starting MyService", e)
+            Log.e(TAG, "❌ Error stopping service", e)
         }
     }
 }

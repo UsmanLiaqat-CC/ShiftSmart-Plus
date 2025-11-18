@@ -15,7 +15,6 @@ class SharedPref(private val ctx: Context) {
     private val USER = "user"
     private val TOKEN = "token"
     private val FINGERPRINT = "fingerprint"
-    private val LAST_API_CALL_TIME = "last_api_call_time"
     private val LAST_SYNC_TIME = "last_sync_time" // Format: "2025-10-28 07:10:00" (with date)
     private val LAST_SYNC_TIMESTAMP = "last_sync_timestamp" // Unix timestamp in milliseconds
 
@@ -132,6 +131,7 @@ class SharedPref(private val ctx: Context) {
     fun getLastSyncDateTime(): String? {
         return sharedPreferences.getString(LAST_SYNC_TIME, null)
     }
+
 
     // 🔐 Save fingerprint enable/disable state
     fun setFingerprintEnabled(enabled: Boolean) {

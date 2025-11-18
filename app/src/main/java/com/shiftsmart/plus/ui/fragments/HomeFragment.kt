@@ -496,6 +496,25 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             findNavController().navigate(R.id.action_homeFragment_to_errorsSolutionsFragment)
         }
 
+//        mBinding.errorsBtn.setOnClickListener {
+//            // Manually stop the service for testing WorkManager restart
+//            Log.i(TAG, "🛑 MANUAL STOP: Stopping service to test WorkManager 15-min restart")
+//
+//            val serviceIntent = Intent(requireContext(), MyService::class.java)
+//            requireContext().stopService(serviceIntent)
+//
+//            // Optional: Show a toast to confirm
+//            Toast.makeText(
+//                requireContext(),
+//                "Service stopped. WorkManager should restart it within 15 minutes if inside shift window.",
+//                Toast.LENGTH_LONG
+//            ).show()
+//
+//            Log.i(TAG, "⏰ WorkManager will check and restart service within 15 minutes if shift is active")
+//        }
+
+
+
         mBinding.syncButton.setOnClickListener {
             if (Utils.isInternetAvailable(requireContext())) {
                 isSyncPressed = true

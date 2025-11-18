@@ -122,7 +122,56 @@ class AttendanceSyncManager @Inject constructor(
             managerScope.launch {
                 insertMutex.withLock {
                     try {
-                        // ✅ STEP 1: Check for exact UTC time duplicate
+                        // ✅ STEP 1: Validate 5-minute alignment (skip non-default records like ARRIVAL/DEPARTURE)
+                        if (record.attendanceType == StatusEnum.default.name) {
+                            val recordTime = Utils.parseFlexibleTime(record.localTime)
+                            if (recordTime != null) {
+                                val recordMinute = recordTime.minute
+
+                                // Check if on 5-minute boundary
+                                if (recordMinute % 5 != 0) {
+                                    Log.w(TAG, "⏭️ Record time ${record.localTime} NOT on 5-min boundary (${recordMinute}m) → SKIPPING insert")
+                                    return@withLock
+                                }
+
+                                // Check gap from last record
+                                val sharedPref = SharedPref.getInstance(context)
+                                val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
+
+                                if (lastSyncTimestamp > 0L) {
+                                    // Calculate current record timestamp
+                                    val currentCal = Calendar.getInstance().apply {
+                                        set(Calendar.HOUR_OF_DAY, recordTime.hour)
+                                        set(Calendar.MINUTE, recordTime.minute)
+                                        set(Calendar.SECOND, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }
+                                    val currentTimestamp = currentCal.timeInMillis
+                                    val gapMillis = currentTimestamp - lastSyncTimestamp
+                                    val minutesDiff = (gapMillis / (60 * 1000)).toInt()
+
+                                    Log.i(TAG, "⏱️ Gap check: Last sync at ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(lastSyncTimestamp)}, Current: ${record.localTime}, Gap: $minutesDiff min")
+
+                                    when {
+                                        minutesDiff < 5 -> {
+                                            Log.w(TAG, "⏸️ Gap too small ($minutesDiff min < 5) → SKIPPING insert")
+                                            return@withLock
+                                        }
+                                        minutesDiff % 5 != 0 -> {
+                                            Log.w(TAG, "⚠️ Gap not multiple of 5 ($minutesDiff min) → SKIPPING insert")
+                                            return@withLock
+                                        }
+                                        else -> {
+                                            Log.i(TAG, "✅ Gap is valid ($minutesDiff min) → proceeding with insert")
+                                        }
+                                    }
+                                } else {
+                                    Log.i(TAG, "🆕 No previous record - first sync")
+                                }
+                            }
+                        }
+
+                        // ✅ STEP 2: Check for exact UTC time duplicate
                         // This prevents inserting records with the exact same UTC timestamp
                         val existingCount = dao.countRecordByTime(record.time)
                         if (existingCount > 0) {

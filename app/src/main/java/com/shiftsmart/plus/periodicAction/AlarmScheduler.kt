@@ -9,11 +9,8 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
+import androidx.core.app.NotificationCompat
+import com.shiftsmart.plus.R
 import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.services.MyService
@@ -134,8 +131,8 @@ object AlarmScheduler {
                     scheduleService(context, endCalendar, false)
                 }
 
-                // ✅ DUAL REDUNDANCY: Schedule WorkManager as backup (survives device restrictions)
-                scheduleShiftWorkerBackup(context, startCalendar, endCalendar)
+                // Note: WorkManager health check is now handled by ServiceHealthWorkerManager
+                // initialized in MainActivity on login
 
                 if (reschedulePeriodic) {
                     // Schedules one-shot CALL_API aligned to next 5-min mark (receiver re-arms)
@@ -307,55 +304,6 @@ object AlarmScheduler {
         }
     }
 
-    /**
-     * scheduleShiftWorkerBackup(...)
-     *
-     * DUAL REDUNDANCY - WorkManager Backup
-     * ═════════════════════════════════════
-     * WHY: Some devices (Samsung, Xiaomi, Oppo, etc.) may kill AlarmManager alarms
-     *      or prevent them from firing during doze mode.
-     *
-     * WHAT: Schedules a WorkManager task to check if service should start:
-     *  - Runs periodically (every 15 minutes minimum per Android restrictions)
-     *  - Checks if current time is within shift window (with ±1 hour buffer)
-     *  - Starts service if AlarmManager failed to trigger it
-     *
-     * APPROACH:
-     *  1. PRIMARY: AlarmManager (exact timing at shift start - 1 hour)
-     *  2. FALLBACK: WorkManager checks every 15min, starts if needed
-     */
-    private fun scheduleShiftWorkerBackup(
-        context: Context,
-        startCalendar: Calendar,
-        endCalendar: Calendar
-    ) {
-        try {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.NOT_REQUIRED) // Works offline
-                .setRequiresBatteryNotLow(false) // Works even on low battery
-                .build()
-
-            // ✅ Schedule periodic worker (minimum 15 minutes per Android)
-            val workRequest = PeriodicWorkRequestBuilder<ShiftStatusWorker>(
-                15, TimeUnit.MINUTES,
-                5, TimeUnit.MINUTES // Flex interval
-            )
-                .setConstraints(constraints)
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                "ShiftStatusWorker",
-                ExistingPeriodicWorkPolicy.KEEP, // Keep existing if already scheduled
-                workRequest
-            )
-
-            Log.i(TAG, "✅ DUAL REDUNDANCY: WorkManager backup scheduled (15min interval)")
-            Log.i(TAG, "   • If AlarmManager fails, WorkManager will start service")
-            Log.i(TAG, "   • Shift window: ${startCalendar.time} to ${endCalendar.time}")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error scheduling WorkManager backup", e)
-        }
-    }
 
     private fun acquireWakeLock(context: Context) {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
