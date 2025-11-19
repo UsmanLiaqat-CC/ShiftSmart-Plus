@@ -558,11 +558,10 @@ class MyService : Service() {
     private fun handleServiceRestart() {
 
         Log.i(TAG, "Restarting service")
-        if (!isServiceRunning) {
-            startForegroundService()
-            startWifiScanning()
-            checkShiftAndScheduleTasks()
-        }
+        // ✅ Always restart when ACTION_RESTART is received (emergency restart from onDestroy/onTaskRemoved)
+        startForegroundService()
+        startWifiScanning()
+        checkShiftAndScheduleTasks()
     }
 
     private fun checkShiftAndScheduleTasks() {
@@ -618,14 +617,22 @@ class MyService : Service() {
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-
     override fun onDestroy() {
         super.onDestroy()
         isServiceRunning = false
 
         try {
-            releaseWakeLock()
+            // ✅ CRITICAL: Unregister receivers FIRST to prevent memory leaks
             unregisterReceivers()
+
+            // ✅ Then schedule restart (after cleanup to avoid conflicts)
+            val user = SharedPref.getInstance(this)?.getUser()
+            if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
+                Log.w(TAG, "🚨 Service destroyed during shift - scheduling emergency restart in 1 minute")
+                scheduleEmergencyRestart()
+            }
+
+            releaseWakeLock()
 
         } catch (e: Exception) {
             Log.e(TAG, "Error during onDestroy", e)
@@ -647,6 +654,54 @@ class MyService : Service() {
         const val ACTION_SYNC_DATA = "SYNC_DATA" // 👈 add this new one
     }
 
+    /**
+     * Emergency restart mechanism for Android 10+ where services can be killed aggressively.
+     * Schedules an AlarmManager to restart the service in 1 minute if destroyed during shift.
+     */
+    private fun scheduleEmergencyRestart() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val restartIntent = Intent(this, MyService::class.java).apply {
+                action = ACTION_RESTART
+            }
+            val pendingIntent = PendingIntent.getService(
+                this,
+                999, // Unique request code for emergency restart
+                restartIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val restartTime = System.currentTimeMillis() + 60 * 1000 // 1 minute from now
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        restartTime,
+                        pendingIntent
+                    )
+                    Log.i(TAG, "✅ Emergency restart scheduled for ${Utils.getCurrentDateTime()}")
+                } else {
+                    Log.w(TAG, "❌ Cannot schedule exact alarms for emergency restart")
+                    // Fallback to inexact
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        restartTime,
+                        pendingIntent
+                    )
+                }
+            } else {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    restartTime,
+                    pendingIntent
+                )
+                Log.i(TAG, "✅ Emergency restart scheduled for ${Utils.getCurrentDateTime()}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to schedule emergency restart", e)
+        }
+    }
 }
 
 class ServiceReceiver : BroadcastReceiver() {
@@ -656,6 +711,3 @@ class ServiceReceiver : BroadcastReceiver() {
         }
     }
 }
-
-
-
