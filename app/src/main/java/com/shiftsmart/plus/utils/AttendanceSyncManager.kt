@@ -139,22 +139,40 @@ class AttendanceSyncManager @Inject constructor(
                                 val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
 
                                 if (lastSyncTimestamp > 0L) {
-                                    // Calculate current record timestamp
-                                    val currentCal = Calendar.getInstance().apply {
-                                        set(Calendar.HOUR_OF_DAY, recordTime.hour)
-                                        set(Calendar.MINUTE, recordTime.minute)
+                                    // ✅ FIX: Get current time and normalize to remove seconds
+                                    val now = System.currentTimeMillis()
+
+                                    // Normalize current time to HH:mm:00 (remove seconds)
+                                    val currentCalNormalized = Calendar.getInstance().apply {
+                                        timeInMillis = now
                                         set(Calendar.SECOND, 0)
                                         set(Calendar.MILLISECOND, 0)
                                     }
-                                    val currentTimestamp = currentCal.timeInMillis
-                                    val gapMillis = currentTimestamp - lastSyncTimestamp
+                                    val currentTimestamp = currentCalNormalized.timeInMillis
+
+                                    // Normalize last sync to HH:mm:00 (remove seconds)
+                                    val lastSyncCalNormalized = Calendar.getInstance().apply {
+                                        timeInMillis = lastSyncTimestamp
+                                        set(Calendar.SECOND, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }
+                                    val lastSyncNormalized = lastSyncCalNormalized.timeInMillis
+
+                                    val gapMillis = currentTimestamp - lastSyncNormalized
                                     val minutesDiff = (gapMillis / (60 * 1000)).toInt()
 
-                                    Log.i(TAG, "⏱️ Gap check: Last sync at ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(lastSyncTimestamp)}, Current: ${record.localTime}, Gap: $minutesDiff min")
+                                    val lastSyncFormatted = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(lastSyncTimestamp)
+                                    val currentFormatted = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(now)
+
+                                    Log.i(TAG, "⏱️ Gap check (ignoring seconds):")
+                                    Log.i(TAG, "   Last sync: $lastSyncFormatted → normalized to ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(lastSyncNormalized)}")
+                                    Log.i(TAG, "   Current: $currentFormatted → normalized to ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(currentTimestamp)}")
+                                    Log.i(TAG, "   Gap: $minutesDiff minutes")
 
                                     when {
                                         minutesDiff < 5 -> {
                                             Log.w(TAG, "⏸️ Gap too small ($minutesDiff min < 5) → SKIPPING insert")
+                                            Log.w(TAG, "   This prevents multiple records at same minute (e.g., 10:05:05, 10:05:07, 10:05:10)")
                                             return@withLock
                                         }
                                         minutesDiff % 5 != 0 -> {
@@ -189,9 +207,9 @@ class AttendanceSyncManager @Inject constructor(
                             SharedPref.getInstance(context)?.saveLastSyncTime(record.localTime)
                             Log.i(TAG, "💾 Record saved at ${record.localTime} | Last sync time updated")
 
-                            withContext(Dispatchers.Main) {
-                                sendNotificationUpdate("Data stored at ${Utils.getCurrentDateTime()}")
-                            }
+                            // ✅ FIX Issue #1: Don't send notification here - will be sent after API sync
+                            // The notification will come from handleSuccessfulResponse when data is synced
+                            Log.i(TAG, "📡 Calling API to sync data...")
                         } else {
                             // For ARRIVAL/DEPARTURE records
                             Log.i(TAG, "💾 ${record.attendanceType} record saved at ${record.localTime}")
@@ -550,12 +568,16 @@ class AttendanceSyncManager @Inject constructor(
 
             } catch (e: Exception) {
                 Log.e(TAG, "API call exception: ${e.message}")
-//                apiCallInProgress = false
+                // ✅ Show notification on exception
+                sendNotificationUpdate("Data saved locally at ${Utils.getCurrentDateTime()} - Will sync when connected")
             }
         }
         else {
-            Log.e(TAG, "No internet available for API call.")
-//            apiCallInProgress = false
+            Log.w(TAG, "No internet available - Data saved locally")
+
+            // ✅ ISSUE FIX: Notify user that data is saved locally and will sync later
+            val pendingRecordsCount = records.size
+            sendNotificationUpdate("📴 Offline record saved at:${Utils.getCurrentDateTime()}, will sync when online")
         }
     }
 

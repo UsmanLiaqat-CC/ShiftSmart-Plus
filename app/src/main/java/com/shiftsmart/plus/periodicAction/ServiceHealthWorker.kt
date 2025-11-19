@@ -6,13 +6,9 @@ import android.os.Build
 import android.util.Log
 import androidx.work.Worker
 import androidx.work.WorkerParameters
-import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.SharedPref
-import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
-import com.shiftsmart.plus.utils.Utils.toLocalDate
-import java.time.LocalDate
 
 /**
  * ⏰ PERIODIC SERVICE HEALTH MONITOR (Every 15 Minutes)
@@ -104,8 +100,9 @@ class ServiceHealthWorker(
         val now = System.currentTimeMillis()
         val minutesSinceLastSync = ((now - lastSyncTimestamp) / (60 * 1000)).toInt()
 
-        // If last sync was within 10 minutes, service is likely running
-        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < 10
+        // If last sync was within 20 minutes, service is likely running
+        // Extended from 10 to 20 to account for potential delays in Doze mode
+        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < 20
 
         Log.i(TAG, "   🔍 Service check: API=$apiCheck, RecentSync=$recentSyncCheck (${minutesSinceLastSync}m ago)")
 
@@ -149,6 +146,9 @@ class ServiceHealthWorker(
 
             Log.i(TAG, "   ✅ Service restart initiated")
 
+            // Step 3: Reschedule alarms to ensure they're active
+            AlarmReceiver.scheduleNextAlignedAlarm(applicationContext)
+
         } catch (e: Exception) {
             Log.e(TAG, "   ❌ Error restarting service", e)
         }
@@ -169,3 +169,4 @@ class ServiceHealthWorker(
         }
     }
 }
+

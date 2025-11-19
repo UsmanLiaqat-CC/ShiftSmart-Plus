@@ -68,6 +68,18 @@ class ShiftStartOneTimeWorker(
 
             if (isServiceRunning) {
                 Log.i(TAG, "✅ Service already running - backup not needed")
+
+                // But verify it's actually working by checking last sync time
+                val lastSyncTimestamp = SharedPref.getInstance(applicationContext)?.getLastSyncTimestamp() ?: 0L
+                if (lastSyncTimestamp > 0L) {
+                    val now = System.currentTimeMillis()
+                    val minutesSinceLastSync = ((now - lastSyncTimestamp) / (60 * 1000)).toInt()
+
+                    if (minutesSinceLastSync > 15) {
+                        Log.w(TAG, "⚠️ Service running but NOT syncing (${minutesSinceLastSync}m ago) - Restarting")
+                        restartService()
+                    }
+                }
             } else {
                 Log.i(TAG, "🚨 Service NOT running - Starting via WorkManager BACKUP")
                 startService()
@@ -92,8 +104,33 @@ class ShiftStartOneTimeWorker(
             }
 
             Log.i(TAG, "✅ MyService started via WorkManager backup")
+
+            // ✅ Ensure alarms are scheduled after service starts
+            AlarmReceiver.scheduleNextAlignedAlarm(applicationContext)
+
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error starting MyService", e)
+        }
+    }
+
+    private fun restartService() {
+        try {
+            Log.i(TAG, "🔄 Restarting stuck service...")
+
+            // Stop first
+            val stopIntent = Intent(applicationContext, MyService::class.java).apply {
+                action = MyService.ACTION_STOP
+            }
+            applicationContext.startService(stopIntent)
+
+            // Wait a moment
+            Thread.sleep(1000)
+
+            // Start fresh
+            startService()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error restarting service", e)
         }
     }
 }

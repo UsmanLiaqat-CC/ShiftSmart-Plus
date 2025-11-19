@@ -37,6 +37,7 @@ import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.periodicAction.AlarmReceiver
+import com.shiftsmart.plus.periodicAction.ServiceHealthWorkerManager
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.ui.activities.MainActivity
 import com.shiftsmart.plus.utils.AttendanceSyncManager
@@ -536,6 +537,16 @@ class MyService : Service() {
         updateForegroundNotification(this, "Attendance tracking started")
         startForegroundService()
 
+        // ✅ Ensure backup mechanisms are active
+        Log.i(TAG, "Initializing backup mechanisms...")
+
+        // 1. Schedule 15-minute health check (WorkManager)
+        ServiceHealthWorkerManager.schedulePeriodicHealthCheck(this)
+
+        // 2. Schedule next CALL_API alarm (AlarmManager)
+        AlarmReceiver.scheduleNextAlignedAlarm(this)
+
+        Log.i(TAG, "✅ Backup mechanisms initialized")
     }
 
     private fun handleServiceStop() {

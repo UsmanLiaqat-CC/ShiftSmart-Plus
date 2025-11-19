@@ -107,48 +107,6 @@ object ServiceHealthWorkerManager {
         }
     }
 
-    /**
-     * Check if the periodic worker is currently scheduled and running
-     */
-    fun isHealthCheckScheduled(context: Context): Boolean {
-        return try {
-            val workInfos = WorkManager.getInstance(context)
-                .getWorkInfosForUniqueWork(WORK_NAME)
-                .get()
-
-            val isScheduled = workInfos.any {
-                it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING
-            }
-
-            Log.i(TAG, "Health check scheduled: $isScheduled")
-            isScheduled
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error checking worker status", e)
-            false
-        }
-    }
-
-    /**
-     * Force run the health check immediately (for testing)
-     */
-    fun runHealthCheckNow(context: Context) {
-        try {
-            val oneTimeRequest = OneTimeWorkRequestBuilder<ServiceHealthWorker>()
-                .addTag("${WORK_NAME}_manual")
-                .build()
-
-            WorkManager.getInstance(context)
-                .enqueue(oneTimeRequest)
-
-            Log.i(TAG, "✅ Manual health check triggered")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error running manual health check", e)
-        }
-    }
-
-    /**
-     * Log current status of the periodic worker (for debugging)
-     */
     private fun logWorkStatus(context: Context) {
         try {
             val workInfos = WorkManager.getInstance(context)
@@ -166,22 +124,6 @@ object ServiceHealthWorkerManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error getting work status", e)
-        }
-    }
-
-    /**
-     * Get time until next scheduled run (for UI display)
-     */
-    fun getNextRunTimeMillis(context: Context): Long {
-        return try {
-            val workInfos = WorkManager.getInstance(context)
-                .getWorkInfosForUniqueWork(WORK_NAME)
-                .get()
-
-            workInfos.firstOrNull()?.nextScheduleTimeMillis ?: 0L
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting next run time", e)
-            0L
         }
     }
 }

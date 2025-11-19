@@ -1,9 +1,10 @@
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
-    id ("dagger.hilt.android.plugin")
-    id ("kotlin-kapt")
+    id("dagger.hilt.android.plugin")
+    id("kotlin-kapt")
     id("com.google.firebase.crashlytics")
     id("com.google.gms.google-services")
 }
@@ -16,8 +17,8 @@ android {
         applicationId = "com.shiftsmart.plus"
         minSdk = 29
         targetSdk = 35
-        versionCode = 14
-        versionName = "14.0"
+        versionCode = 15
+        versionName = "15.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

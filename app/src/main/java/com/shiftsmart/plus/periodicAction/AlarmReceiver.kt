@@ -135,6 +135,22 @@ class AlarmReceiver : BroadcastReceiver() {
 
                     Log.i("AlarmReceiver", "✅ Inside shift window - processing CALL_API")
 
+                    // ✅ CRITICAL: Check if service is running - if not, restart it!
+                    val isServiceRunning = Utils.isServiceRunning(context, MyService::class.java)
+                    if (!isServiceRunning) {
+                        Log.w("AlarmReceiver", "🚨 Service NOT running during CALL_API - Restarting service!")
+                        val startIntent = Intent(context, MyService::class.java).apply {
+                            action = MyService.ACTION_START
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            context.startForegroundService(startIntent)
+                        } else {
+                            context.startService(startIntent)
+                        }
+                        // Give service time to start
+                        Thread.sleep(1500)
+                    }
+
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
                             val sharedPref = SharedPref.getInstance(context)
