@@ -129,7 +129,9 @@ class AlarmReceiver : BroadcastReceiver() {
                     // ✅ Check if we're inside shift window before processing
                     if (!isInsideShiftWindow( user)) {
                         Log.i("AlarmReceiver", "⏭️ Outside shift window - skipping CALL_API")
-                        scheduleNextAlignedAlarm(context)
+                        // Schedule next alarm from current time, not last sync time
+                        scheduleNextAlarmFromCurrentTime(context)
+
                         return
                     }
 
@@ -342,6 +344,65 @@ class AlarmReceiver : BroadcastReceiver() {
                 Log.e("AlarmReceiver", "❌ Error checking shift window", e)
                 false
             }
+        }
+
+        /**
+         * scheduleNextAlarmFromCurrentTime(...)
+         * WHEN: When outside shift window or need to schedule from current time
+         * WHAT: Cancels existing CALL_API PI and schedules next 5-min boundary from NOW
+         */
+        @JvmStatic
+        fun scheduleNextAlarmFromCurrentTime(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val sharedPref = SharedPref.getInstance(context)
+            val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
+
+//            val nextAligned = if (lastSyncTimestamp > 0L) {
+//                // ✅ Schedule exactly 5 minutes from last sync
+//                lastSyncTimestamp + (5 * 60 * 1000)
+//            } else {
+//                // ✅ No last sync - round up to next 5-minute boundary
+//                val now = System.currentTimeMillis()
+//                ((now / (5 * 60 * 1000)) + 1) * (5 * 60 * 1000)
+//            }
+            // ✅ Always schedule from current time, not last sync
+            val now = System.currentTimeMillis()
+            val nextAligned = ((now / (5 * 60 * 1000)) + 1) * (5 * 60 * 1000)
+
+            val intent = Intent(context, AlarmReceiver::class.java).apply { action = "CALL_API" }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                1234,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            alarmManager.cancel(pendingIntent)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        nextAligned,
+                        pendingIntent
+                    )
+                } else {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        nextAligned,
+                        pendingIntent
+                    )
+                }
+            } else {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    nextAligned,
+                    pendingIntent
+                )
+            }
+
+            val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(nextAligned))
+            Log.i("AlarmReceiver", "⏰ Next CALL_API alarm scheduled from current time at: $timeStr (${Date(nextAligned)})")
         }
 
         /**

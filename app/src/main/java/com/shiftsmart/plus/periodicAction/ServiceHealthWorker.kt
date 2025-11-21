@@ -91,20 +91,27 @@ class ServiceHealthWorker(
      * This is more reliable than just isServiceRunning() which can return
      * false positives on some devices (especially in Doze mode).
      */
+
+
+
     private fun isServiceReallyRunning(): Boolean {
         // Method 1: Standard Android API check
         val apiCheck = Utils.isServiceRunning(applicationContext, MyService::class.java)
 
         // Method 2: Check last sync timestamp (if service is running, it should be updating)
-        val lastSyncTimestamp = SharedPref.getInstance(applicationContext)?.getLastSyncTimestamp() ?: 0L
+        val lastSyncTimestamp =
+            SharedPref.getInstance(applicationContext)?.getLastSyncTimestamp() ?: 0L
         val now = System.currentTimeMillis()
         val minutesSinceLastSync = ((now - lastSyncTimestamp) / (60 * 1000)).toInt()
 
-        // If last sync was within 20 minutes, service is likely running
-        // Extended from 10 to 20 to account for potential delays in Doze mode
-        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < 20
+        // If last sync was within 5 minutes, service is likely running
+        // Reduced from 20 to 5 to detect failures faster, but monitor for false positives in Doze mode
+        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < 5
 
-        Log.i(TAG, "   🔍 Service check: API=$apiCheck, RecentSync=$recentSyncCheck (${minutesSinceLastSync}m ago)")
+        Log.i(
+            TAG,
+            "   🔍 Service check: API=$apiCheck, RecentSync=$recentSyncCheck (${minutesSinceLastSync}m ago)"
+        )
 
         // Service is considered running if EITHER check passes
         // This reduces false negatives in Doze mode

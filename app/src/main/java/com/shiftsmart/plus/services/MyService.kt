@@ -37,6 +37,8 @@ import com.shiftsmart.plus.enums.StatusEnum
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.periodicAction.AlarmReceiver
+import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.periodicAction.RestartServiceReceiver
 import com.shiftsmart.plus.periodicAction.ServiceHealthWorkerManager
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.ui.activities.MainActivity
@@ -47,6 +49,7 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
+import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -564,6 +567,8 @@ class MyService : Service() {
         checkShiftAndScheduleTasks()
     }
 
+
+
     private fun checkShiftAndScheduleTasks() {
         val user = SharedPref.getInstance(this)?.getUser() ?: run {
             Log.w(TAG, "No user found in SharedPref")
@@ -616,6 +621,18 @@ class MyService : Service() {
 
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // ✅ CRITICAL: Unregister receivers FIRST to prevent memory leaks
+        unregisterReceivers()
+
+        val intent = Intent(this, RestartServiceReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(this, 1, intent, PendingIntent.FLAG_IMMUTABLE)
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+        alarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 3000, pendingIntent)
+        super.onTaskRemoved(rootIntent)
+    }
+
     @RequiresApi(Build.VERSION_CODES.Q)
     override fun onDestroy() {
         super.onDestroy()
@@ -629,7 +646,7 @@ class MyService : Service() {
             val user = SharedPref.getInstance(this)?.getUser()
             if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
                 Log.w(TAG, "🚨 Service destroyed during shift - scheduling emergency restart in 1 minute")
-                scheduleEmergencyRestart()
+                handleUserFromKillService(this,user)
             }
 
             releaseWakeLock()
@@ -654,54 +671,46 @@ class MyService : Service() {
         const val ACTION_SYNC_DATA = "SYNC_DATA" // 👈 add this new one
     }
 
-    /**
-     * Emergency restart mechanism for Android 10+ where services can be killed aggressively.
-     * Schedules an AlarmManager to restart the service in 1 minute if destroyed during shift.
-     */
-    private fun scheduleEmergencyRestart() {
+
+    fun handleUserFromKillService(context: Context, user: UserModel) {
         try {
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val restartIntent = Intent(this, MyService::class.java).apply {
-                action = ACTION_RESTART
-            }
-            val pendingIntent = PendingIntent.getService(
-                this,
-                999, // Unique request code for emergency restart
-                restartIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
 
-            val restartTime = System.currentTimeMillis() + 60 * 1000 // 1 minute from now
+            if (user.isActive) {
+                Log.i("MyFirebaseMessagingService", "User is active. Scheduling alarms.")
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (alarmManager.canScheduleExactAlarms()) {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        restartTime,
-                        pendingIntent
-                    )
-                    Log.i(TAG, "✅ Emergency restart scheduled for ${Utils.getCurrentDateTime()}")
-                } else {
-                    Log.w(TAG, "❌ Cannot schedule exact alarms for emergency restart")
-                    // Fallback to inexact
-                    alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        restartTime,
-                        pendingIntent
-                    )
-                }
-            } else {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    restartTime,
-                    pendingIntent
+                val timetable = user.timetable?.range
+                val multiTimeTables = user.multipleTimeTables
+
+                AlarmScheduler.scheduleAlarms(
+                    context = context,
+                    defaultShifts = timetable!!,
+                    multipleTimeTables = multiTimeTables!!
                 )
-                Log.i(TAG, "✅ Emergency restart scheduled for ${Utils.getCurrentDateTime()}")
+
+            } else {
+                Log.w("MyFirebaseMessagingService", "User is not active. Skipping alarm scheduling.")
+
+                if (isServiceRunning(context, MyService::class.java)) {
+                    Log.i("MyFirebaseMessagingService", "Service is running. Stopping service.")
+
+                    val notificationManager =context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    notificationManager.cancelAll()
+                    Log.i("Service", "Service is running. Stopping it now.")
+//                    context.stopService(Intent(context, MyService::class.java))
+                    val stopIntent = Intent(context, MyService::class.java).apply {
+                        action = MyService.ACTION_STOP
+                    }
+                    context.startService(stopIntent)
+                } else {
+                    Log.i("MyFirebaseMessagingService", "Service is not running. No action needed.")
+                }
             }
+
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to schedule emergency restart", e)
+            Log.e("MyFirebaseMessagingService", "Error handling user from FCM", e)
         }
     }
+
 }
 
 class ServiceReceiver : BroadcastReceiver() {

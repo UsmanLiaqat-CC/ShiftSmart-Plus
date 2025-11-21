@@ -20,13 +20,18 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import org.json.JSONObject
 
+enum class NotificationType {
+    USER_UPDATE,
+    REMINDER,
+    SHIFT_START,
+}
+
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         Log.d("MyFirebaseMessagingService", "FromBody: ${remoteMessage.notification?.body}")
         // 🔹 Handle Data Payload
         remoteMessage.data.let { data ->
-
 
             val userJson = data["user"] ?: return
             val jsonObject = JSONObject(userJson)
@@ -37,32 +42,48 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
             try {
                 val isActive = jsonObject.optBoolean("isActive")
+                val notificationType = jsonObject.optString("type")
 
-                val timetableJson = jsonObject.optJSONObject("timetable")?.toString()
-                val timetableModel = Gson().fromJson(timetableJson, TimeTable::class.java)
+                if (notificationType==NotificationType.REMINDER.name || notificationType==NotificationType.SHIFT_START.name) {
+                    Log.e("MyFirebaseMessagingService", "Notification Type: ${notificationType}")
+                    val sharedPref = SharedPref.getInstance(context = applicationContext)
+                    val user = sharedPref?.getUser()
+                    user?.isActive = isActive
+                    sharedPref?.saveUser(user) // save updated user
+                    if (user != null) {
+                        Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
+                        handleUserFromNotification(applicationContext, user)
+                    }else{
+                        Log.e("MyFirebaseMessagingService", "user null")
+                    }
 
-                val multiTimeTableJson = jsonObject.optJSONArray("multipleTimeTables")?.toString()
-                val multiTimeTableList: List<MultipleTimeTable> = Gson().fromJson(
-                    multiTimeTableJson,
-                    object : TypeToken<List<MultipleTimeTable>>() {}.type
-                )
+                } else if (notificationType==NotificationType.USER_UPDATE.name) {
+                    Log.e("MyFirebaseMessagingService", "Notification Type: USER_UPDATE")
+                    val timetableJson = jsonObject.optJSONObject("timetable")?.toString()
+                    val timetableModel = Gson().fromJson(timetableJson, TimeTable::class.java)
+                    val multiTimeTableJson = jsonObject.optJSONArray("multipleTimeTables")?.toString()
+                    val multiTimeTableList: List<MultipleTimeTable> = Gson().fromJson(
+                        multiTimeTableJson,
+                        object : TypeToken<List<MultipleTimeTable>>() {}.type
+                    )
+                    val sharedPref = SharedPref.getInstance(context = applicationContext)
+                    val user = sharedPref?.getUser()
+                    user?.isActive = isActive
+                    user?.timetable = timetableModel
+                    user?.multipleTimeTables = multiTimeTableList
 
-                val sharedPref = SharedPref.getInstance(context = applicationContext)
-                val user = sharedPref?.getUser()
-                user?.isActive = isActive
-                user?.timetable = timetableModel
-                user?.multipleTimeTables = multiTimeTableList
+                    sharedPref?.saveUser(user) // save updated user
 
-                sharedPref?.saveUser(user) // save updated user
-
-                if (user != null) {
-                    Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
-
-                    handleUserFromNotification(applicationContext, user)
-                }else{
-                    Log.e("MyFirebaseMessagingService", "user null")
+                    if (user != null) {
+                        Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
+                        handleUserFromNotification(applicationContext, user)
+                    }else{
+                        Log.e("MyFirebaseMessagingService", "user null")
+                    }
 
                 }
+
+
             } catch (e: Exception) {
                 Log.e("MyFirebaseMessagingService", "Failed to parse user model", e)
             }
@@ -80,10 +101,24 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "User Updates",
+                "New Notification",
                 NotificationManager.IMPORTANCE_HIGH
             )
             channel.description = "Channel for user update notifications"
+            // Enable sound for the channel
+            channel.setSound(
+                android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                android.media.AudioAttributes.Builder()
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                    .build()
+            )
+            // Enable vibration
+            channel.enableVibration(true)
+            channel.vibrationPattern = longArrayOf(0, 500, 200, 500)
+            // Show notification on lock screen
+            channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+            channel.setShowBadge(true)
             notificationManager.createNotificationChannel(channel)
         }
 
@@ -92,7 +127,17 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setContentTitle(title)
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
+            // Add sound for devices below Android O
+            .setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
+            // Add vibration pattern
+            .setVibrate(longArrayOf(0, 500, 200, 500))
+            .setDefaults(NotificationCompat.DEFAULT_LIGHTS)
+            // Show notification on lock screen
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // Make it a heads-up notification
+            .setFullScreenIntent(null, true)
 
         notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
     }

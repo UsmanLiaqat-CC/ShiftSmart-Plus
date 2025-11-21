@@ -399,29 +399,25 @@ class MainActivity : AppCompatActivity() {
     }
     // Step 3: Check if battery optimizations are ignored
     private fun isIgnoringBatteryOptimizations(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            return pm.isIgnoringBatteryOptimizations(packageName)
-        }
-        return true // If SDK < M, assume battery optimizations are not applied
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.isIgnoringBatteryOptimizations(packageName)
     }
 
     // Step 4: Request user to disable battery optimizations
     private fun requestIgnoreBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                try {
-                    Log.i(TAG, "Requesting user to disable battery optimizations.")
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            try {
+                Log.i(TAG, "Requesting user to disable battery optimizations.")
 
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                    intent.data = Uri.parse("package:$packageName")
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                intent.data = Uri.parse("package:$packageName")
 
-                    startActivityForResult(intent, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to request battery optimization, opening settings manually", e)
-                    openBatteryOptimizationSettings()
-                }
+//                startActivityForResult(intent, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to request battery optimization, opening settings manually", e)
+                openBatteryOptimizationSettings()
             }
         }
     }
