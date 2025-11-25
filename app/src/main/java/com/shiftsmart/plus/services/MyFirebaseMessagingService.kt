@@ -37,7 +37,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 "ShiftSmart::FCMWakeLock"
             ).apply {
                 setReferenceCounted(false)
-                acquire(2 * 60 * 1000L) // 2 minutes to process notification
+                acquire(5 * 60 * 1000L) // 2 minutes to process notification
             }
         }
 
@@ -133,7 +133,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             )
             // Enable vibration
             channel.enableVibration(true)
-            channel.vibrationPattern = longArrayOf(0, 500, 200, 500)
+            channel.vibrationPattern = longArrayOf(0, 1000, 500, 1000)
             // Show notification on lock screen
             channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
             channel.setShowBadge(true)
@@ -150,7 +150,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             // Add sound for devices below Android O
             .setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
             // Add vibration pattern
-            .setVibrate(longArrayOf(0, 500, 200, 500))
+            .setVibrate(longArrayOf(0, 1000, 500, 1000))
             .setDefaults(NotificationCompat.DEFAULT_LIGHTS)
             // Show notification on lock screen
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

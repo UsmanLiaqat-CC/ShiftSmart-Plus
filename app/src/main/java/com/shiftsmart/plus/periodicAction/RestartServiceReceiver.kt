@@ -17,50 +17,14 @@ class RestartServiceReceiver : BroadcastReceiver() {
         val user = sharedPref?.getUser()
 
         if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
-            Log.w("TAG", "🚨 Service destroyed during shift - scheduling emergency restart in 1 minute")
-            handleUserFromKillService(context,user)
-        }else{
-            Log.e("RestartServiceReceiver", "user null")
+            Log.i("BootReceiver", "⏰ Service destroyed during shift - AlarmManager will handle next wake-up")
+            // Ensure alarms are scheduled (they should already be, but just in case)
+            AlarmReceiver.scheduleNextAlignedAlarm(context)
+        } else {
+            Log.i("BootReceiver", "⏸️ Service destroyed outside shift - no action needed")
         }
+
     }
 
-    fun handleUserFromKillService(context: Context, user: UserModel) {
-        try {
-
-            if (user.isActive) {
-                Log.i("MyFirebaseMessagingService", "User is active. Scheduling alarms.")
-
-                val timetable = user.timetable?.range
-                val multiTimeTables = user.multipleTimeTables
-
-                AlarmScheduler.scheduleAlarms(
-                    context = context,
-                    defaultShifts = timetable!!,
-                    multipleTimeTables = multiTimeTables!!
-                )
-
-            } else {
-                Log.w("MyFirebaseMessagingService", "User is not active. Skipping alarm scheduling.")
-
-                if (isServiceRunning(context, MyService::class.java)) {
-                    Log.i("MyFirebaseMessagingService", "Service is running. Stopping service.")
-
-                    val notificationManager =context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    notificationManager.cancelAll()
-                    Log.i("Service", "Service is running. Stopping it now.")
-//                    context.stopService(Intent(context, MyService::class.java))
-                    val stopIntent = Intent(context, MyService::class.java).apply {
-                        action = MyService.ACTION_STOP
-                    }
-                    context.startService(stopIntent)
-                } else {
-                    Log.i("MyFirebaseMessagingService", "Service is not running. No action needed.")
-                }
-            }
-
-        } catch (e: Exception) {
-            Log.e("MyFirebaseMessagingService", "Error handling user from FCM", e)
-        }
-    }
 
 }

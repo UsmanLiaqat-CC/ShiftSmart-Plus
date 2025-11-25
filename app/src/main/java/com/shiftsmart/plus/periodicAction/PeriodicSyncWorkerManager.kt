@@ -88,27 +88,6 @@ object PeriodicSyncWorkerManager {
         }
     }
 
-    /**
-     * Stop periodic sync worker
-     * Call when user logs out or is inactive
-     */
-    fun stopPeriodicSync(context: Context) {
-        Log.i(TAG, "🛑 Stopping periodic sync worker")
-        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
-    }
-
-    /**
-     * Check if periodic sync worker is running
-     */
-    fun isPeriodicSyncRunning(context: Context): Boolean {
-        val workInfo = WorkManager.getInstance(context)
-            .getWorkInfosForUniqueWork(WORK_NAME)
-            .get() // Blocking call, use carefully
-
-        return workInfo.any {
-            it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
-        }
-    }
 
     /**
      * Force immediate sync (one-time work)

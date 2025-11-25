@@ -57,137 +57,20 @@ class ServiceHealthWorker(
             Log.w(TAG, "⚠️ Running on problematic device: ${Build.MANUFACTURER} ${Build.MODEL}")
         }
 
+
         val user = SharedPref.getInstance(applicationContext)?.getUser()
-        if (user == null) {
-            Log.e(TAG, "❌ No user found - cannot check shift status")
-            return Result.failure()
-        }
+        Log.i("BootReceiver", "app user from SharedPref: $user")
 
-        // ✅ Check if we're currently within shift window (handles overnight shifts)
-        val isInsideShift = AlarmReceiver.isInsideShiftWindow(user)
-
-        if (isInsideShift) {
-            Log.i(TAG, "✅ Currently INSIDE shift window")
-
-            // ✅ Check if service is actually running (robust detection)
-            val isServiceActuallyRunning = isServiceReallyRunning()
-
-            if (isServiceActuallyRunning) {
-                Log.i(TAG, "✅ Service confirmed running - all good")
-            } else {
-                Log.w(TAG, "🚨 Service NOT running but should be - Restarting service!")
-                restartService()
-            }
+        if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
+            Log.i("BootReceiver", "⏰ Service destroyed during shift - AlarmManager will handle next wake-up")
+            // Ensure alarms are scheduled (they should already be, but just in case)
+            AlarmReceiver.scheduleNextAlignedAlarm(applicationContext)
         } else {
-            Log.i(TAG, "⏭️ Currently OUTSIDE shift window - no action needed")
-
-            // Optional: Stop service if it's somehow still running outside shift
-            val isServiceRunning = Utils.isServiceRunning(applicationContext, MyService::class.java)
-            if (isServiceRunning) {
-                Log.w(TAG, "⚠️ Service running outside shift - stopping it")
-                stopService()
-            }
+            Log.i("BootReceiver", "⏸️ Service destroyed outside shift - no action needed")
         }
 
         return Result.success()
     }
 
-    /**
-     * Robust service detection that checks multiple indicators.
-     * This is more reliable than just isServiceRunning() which can return
-     * false positives on some devices (especially in Doze mode).
-     *
-     * DEVICE-SPECIFIC THRESHOLDS:
-     * - Normal devices: 5 minutes since last sync
-     * - Mara/Mobicel: 20 minutes since last sync (more lenient due to aggressive power management)
-     */
-    private fun isServiceReallyRunning(): Boolean {
-        // Method 1: Standard Android API check
-        val apiCheck = Utils.isServiceRunning(applicationContext, MyService::class.java)
-
-        // Method 2: Check last sync timestamp (if service is running, it should be updating)
-        val lastSyncTimestamp =
-            SharedPref.getInstance(applicationContext)?.getLastSyncTimestamp() ?: 0L
-        val now = System.currentTimeMillis()
-        val minutesSinceLastSync = ((now - lastSyncTimestamp) / (60 * 1000)).toInt()
-
-        // Device-specific threshold for last sync check
-        // Problematic devices (Mara/Mobicel) get more lenient threshold due to Doze Mode
-        val syncThresholdMinutes = if (DeviceCompatibilityHelper.isProblematicDevice()) {
-            20 // 20 minutes for Mara/Mobicel (accounts for Doze delays)
-        } else {
-            5 // 5 minutes for normal devices
-        }
-
-        // If last sync was within threshold, service is likely running
-        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < syncThresholdMinutes
-
-        Log.i(
-            TAG,
-            "   🔍 Service check: API=$apiCheck, RecentSync=$recentSyncCheck (${minutesSinceLastSync}m ago, threshold=${syncThresholdMinutes}m)"
-        )
-
-        // Service is considered running if EITHER check passes
-        // This reduces false negatives in Doze mode
-        return apiCheck || recentSyncCheck
-    }
-
-    /**
-     * Restart the service by stopping (if running) and starting fresh.
-     * This is more reliable than just starting, as it clears any stuck state.
-     */
-    private fun restartService() {
-        try {
-            Log.i(TAG, "🔄 Restarting service...")
-
-            // Step 1: Stop existing service (if any)
-            try {
-                val stopIntent = Intent(applicationContext, MyService::class.java).apply {
-                    action = MyService.ACTION_STOP
-                }
-                applicationContext.startService(stopIntent)
-                Log.i(TAG, "   📤 Stop signal sent")
-
-                // Small delay to let service stop cleanly
-                Thread.sleep(1000)
-            } catch (e: Exception) {
-                Log.w(TAG, "   ⚠️ Stop failed (may not be running): ${e.message}")
-            }
-
-            // Step 2: Start service fresh
-            val startIntent = Intent(applicationContext, MyService::class.java).apply {
-                action = MyService.ACTION_START
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                applicationContext.startForegroundService(startIntent)
-            } else {
-                applicationContext.startService(startIntent)
-            }
-
-            Log.i(TAG, "   ✅ Service restart initiated")
-
-            // Step 3: Reschedule alarms to ensure they're active
-            AlarmReceiver.scheduleNextAlignedAlarm(applicationContext)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "   ❌ Error restarting service", e)
-        }
-    }
-
-    /**
-     * Stop the service (used when service is running outside shift hours)
-     */
-    private fun stopService() {
-        try {
-            val stopIntent = Intent(applicationContext, MyService::class.java).apply {
-                action = MyService.ACTION_STOP
-            }
-            applicationContext.startService(stopIntent)
-            Log.i(TAG, "✅ Service stop signal sent")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error stopping service", e)
-        }
-    }
 }
 

@@ -53,85 +53,20 @@ class ShiftStartOneTimeWorker(
         Log.i(TAG, "⏰ One-time shift start backup at ${Utils.getCurrentDateTime()}")
 
         val user = SharedPref.getInstance(applicationContext)?.getUser()
-        if (user == null) {
-            Log.e(TAG, "❌ No user found - cannot start service")
+
+        if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
+            Log.i("BootReceiver", "⏰ Service destroyed during shift - AlarmManager will handle next wake-up")
+            // Ensure alarms are scheduled (they should already be, but just in case)
+            AlarmReceiver.scheduleNextAlignedAlarm(applicationContext)
+            return Result.success()
+        } else {
+            Log.i("BootReceiver", "⏸️ Service destroyed outside shift - no action needed")
+
             return Result.failure()
         }
 
-        // Check if we're currently within shift window
-        val isInsideShift = AlarmReceiver.isInsideShiftWindow(user)
 
-        if (isInsideShift) {
-            Log.i(TAG, "✅ Inside shift window - checking service status")
-
-            val isServiceRunning = Utils.isServiceRunning(applicationContext, MyService::class.java)
-
-            if (isServiceRunning) {
-                Log.i(TAG, "✅ Service already running - backup not needed")
-
-                // But verify it's actually working by checking last sync time
-                val lastSyncTimestamp = SharedPref.getInstance(applicationContext)?.getLastSyncTimestamp() ?: 0L
-                if (lastSyncTimestamp > 0L) {
-                    val now = System.currentTimeMillis()
-                    val minutesSinceLastSync = ((now - lastSyncTimestamp) / (60 * 1000)).toInt()
-
-                    if (minutesSinceLastSync > 15) {
-                        Log.w(TAG, "⚠️ Service running but NOT syncing (${minutesSinceLastSync}m ago) - Restarting")
-                        restartService()
-                    }
-                }
-            } else {
-                Log.i(TAG, "🚨 Service NOT running - Starting via WorkManager BACKUP")
-                startService()
-            }
-        } else {
-            Log.i(TAG, "⏭️ Outside shift window - no action needed")
-        }
-
-        return Result.success()
     }
 
-    private fun startService() {
-        try {
-            val serviceIntent = Intent(applicationContext, MyService::class.java).apply {
-                action = MyService.ACTION_START
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                applicationContext.startForegroundService(serviceIntent)
-            } else {
-                applicationContext.startService(serviceIntent)
-            }
-
-            Log.i(TAG, "✅ MyService started via WorkManager backup")
-
-            // ✅ Ensure alarms are scheduled after service starts
-            AlarmReceiver.scheduleNextAlignedAlarm(applicationContext)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error starting MyService", e)
-        }
-    }
-
-    private fun restartService() {
-        try {
-            Log.i(TAG, "🔄 Restarting stuck service...")
-
-            // Stop first
-            val stopIntent = Intent(applicationContext, MyService::class.java).apply {
-                action = MyService.ACTION_STOP
-            }
-            applicationContext.startService(stopIntent)
-
-            // Wait a moment
-            Thread.sleep(1000)
-
-            // Start fresh
-            startService()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error restarting service", e)
-        }
-    }
 }
 

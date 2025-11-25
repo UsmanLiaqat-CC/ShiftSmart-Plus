@@ -134,6 +134,11 @@ class AlarmReceiver : BroadcastReceiver() {
                     // ✅ Check if we're inside shift window before processing
                     if (!isInsideShiftWindow( user)) {
                         Log.i("AlarmReceiver", "⏭️ Outside shift window - skipping CALL_API")
+                        // Stop service if running
+                        val stopIntent = Intent(context, MyService::class.java).apply {
+                            action = MyService.ACTION_STOP
+                        }
+                        context.startService(stopIntent)
                         // Schedule next alarm from current time, not last sync time
                         scheduleNextAlarmFromCurrentTime(context)
 
@@ -142,139 +147,25 @@ class AlarmReceiver : BroadcastReceiver() {
 
                     Log.i("AlarmReceiver", "✅ Inside shift window - processing CALL_API")
 
-                    // ✅ CRITICAL: Check if service is running - if not, restart it!
-                    val isServiceRunning = Utils.isServiceRunning(context, MyService::class.java)
-                    if (!isServiceRunning) {
-                        Log.w("AlarmReceiver", "🚨 Service NOT running during CALL_API - Restarting service!")
-                        val startIntent = Intent(context, MyService::class.java).apply {
-                            action = MyService.ACTION_START
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            context.startForegroundService(startIntent)
-                        } else {
-                            context.startService(startIntent)
-                        }
-                        // Give service time to start
-                        Thread.sleep(1500)
+                    // ✅ NEW APPROACH: Always start service with ACTION_COLLECT_AND_STOP
+                    // This tells service to: collect data → save → sync → stop itself
+                    Log.i("AlarmReceiver", "🔄 Starting service with COLLECT_AND_STOP action")
+                    val collectIntent = Intent(context, MyService::class.java).apply {
+                        action = MyService.ACTION_COLLECT_AND_STOP
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(collectIntent)
+                    } else {
+                        context.startService(collectIntent)
                     }
 
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val sharedPref = SharedPref.getInstance(context)
-
-                            val currentTime = Calendar.getInstance()
-                            val currentMinute = currentTime.get(Calendar.MINUTE)
-                            val currentSecond = currentTime.get(Calendar.SECOND)
-
-                            Log.i(
-                                "AlarmReceiver",
-                                "📍 Processing at: ${Utils.getCurrent24HourTime()} (minute: $currentMinute, second: $currentSecond)"
-                            )
-
-                            // ✅ STRICT BOUNDARY CHECK: Only process if current time is on 5-minute boundary
-                            if (currentMinute % 5 != 0) {
-                                Log.w("AlarmReceiver", "⏭️ Current time NOT on 5-min boundary (${currentMinute}m) → skipping and rescheduling")
-
-                                // Calculate next 5-minute boundary
-                                val nextBoundaryMinute = ((currentMinute / 5) + 1) * 5
-                                val nextBoundaryTime = Calendar.getInstance().apply {
-                                    if (nextBoundaryMinute >= 60) {
-                                        add(Calendar.HOUR_OF_DAY, 1)
-                                        set(Calendar.MINUTE, 0)
-                                    } else {
-                                        set(Calendar.MINUTE, nextBoundaryMinute)
-                                    }
-                                    set(Calendar.SECOND, 0)
-                                    set(Calendar.MILLISECOND, 0)
-                                }
-
-                                val nextTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(nextBoundaryTime.time)
-                                Log.i("AlarmReceiver", "⏰ Scheduling next alarm at: $nextTimeStr")
-
-                                // Schedule alarm at the exact next 5-minute boundary and CANCEL any existing ones
-                                scheduleAtExactTime(context, nextBoundaryTime.timeInMillis)
-                                return@launch
-                            }
-
-                            Log.i("AlarmReceiver", "✅ On 5-minute boundary - proceeding with API call")
-
-                            // ✅ Normalize to current 5-min boundary for record timestamp
-                            val targetTime = Calendar.getInstance().apply {
-                                set(Calendar.MINUTE, currentMinute)
-                                set(Calendar.SECOND, 0)
-                                set(Calendar.MILLISECOND, 0)
-                            }
-
-                            // ✅ STEP 1: Get last recorded timestamp from SharedPref only
-                            val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
-
-                            if (lastSyncTimestamp == 0L) {
-                                // ✅ SCENARIO 1: No last record → Fresh start
-                                Log.i("AlarmReceiver", "🆕 No previous record found — starting fresh")
-
-                                val apiIntent = Intent(context, MyService::class.java).apply {
-                                    action = MyService.ACTION_CALL_API
-                                }
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                    context.startForegroundService(apiIntent)
-                                else context.startService(apiIntent)
-
-                            } else {
-                                // ✅ SCENARIO 2: Last record exists - check gap
-                                val currentTimestamp = targetTime.timeInMillis
-                                val gapMillis = currentTimestamp - lastSyncTimestamp
-                                val minutesDiff = (gapMillis / (60 * 1000)).toInt()
-
-                                Log.i("AlarmReceiver", "⏱️ Last sync: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(lastSyncTimestamp))}")
-                                Log.i("AlarmReceiver", "⏱️ Current: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(currentTimestamp))}")
-                                Log.i("AlarmReceiver", "⏱️ Gap: $minutesDiff minutes")
-
-                                when {
-                                    minutesDiff < 5 -> {
-                                        // Gap is less than 5 minutes - skip
-                                        Log.w("AlarmReceiver", "⏸️ Gap too small ($minutesDiff min < 5) → skipping")
-                                    }
-
-                                    minutesDiff % 5 == 0 -> {
-                                        // Gap is exactly a multiple of 5 (5, 10, 15, 20...) - call API
-                                        Log.i("AlarmReceiver", "✅ Gap is valid multiple of 5 ($minutesDiff min) — calling API")
-
-                                        val apiIntent = Intent(context, MyService::class.java).apply {
-                                            action = MyService.ACTION_CALL_API
-                                        }
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                            context.startForegroundService(apiIntent)
-                                        else context.startService(apiIntent)
-                                    }
-
-                                    else -> {
-                                        // Gap is >= 5 but NOT a multiple of 5 (e.g., 6, 7, 11, 13...)
-                                        // Skip and schedule at next aligned time
-                                        Log.w("AlarmReceiver", "⚠️ Gap not aligned ($minutesDiff min) → skipping to next aligned time")
-
-                                        // Calculate next valid time: next multiple of 5 from last sync
-                                        val nextValidMinutes = ((minutesDiff / 5) + 1) * 5
-                                        val nextValidTime = lastSyncTimestamp + (nextValidMinutes * 60 * 1000)
-
-                                        val nextTimeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(nextValidTime))
-                                        Log.i("AlarmReceiver", "⏭️ Next aligned time: $nextTimeStr (${nextValidMinutes} min from last sync)")
-
-                                        // Schedule alarm at the next aligned time
-                                        scheduleAtExactTime(context, nextValidTime)
-                                        return@launch
-                                    }
-                                }
-                            }
-
-
-                            // ✅ Always reschedule next alarm aligned to 5-min boundary
-                            scheduleNextAlignedAlarm(context)
-
-                        } catch (e: Exception) {
-                            Log.e("AlarmReceiver", "❌ Error in CALL_API", e)
-                            scheduleNextAlignedAlarm(context)
-                        }
-                    }
+                    // ✅ Service will handle:
+                    // 1. 5-minute boundary validation
+                    // 2. Data collection and saving
+                    // 3. API sync
+                    // 4. Scheduling next alarm
+                    // 5. Stopping itself
+                    Log.i("AlarmReceiver", "✅ Service will collect data and auto-stop after completion")
                 }
 
 

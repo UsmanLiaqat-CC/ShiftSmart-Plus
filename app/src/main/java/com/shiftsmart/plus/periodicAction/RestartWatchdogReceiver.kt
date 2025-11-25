@@ -6,22 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import androidx.work.ListenableWorker
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.SharedPref
-import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
-import com.shiftsmart.plus.utils.Utils.toLocalDate
-import java.time.LocalDate
-import kotlin.text.compareTo
 
+class RestartWatchdogReceiver : BroadcastReceiver() {
 
-class ShiftRestartReceiver : BroadcastReceiver() {
-    private val TAG = "ShiftRestartReceiver"
+    override fun onReceive(context: Context, intent: Intent?) {
 
-    override fun onReceive(context: Context, intent: Intent) {
-        Log.i(TAG, "⏰ Restart alarm triggered - checking if service should start...")
 
         val sharedPref = SharedPref.getInstance(context = context)
         val user = sharedPref?.getUser()
@@ -35,6 +30,8 @@ class ShiftRestartReceiver : BroadcastReceiver() {
         }
 
 
+        // reschedule again
+        RestartWatchdogManager.scheduleOneMinuteRestart(context)
     }
 
 }

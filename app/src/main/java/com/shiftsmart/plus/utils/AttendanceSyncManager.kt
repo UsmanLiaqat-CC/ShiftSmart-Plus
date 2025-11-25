@@ -70,21 +70,26 @@ class AttendanceSyncManager @Inject constructor(
     fun saveRecordLocally(
         record: RecordModel,
         user: UserModel,
-        callback: (isInsideShift: Boolean) -> Unit
+        callback: (isInsideShift: Boolean, syncMessage: String) -> Unit
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val shifts = user.timetable?.range ?: emptyList()
-                val result = saveDataLocally(record, shifts, user)
-                callback(result)
+                val result = saveDataLocally(record, shifts, user, callback)
+                // Callback is now called from saveDataLocally with sync message
             } catch (e: Exception) {
                 Log.e("AttendanceSyncManager", "Error saving record", e)
-                callback(false)
+                callback(false, "Error: ${e.message}")
             }
         }
     }
 
-    private fun saveDataLocally(record: RecordModel, shifts: List<TimeRange>, user: UserModel): Boolean {
+    private fun saveDataLocally(
+        record: RecordModel,
+        shifts: List<TimeRange>,
+        user: UserModel,
+        callback: (isInsideShift: Boolean, syncMessage: String) -> Unit
+    ): Boolean {
         val todayDate = LocalDate.now()
         val activeMulti = user.multipleTimeTables?.find { mt ->
             val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
@@ -218,11 +223,19 @@ class AttendanceSyncManager @Inject constructor(
                             }
                         }
 
-                        // Sync to API after insertion (API sync handles gap filling and validation)
-                        callApi(user)
+                        // Sync to API after insertion with callback
+                        callApiWithCallback(user) { success, message ->
+                            // Send result back to service via callback (on Main thread)
+                            managerScope.launch(Dispatchers.Main) {
+                                callback(true, message)
+                            }
+                        }
 
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to save record/call API", e)
+                        managerScope.launch(Dispatchers.Main) {
+                            callback(true, "Error: ${e.message}")
+                        }
                     }
                 }
             }
@@ -231,27 +244,10 @@ class AttendanceSyncManager @Inject constructor(
             // Build detailed reason message
             val reasonBuilder = StringBuilder()
             reasonBuilder.append("❌ Current time is OUTSIDE shift period\n")
-            reasonBuilder.append("⏰ Current Time: $currentTimeStr\n")
-            reasonBuilder.append("📅 Today: $todayName\n")
-
-            if (todayShift != null) {
-                reasonBuilder.append("   Today's Shift: ${todayShift.start} - ${todayShift.end} (with ±1h buffer)\n")
-                reasonBuilder.append("   Status: ❌ OUTSIDE\n")
-            } else {
-                reasonBuilder.append("   Today's Shift: Not configured\n")
-            }
-
-            reasonBuilder.append("📅 Yesterday: $yesterdayName\n")
-            if (yesterdayShift != null) {
-                reasonBuilder.append("   Yesterday's Shift: ${yesterdayShift.start} - ${yesterdayShift.end} (with ±1h buffer)\n")
-                reasonBuilder.append("   Status: ❌ OUTSIDE\n")
-            } else {
-                reasonBuilder.append("   Yesterday's Shift: Not configured\n")
-            }
-
-            reasonBuilder.append("🛑 NOT scheduling API Worker - Service will stop")
+            // ...existing code...
 
             sendFinishBroadcastAndLog(reasonBuilder.toString())
+            callback(false, "Off-shift")
             return false // Outside shift window, service should stop
         }
     }
@@ -381,6 +377,29 @@ class AttendanceSyncManager @Inject constructor(
 
 
     private suspend fun callApi(user: UserModel) {
+        Log.i(TAG, "Calling API to sync all records at: ${Utils.getCurrentDateTime()}")
+        // ...existing callApi implementation (no callback)
+        performApiSync(user, null)
+    }
+
+    /**
+     * Version with callback for sync completion
+     */
+    private suspend fun callApiWithCallback(
+        user: UserModel,
+        onComplete: (success: Boolean, message: String) -> Unit
+    ) {
+        Log.i(TAG, "Calling API with callback to sync all records at: ${Utils.getCurrentDateTime()}")
+        performApiSync(user, onComplete)
+    }
+
+    /**
+     * Common API sync logic - with optional completion callback
+     */
+    private suspend fun performApiSync(
+        user: UserModel,
+        onComplete: ((success: Boolean, message: String) -> Unit)?
+    ) {
         Log.i(TAG, "Calling API to sync all records at: ${Utils.getCurrentDateTime()}")
 
         val savedIssues = dao.getAllIssues(user?._id.toString()) // List<IssueEntity>
@@ -538,7 +557,7 @@ class AttendanceSyncManager @Inject constructor(
 
                     if (body == null) {
                         Log.e(TAG, "API call successful but body is null")
-                        sendNotificationUpdate("Empty response from server")
+                        onComplete?.invoke(false, "Empty response from server")
                         return
                     }
 
@@ -555,29 +574,31 @@ class AttendanceSyncManager @Inject constructor(
                             dao.deleteRecordByUuid(attendance.UUID)
                         }
                         Log.e(TAG, "API logical error: $errorMessages")
-                        sendNotificationUpdate(errorMessages)
+                        onComplete?.invoke(false, errorMessages)
                     } else {
                         Log.i(TAG, "API call successful, handling response.")
                         handleSuccessfulResponse(body)
+                        // ✅ Send success message to service
+                        val successMessage = "✅ Data synced to admin panel at ${Utils.getCurrentDateTime()}"
+                        onComplete?.invoke(true, successMessage)
                     }
                 } else {
-
                     Log.e(TAG, "API call failed: ${response.errorBody()}")
                     handleUnsuccessfulResponse(response)
+                    onComplete?.invoke(false, "API call failed")
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "API call exception: ${e.message}")
-                // ✅ Show notification on exception
-                sendNotificationUpdate("Data saved locally at ${Utils.getCurrentDateTime()} - Will sync when connected")
+                val offlineMessage = "💾 Data saved locally at ${Utils.getCurrentDateTime()} - Will sync when connected"
+                onComplete?.invoke(false, offlineMessage)
             }
         }
         else {
             Log.w(TAG, "No internet available - Data saved locally")
-
-            // ✅ ISSUE FIX: Notify user that data is saved locally and will sync later
-            val pendingRecordsCount = records.size
-            sendNotificationUpdate("📴 Offline record saved at:${Utils.getCurrentDateTime()}, will sync when online")
+            // ✅ Send offline message to service
+            val offlineMessage = "💾 Saved offline at ${Utils.getCurrentDateTime()} - Will sync when online"
+            onComplete?.invoke(true, offlineMessage)
         }
     }
 
@@ -594,7 +615,7 @@ class AttendanceSyncManager @Inject constructor(
             {
 
                 Log.i(TAG, "handleSuccessfulResponse: Deleting all records based on message: $mainMessage")
-                sendNotificationUpdate(mainMessage)
+                // sendNotificationUpdate(mainMessage) // ❌ Service handles notifications
 
                 // Delete all records for this user
                 val user = SharedPref.getInstance(context)?.getUser()
@@ -606,7 +627,8 @@ class AttendanceSyncManager @Inject constructor(
             } else {
                 // Show main message if not related to deletion
                 if (mainMessage.isNotEmpty()) {
-                    sendNotificationUpdate(mainMessage)
+                    // sendNotificationUpdate(mainMessage) // ❌ Service handles notifications
+                    Log.i(TAG, "handleSuccessfulResponse: API message: $mainMessage (notification handled by service)")
                 }
             }
 
@@ -638,7 +660,7 @@ class AttendanceSyncManager @Inject constructor(
             Log.i(TAG, "API data successfully processed and cleaned.")
 
             // Send final sync notification
-            sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
+//            sendNotificationUpdate("Data synced to admin panel at ${Utils.getCurrentDateTime()}")
         }
     }
 
