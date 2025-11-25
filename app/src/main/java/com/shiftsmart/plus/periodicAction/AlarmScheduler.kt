@@ -134,6 +134,9 @@ object AlarmScheduler {
                 // Note: WorkManager health check is now handled by ServiceHealthWorkerManager
                 // initialized in MainActivity on login
 
+                // ✅ CRITICAL: Start PeriodicSyncWorker as fallback for Android 10 Doze restrictions
+                PeriodicSyncWorkerManager.startPeriodicSync(context)
+
                 if (reschedulePeriodic) {
                     // Schedules one-shot CALL_API aligned to next 5-min mark (receiver re-arms)
                     schedulePeriodicAlarm(context)
@@ -296,26 +299,14 @@ object AlarmScheduler {
             Log.i(TAG, "   Minute: ${calendar.get(Calendar.MINUTE)}")
             Log.i(TAG, "========================================")
 
-            // ⛔️ Consider removing this: wake lock at schedule-time does not help at fire-time.
-            // Prefer acquiring/releasing in AlarmReceiver/MyService when the alarm actually fires.
-            acquireWakeLock(context)
+            // ⛔️ REMOVED: Wake lock at schedule-time is ineffective and wasteful.
+            // Wake locks should be acquired when the alarm FIRES (in AlarmReceiver).
         } catch (e: Exception) {
             Log.e(TAG, "Error scheduling service", e)
         }
     }
 
 
-    private fun acquireWakeLock(context: Context) {
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        val wakeLock = powerManager.newWakeLock(
-            PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
-            "MyApp::AlarmFullWakeLock"
-        )
-        if (!wakeLock.isHeld) {
-            wakeLock.acquire(10 * 1000L)
-//            Log.i("AlarmScheduler", "Wake lock acquired and screen turned on.")
-        }
-    }
 
     private fun getNextFiveMinuteAlignedTime(): Long {
         val now = Calendar.getInstance()

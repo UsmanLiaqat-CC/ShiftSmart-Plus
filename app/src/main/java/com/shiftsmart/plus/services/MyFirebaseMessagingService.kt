@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -29,74 +30,91 @@ enum class NotificationType {
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        Log.d("MyFirebaseMessagingService", "FromBody: ${remoteMessage.notification?.body}")
-        // 🔹 Handle Data Payload
-        remoteMessage.data.let { data ->
-
-            val userJson = data["user"] ?: return
-            val jsonObject = JSONObject(userJson)
-            Log.d("MyFirebaseMessagingService", "Message data payload: $jsonObject")
-
-            val title = remoteMessage.notification?.title ?: "New Update"
-            val body = remoteMessage.notification?.body ?: "You have a new notification."
-
-            try {
-                val isActive = jsonObject.optBoolean("isActive")
-                val notificationType = jsonObject.optString("type")
-
-                if (notificationType==NotificationType.REMINDER.name || notificationType==NotificationType.SHIFT_START.name) {
-                    Log.e("MyFirebaseMessagingService", "Notification Type: ${notificationType}")
-                    val sharedPref = SharedPref.getInstance(context = applicationContext)
-                    val user = sharedPref?.getUser()
-                    user?.isActive = isActive
-                    sharedPref?.saveUser(user) // save updated user
-                    if (user != null) {
-                        Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
-                        handleUserFromNotification(applicationContext, user)
-                    }else{
-                        Log.e("MyFirebaseMessagingService", "user null")
-                    }
-
-                } else if (notificationType==NotificationType.USER_UPDATE.name) {
-                    Log.e("MyFirebaseMessagingService", "Notification Type: USER_UPDATE")
-                    val timetableJson = jsonObject.optJSONObject("timetable")?.toString()
-                    val timetableModel = Gson().fromJson(timetableJson, TimeTable::class.java)
-                    val multiTimeTableJson = jsonObject.optJSONArray("multipleTimeTables")?.toString()
-                    val multiTimeTableList: List<MultipleTimeTable> = Gson().fromJson(
-                        multiTimeTableJson,
-                        object : TypeToken<List<MultipleTimeTable>>() {}.type
-                    )
-                    val sharedPref = SharedPref.getInstance(context = applicationContext)
-                    val user = sharedPref?.getUser()
-                    user?.isActive = isActive
-                    user?.timetable = timetableModel
-                    user?.multipleTimeTables = multiTimeTableList
-
-                    sharedPref?.saveUser(user) // save updated user
-
-                    if (user != null) {
-                        Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
-                        handleUserFromNotification(applicationContext, user)
-                    }else{
-                        Log.e("MyFirebaseMessagingService", "user null")
-                    }
-
-                }
-
-
-            } catch (e: Exception) {
-                Log.e("MyFirebaseMessagingService", "Failed to parse user model", e)
+        // ✅ CRITICAL: Acquire wake lock IMMEDIATELY to ensure notification processing during Doze Mode
+        val wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).run {
+            newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "ShiftSmart::FCMWakeLock"
+            ).apply {
+                setReferenceCounted(false)
+                acquire(2 * 60 * 1000L) // 2 minutes to process notification
             }
+        }
 
-            // 🔔 Always show a notification manually (for foreground handling)
-            showNotification(title, body)
+        try {
+            Log.d("MyFirebaseMessagingService", "📬 FCM received at ${System.currentTimeMillis()}")
+            Log.d("MyFirebaseMessagingService", "FromBody: ${remoteMessage.notification?.body}")
+
+            // 🔹 Handle Data Payload
+            remoteMessage.data.let { data ->
+                val userJson = data["user"] ?: return@let
+                val jsonObject = JSONObject(userJson)
+                Log.d("MyFirebaseMessagingService", "Message data payload: $jsonObject")
+
+                val title = remoteMessage.notification?.title ?: "New Update"
+                val body = remoteMessage.notification?.body ?: "You have a new notification."
+
+                try {
+                    val isActive = jsonObject.optBoolean("isActive")
+                    val notificationType = jsonObject.optString("type")
+
+                    if (notificationType==NotificationType.REMINDER.name || notificationType==NotificationType.SHIFT_START.name) {
+                        Log.e("MyFirebaseMessagingService", "Notification Type: ${notificationType}")
+                        val sharedPref = SharedPref.getInstance(context = applicationContext)
+                        val user = sharedPref?.getUser()
+                        user?.isActive = isActive
+                        sharedPref?.saveUser(user) // save updated user
+                        if (user != null) {
+                            Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
+                            handleUserFromNotification(applicationContext, user)
+                        }else{
+                            Log.e("MyFirebaseMessagingService", "user null")
+                        }
+
+                    } else if (notificationType==NotificationType.USER_UPDATE.name) {
+                        Log.e("MyFirebaseMessagingService", "Notification Type: USER_UPDATE")
+                        val timetableJson = jsonObject.optJSONObject("timetable")?.toString()
+                        val timetableModel = Gson().fromJson(timetableJson, TimeTable::class.java)
+                        val multiTimeTableJson = jsonObject.optJSONArray("multipleTimeTables")?.toString()
+                        val multiTimeTableList: List<MultipleTimeTable> = Gson().fromJson(
+                            multiTimeTableJson,
+                            object : TypeToken<List<MultipleTimeTable>>() {}.type
+                        )
+                        val sharedPref = SharedPref.getInstance(context = applicationContext)
+                        val user = sharedPref?.getUser()
+                        user?.isActive = isActive
+                        user?.timetable = timetableModel
+                        user?.multipleTimeTables = multiTimeTableList
+
+                        sharedPref?.saveUser(user) // save updated user
+
+                        if (user != null) {
+                            Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
+                            handleUserFromNotification(applicationContext, user)
+                        }else{
+                            Log.e("MyFirebaseMessagingService", "user null")
+                        }
+                    }
+
+                    // 🔔 Always show a notification manually (for foreground handling)
+                    showNotification(title, body)
+
+                } catch (e: Exception) {
+                    Log.e("MyFirebaseMessagingService", "Failed to parse user model", e)
+                }
+            }
+        } finally {
+            // ✅ Release wake lock after processing
+            if (wakeLock.isHeld) {
+                wakeLock.release()
+                Log.d("MyFirebaseMessagingService", "Wake lock released")
+            }
         }
     }
 
     private fun showNotification(title: String, message: String) {
         val channelId = "user_updates_channel"
-        val notificationManager =
-            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -163,7 +181,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 if (isServiceRunning(context, MyService::class.java)) {
                     Log.i("MyFirebaseMessagingService", "Service is running. Stopping service.")
 
-                    val notificationManager =context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    val notificationManager = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
                     notificationManager.cancelAll()
                     Log.i("Service", "Service is running. Stopping it now.")
 //                    context.stopService(Intent(context, MyService::class.java))

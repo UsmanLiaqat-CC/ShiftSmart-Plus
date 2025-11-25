@@ -9,6 +9,7 @@ import androidx.work.WorkerParameters
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
+import com.shiftsmart.plus.utils.DeviceCompatibilityHelper
 
 /**
  * ⏰ PERIODIC SERVICE HEALTH MONITOR (Every 15 Minutes)
@@ -51,6 +52,11 @@ class ServiceHealthWorker(
     override fun doWork(): Result {
         Log.i(TAG, "⏰ 15-min health check at ${Utils.getCurrentDateTime()}")
 
+        // Log device info for problematic devices
+        if (DeviceCompatibilityHelper.isProblematicDevice()) {
+            Log.w(TAG, "⚠️ Running on problematic device: ${Build.MANUFACTURER} ${Build.MODEL}")
+        }
+
         val user = SharedPref.getInstance(applicationContext)?.getUser()
         if (user == null) {
             Log.e(TAG, "❌ No user found - cannot check shift status")
@@ -90,10 +96,11 @@ class ServiceHealthWorker(
      * Robust service detection that checks multiple indicators.
      * This is more reliable than just isServiceRunning() which can return
      * false positives on some devices (especially in Doze mode).
+     *
+     * DEVICE-SPECIFIC THRESHOLDS:
+     * - Normal devices: 5 minutes since last sync
+     * - Mara/Mobicel: 20 minutes since last sync (more lenient due to aggressive power management)
      */
-
-
-
     private fun isServiceReallyRunning(): Boolean {
         // Method 1: Standard Android API check
         val apiCheck = Utils.isServiceRunning(applicationContext, MyService::class.java)
@@ -104,13 +111,20 @@ class ServiceHealthWorker(
         val now = System.currentTimeMillis()
         val minutesSinceLastSync = ((now - lastSyncTimestamp) / (60 * 1000)).toInt()
 
-        // If last sync was within 5 minutes, service is likely running
-        // Reduced from 20 to 5 to detect failures faster, but monitor for false positives in Doze mode
-        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < 5
+        // Device-specific threshold for last sync check
+        // Problematic devices (Mara/Mobicel) get more lenient threshold due to Doze Mode
+        val syncThresholdMinutes = if (DeviceCompatibilityHelper.isProblematicDevice()) {
+            20 // 20 minutes for Mara/Mobicel (accounts for Doze delays)
+        } else {
+            5 // 5 minutes for normal devices
+        }
+
+        // If last sync was within threshold, service is likely running
+        val recentSyncCheck = lastSyncTimestamp > 0L && minutesSinceLastSync < syncThresholdMinutes
 
         Log.i(
             TAG,
-            "   🔍 Service check: API=$apiCheck, RecentSync=$recentSyncCheck (${minutesSinceLastSync}m ago)"
+            "   🔍 Service check: API=$apiCheck, RecentSync=$recentSyncCheck (${minutesSinceLastSync}m ago, threshold=${syncThresholdMinutes}m)"
         )
 
         // Service is considered running if EITHER check passes

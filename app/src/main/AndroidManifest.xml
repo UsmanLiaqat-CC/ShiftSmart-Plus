@@ -107,7 +107,12 @@
 
         <receiver
             android:name=".periodicAction.AlarmReceiver"
-            android:exported="false" />
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.ALARM" />
+            </intent-filter>
+        </receiver>
 
         <meta-data
             android:name="androidx.work.WorkManagerInitializer"

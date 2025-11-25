@@ -97,6 +97,10 @@ class BootReceiver : BroadcastReceiver() {
                     multipleTimeTables = multi,
                     reschedulePeriodic = true
                 )
+
+                // ✅ CRITICAL: Start PeriodicSyncWorker for Android 10 compatibility
+                PeriodicSyncWorkerManager.startPeriodicSync(appContext)
+
                 Log.i("BootReceiver", "Alarms (today+tomorrow) scheduled after $action")
             } else {
                 // 🚫 Inactive user → ensure service is stopped (if somehow running)

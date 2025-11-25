@@ -1,44 +1,29 @@
 package com.shiftsmart.plus.periodicAction
 
-import android.app.ActivityManager
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
-import android.provider.Settings
+import android.os.PowerManager
 import android.util.Log
-import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.models.UserModel
-
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.ui.activities.WakeUpActivity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.toLocalDate
+import com.shiftsmart.plus.utils.DeviceCompatibilityHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-
-import java.time.Duration
 import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import java.util.TimeZone
-import kotlin.div
-import kotlin.text.compareTo
-import kotlin.text.format
-import kotlin.text.get
-import kotlin.text.set
-import kotlin.text.toInt
-import kotlin.times
 
 /**
  * AlarmReceiver
@@ -74,6 +59,26 @@ import kotlin.times
 class AlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
+        // ✅ CRITICAL: Acquire wake lock IMMEDIATELY when alarm fires
+        // Use longer wake lock for problematic devices (Mara/Mobicel)
+        val wakeLockDuration = if (DeviceCompatibilityHelper.needsAggressiveWakeLock()) {
+            5 * 60 * 1000L // 5 minutes for problematic devices
+        } else {
+            3 * 60 * 1000L // 3 minutes for normal devices
+        }
+
+        val wakeLock = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).run {
+            newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ShiftSmart::AlarmReceiverWakeLock").apply {
+                setReferenceCounted(false)
+                acquire(wakeLockDuration)
+            }
+        }
+
+        // Log device info on first alarm
+        if (intent?.action == "START_SERVICE") {
+            DeviceCompatibilityHelper.logDeviceInfo()
+        }
+
         try {
             Log.i("TAG", "AlarmReceiver: onReceive at ${Utils.getCurrentDateTime()}")
 
@@ -277,6 +282,12 @@ class AlarmReceiver : BroadcastReceiver() {
 
         } catch (e: Exception) {
             Log.e("TAG", "Error in AlarmReceiver onReceive", e)
+        } finally {
+            // ✅ CRITICAL: Always release wake lock
+            if (wakeLock.isHeld) {
+                wakeLock.release()
+                Log.d("AlarmReceiver", "Wake lock released")
+            }
         }
     }
 
