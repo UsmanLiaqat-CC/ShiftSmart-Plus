@@ -47,11 +47,8 @@ import com.shiftsmart.plus.utils.AttendanceSyncManager
 import com.shiftsmart.plus.utils.BatteryOptimizationHelper
 import com.shiftsmart.plus.utils.LocationHelper
 import com.shiftsmart.plus.utils.SharedPref
-import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
-import com.shiftsmart.plus.utils.Utils.getCurrentDayName
-import com.shiftsmart.plus.utils.Utils.isServiceRunning
-import com.shiftsmart.plus.utils.Utils.toLocalDate
+import com.shiftsmart.plus.utils.WifiScanner
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -97,8 +94,7 @@ class MyService : Service() {
     private val TAG = "MyService"
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private lateinit var wifiManager: WifiManager
-    private var isWifiReceiverRegistered = false
+    private lateinit var wifiScanner: WifiScanner
     private var currentIntent: Intent? = null  // ✅ Store intent for access in maybeTriggerApiCall
 
 
@@ -111,41 +107,24 @@ class MyService : Service() {
     private lateinit var wakeLock: PowerManager.WakeLock
     private var isServiceRunning = false
 
-    private val wifiScanResults = mutableListOf<WifiModel>()
-
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
-    @Inject lateinit var locationHelper: LocationHelper
 
+    @Inject lateinit var locationHelper: LocationHelper
     @Inject lateinit var attendanceSyncManager: AttendanceSyncManager
 
-    // Broadcast Receivers
-    private val wifiScanReceiver = object : BroadcastReceiver() {
-        @SuppressLint("MissingPermission")
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false) == true) {
-                wifiScanResults.clear()
-                wifiScanResults.addAll(wifiManager.scanResults.map { WifiModel(it.SSID, it.BSSID, it.level) })
-
-                setWifiList(wifiScanResults)
-            }
-        }
-    }
-    private var isNotificatoinRegistered = false
+    // Notification Broadcast Receiver
+    private var isNotificationRegistered = false
     private val notificationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val message = intent?.getStringExtra("message")
             Log.i("NotificationReceiver", "Received notification update: $message")
             if (context != null) {
-                updateForegroundNotification(context,message.toString())
+                updateForegroundNotification(context, message.toString())
             }
         }
     }
 
-    fun setWifiList(wifiList: MutableList<WifiModel>) {
-        wifiScanResults.clear()
-        wifiScanResults.addAll(wifiList);
-    }
 
     override fun onCreate() {
         super.onCreate()
@@ -185,7 +164,13 @@ class MyService : Service() {
         when (intent?.action) {
             ACTION_START -> handleServiceStart()
             ACTION_STOP -> handleServiceStop()
-            ACTION_RESTART -> handleServiceRestart()
+            ACTION_RESTART -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    handleServiceRestart()
+                } else {
+                    handleServiceStart()
+                }
+            }
             ACTION_CALL_API -> {
                 // ✅ Only trigger work, DO NOT touch notification
                 Log.i(TAG, "🔄 CALL_API invoked — service already running, no notification update")
@@ -196,7 +181,13 @@ class MyService : Service() {
                 Log.i(TAG, "🔄 COLLECT_AND_STOP invoked — will collect data and stop after completion")
                 handleCollectAndStop()
             }
-            else -> handleRegularStart()
+            else -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    handleRegularStart()
+                } else {
+                    handleServiceStart()
+                }
+            }
         }
 
         return START_STICKY
@@ -214,6 +205,14 @@ class MyService : Service() {
             acquire(10 * 60 * 1000L)// 10 minutes
 
         }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun handleServiceRestart() {
+        Log.i(TAG, "Restarting service")
+        // ✅ Always restart when ACTION_RESTART is received (emergency restart from onDestroy/onTaskRemoved)
+        startServiceInForeground()
+        checkShiftAndScheduleTasks()
     }
 
     private fun checkBatteryOptimizations() {
@@ -264,24 +263,14 @@ class MyService : Service() {
     }
 
     private fun unregisterReceivers() {
-        // Unregister WiFi receiver
-        if (isWifiReceiverRegistered) {
+        // Unregister notification receiver
+        if (isNotificationRegistered) {
             try {
-                unregisterReceiver(wifiScanReceiver)
-                isWifiReceiverRegistered = false
-                Log.d(TAG, "WiFi scan receiver unregistered")
+                LocalBroadcastManager.getInstance(this).unregisterReceiver(notificationReceiver)
+                isNotificationRegistered = false
+                Log.d(TAG, "Notification receiver unregistered")
             } catch (e: IllegalArgumentException) {
-                Log.w(TAG, "WiFi receiver already unregistered")
-            }
-        }
-
-        if (isNotificatoinRegistered) {
-            try {
-                unregisterReceiver(notificationReceiver)
-                isNotificatoinRegistered = false
-                Log.d(TAG, "notification receiver unregistered")
-            } catch (e: IllegalArgumentException) {
-                Log.w(TAG, "notification already unregistered")
+                Log.w(TAG, "Notification receiver already unregistered")
             }
         }
 
@@ -290,7 +279,7 @@ class MyService : Service() {
     private fun initializeComponents() {
         dao = db.dbDao()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        wifiScanner = WifiScanner(this)
         createNotificationChannel()
     }
 
@@ -312,15 +301,14 @@ class MyService : Service() {
         }
     }
     private fun registerReceivers() {
-        registerWifiScanReceiver()
         registerNotificationReceiver()
-
     }
+
     private fun registerNotificationReceiver() {
-        if (!isNotificatoinRegistered) {
+        if (!isNotificationRegistered) {
             try {
                 LocalBroadcastManager.getInstance(this).registerReceiver(notificationReceiver, IntentFilter("UPDATE_NOTIFICATION"))
-                isNotificatoinRegistered = true
+                isNotificationRegistered = true
                 Log.d(TAG, "Notification receiver registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register notification receiver", e)
@@ -328,22 +316,6 @@ class MyService : Service() {
         }
     }
 
-
-    @SuppressLint("MissingPermission")
-    private fun registerWifiScanReceiver() {
-        if (!isWifiReceiverRegistered) {
-            try {
-                registerReceiver(
-                    wifiScanReceiver,
-                    IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
-                )
-                isWifiReceiverRegistered = true
-                Log.d(TAG, "WiFi scan receiver registered")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to register WiFi receiver", e)
-            }
-        }
-    }
 
     private var lastCheckDate: LocalDate? = null
 
@@ -397,10 +369,10 @@ class MyService : Service() {
                     latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
                 }
 
-                // Start wifi scan if enabled
-                if (wifiManager.isWifiEnabled) {
-                    startWifiScanning()
-                }
+                // Get fresh WiFi scan results using new WifiScanner
+                Log.i(TAG, "📶 Fetching fresh WiFi list...")
+                val wifiList = wifiScanner.getFreshWifiList()
+                Log.i(TAG, "📶 WiFi scan complete: ${wifiList.size} networks found")
 
                 // Create record
                 val record = RecordModel(
@@ -414,12 +386,12 @@ class MyService : Service() {
                     attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
                     isForceAttendance = false,
                     isLocation = locationHelper.hasLocationPermissions(),
-                    wifiService = wifiManager.isWifiEnabled,
+                    wifiService = wifiScanner.isWifiEnabled(),
                     dataService = Utils.isMobileDataEnabled(this@MyService),
                     notification = Utils.isNotificationPermissionGranted(this@MyService),
                     batterySaver = !Utils.isBatterySaverOn(this@MyService),
                     batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiScanResults.toList()
+                    wifi_list = wifiList
                 )
 
                 Log.i(TAG, "📝 Record created at ${record.localTime}")
@@ -491,28 +463,10 @@ class MyService : Service() {
             .build()
     }
 
-    // Function to make API call only once
-
-    @SuppressLint("MissingPermission")
-    private fun startWifiScanning() {
-        try {
-            if (wifiManager.isWifiEnabled) {
-                wifiManager.startScan()
-                Log.d(TAG, "WiFi scan started")
-            } else {
-                Log.d(TAG, "WiFi is disabled, cannot scan")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start WiFi scan", e)
-        }
-    }
-
-
-
     private fun handleServiceStart() {
         Log.i(TAG, "Starting service")
         updateForegroundNotification(this, "Attendance tracking started")
-        startForegroundService()
+        startServiceInForeground()
 
         // ✅ Ensure backup mechanisms are active
         Log.i(TAG, "Initializing backup mechanisms...")
@@ -554,10 +508,10 @@ class MyService : Service() {
                     latch.await(5, java.util.concurrent.TimeUnit.SECONDS) // Shorter timeout
                 }
 
-                // Scan wifi if enabled
-                if (wifiManager.isWifiEnabled) {
-                    startWifiScanning()
-                }
+                // Get fresh WiFi scan results using new WifiScanner
+                Log.i(TAG, "📶 Fetching WiFi list for final record...")
+                val wifiList = wifiScanner.getFreshWifiList()
+                Log.i(TAG, "📶 WiFi scan complete: ${wifiList.size} networks found")
 
                 // Create final record
                 val record = RecordModel(
@@ -571,12 +525,12 @@ class MyService : Service() {
                     attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
                     isForceAttendance = false,
                     isLocation = locationHelper.hasLocationPermissions(),
-                    wifiService = wifiManager.isWifiEnabled,
+                    wifiService = wifiScanner.isWifiEnabled(),
                     dataService = Utils.isMobileDataEnabled(this@MyService),
                     notification = Utils.isNotificationPermissionGranted(this@MyService),
                     batterySaver = !Utils.isBatterySaverOn(this@MyService),
                     batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiScanResults.toList()
+                    wifi_list = wifiList
                 )
 
                 Log.i(TAG, "💾 Saving final record at ${record.localTime}")
@@ -743,10 +697,10 @@ class MyService : Service() {
                     Log.w(TAG, "⚠️ Location permission not granted — skipping location fetch")
                 }
 
-                // Start wifi scan if enabled
-                if (wifiManager.isWifiEnabled) {
-                    startWifiScanning()
-                }
+                // Get fresh WiFi scan results using new WifiScanner
+                Log.i(TAG, "📶 Fetching fresh WiFi list...")
+                val wifiList = wifiScanner.getFreshWifiList()
+                Log.i(TAG, "📶 WiFi scan complete: ${wifiList.size} networks found")
 
                 // Create record with collected data
                 val record = RecordModel(
@@ -760,12 +714,12 @@ class MyService : Service() {
                     attendanceStatus = Utils.checkInternetAndSetStatus(this@MyService),
                     isForceAttendance = false,
                     isLocation = locationHelper.hasLocationPermissions(),
-                    wifiService = wifiManager.isWifiEnabled,
+                    wifiService = wifiScanner.isWifiEnabled(),
                     dataService = Utils.isMobileDataEnabled(this@MyService),
                     notification = Utils.isNotificationPermissionGranted(this@MyService),
                     batterySaver = !Utils.isBatterySaverOn(this@MyService),
                     batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiScanResults.toList()
+                    wifi_list = wifiList
                 )
 
                 Log.i(TAG, "📝 Created record at ${record.localTime}")
@@ -815,17 +769,6 @@ class MyService : Service() {
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.Q)
-    private fun handleServiceRestart() {
-
-        Log.i(TAG, "Restarting service")
-        // ✅ Always restart when ACTION_RESTART is received (emergency restart from onDestroy/onTaskRemoved)
-        startForegroundService()
-        startWifiScanning()
-        checkShiftAndScheduleTasks()
-    }
-
-
 
     private fun checkShiftAndScheduleTasks() {
         val user = SharedPref.getInstance(this)?.getUser() ?: run {
@@ -850,8 +793,7 @@ class MyService : Service() {
     }
 
 
-    @RequiresApi(Build.VERSION_CODES.Q)
-    private fun startForegroundService() {
+    private fun startServiceInForeground() {
         val notification = createNotification("Service started").apply {
             flags = flags or Notification.FLAG_NO_CLEAR
         }
@@ -872,9 +814,7 @@ class MyService : Service() {
 
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun handleRegularStart() {
-
-        startForegroundService()
-        startWifiScanning()
+        startServiceInForeground()
         checkShiftAndScheduleTasks()
 
     }

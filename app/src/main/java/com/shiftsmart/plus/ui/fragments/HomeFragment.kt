@@ -8,7 +8,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.location.LocationManager
-import android.net.wifi.ScanResult
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -56,7 +55,6 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.getCurrentDateTime
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
-import com.shiftsmart.plus.utils.Utils.rssiToPercentage
 import com.shiftsmart.plus.utils.WifiScanner
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -83,8 +81,6 @@ import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.util.Calendar
 import java.util.Locale
-import kotlin.text.compareTo
-import kotlin.text.toLong
 import kotlin.toString
 
 @AndroidEntryPoint
@@ -204,23 +200,16 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         val user = SharedPref.getInstance(requireContext())?.getUser()
         user?.let {
-            val userId = it._id?.toString()
-            if (userId != null) {
-                dao.getAllLiveRecords(userId).observe(viewLifecycleOwner, Observer { records ->
-                    if (records.isNotEmpty()) {
-                        mBinding.cacheStatusTv.text = records.size.toString()
-                        mBinding.syncButton.visibility = View.VISIBLE
-                    } else {
-                        mBinding.cacheStatusTv.text = "0"
-                        mBinding.syncButton.visibility = View.GONE
-                    }
-                })
-            } else {
-                Log.e("User ID Error", "_id is null")
-                mBinding.cacheStatusTv.text = "0"
-                mBinding.syncButton.visibility = View.GONE
-            }
-
+            val userId = it._id
+            dao.getAllLiveRecords(userId).observe(viewLifecycleOwner, Observer { records ->
+                if (records.isNotEmpty()) {
+                    mBinding.cacheStatusTv.text = records.size.toString()
+                    mBinding.syncButton.visibility = View.VISIBLE
+                } else {
+                    mBinding.cacheStatusTv.text = "0"
+                    mBinding.syncButton.visibility = View.GONE
+                }
+            })
         }
         setUpProgressDialog()
         setUpClickListeners()
@@ -433,7 +422,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         val user = SharedPref.getInstance(context)?.getUser() ?: return false
 
         return withContext(Dispatchers.IO) {
-            val issues = dao.getAllIssues(user._id.toString())
+            val issues = dao.getAllIssues(user._id)
 
             val requiredKeys = setOf(
                 "battery_saver_on",
@@ -528,7 +517,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                         try {
                             // Step 1: Fetch all records from the database
 
-                            val savedIssues = dao.getAllIssues(itit?._id.toString()) // List<IssueEntity>
+                            val savedIssues = dao.getAllIssues(itit._id)
 
                             val errorList = savedIssues.map {
                                 ErrorModel(
@@ -538,7 +527,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     time = Utils.getUTCFromTimestamp(it.timestamp)
                                 )
                             }
-                            val allRecords = dao.getAllRecords(user._id.toString()).map { it.toDataRequest(errorList) }
+                            val allRecords = dao.getAllRecords(itit._id).map { it.toDataRequest(errorList) }
 
                             // ✅ COMPREHENSIVE VALIDATION: Recheck gaps, fill missing records,
                             // remove invalid ones, and sort by local time in ascending order
@@ -854,7 +843,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                             withContext(Dispatchers.IO) {
                                 val user = SharedPref.getInstance(requireContext())?.getUser()
                                 user?.let {
-                                    val userId = it._id.toString()
+                                    val userId = it._id
                                     db.dbDao().deleteAllRecordsByUserId(userId)
                                     Log.i(TAG, "setUpObserver: Deleted all records for user: $userId")
                                 }
@@ -1017,61 +1006,59 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         mBinding.statusTv.text = ""
         try {
-            var wifiList = listOf<WifiModel>()
-            wifiScanner.scanWifiNetworks { scanResults ->
-                wifiList = if (scanResults.isNotEmpty()) {
-                    displayWifiNetworks(scanResults)
-                    scanResults.map { result ->
-                        WifiModel(
-                            ssid = result.SSID,
-                            bssid = result.BSSID,
-                            strength = rssiToPercentage(result.level)
-                        )
-                    }
-                } else {
-                    arrayListOf()
-                }
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // Get fresh WiFi scan results using new WifiScanner
+                    Log.i(TAG, "📶 Fetching fresh WiFi list...")
+                    val wifiList = wifiScanner.getFreshWifiList()
+                    Log.i(TAG, "📶 WiFi scan complete: ${wifiList.size} networks found")
 
-                if (!isLocationFetched)
-                {
-
-                    Log.i(TAG, "callApiData: 588 wifiList${wifiList}-->batterySAver:${ Utils.isBatterySaverOn(requireContext())}--->optimization:${Utils.isBatteryOptimizationOff(requireContext())}")
-                    if (isLocationFetched) {
-                        Log.i(TAG, "callApiData: already in progress, exiting.")
-                        return@scanWifiNetworks
+                    withContext(Dispatchers.Main) {
+                        if (wifiList.isNotEmpty()) {
+                            displayWifiNetworks(wifiList)
+                        }
                     }
 
-                    isLocationFetched=true
-                    val user = SharedPref.getInstance(requireContext())?.getUser()
-                    user?.let { itit ->
-                        Log.i(TAG, "callApiData: 594user found")
-                        val randomUid = Utils.generateRandomUuid()
-                        val record = RecordModel(
-                            uuid = randomUid,
-                            user_id = itit._id.toString(),
-                            lat = lat,
-                            lng = lan,
-                            localTime = Utils.getCurrent24HourTime(),
-                            time = Utils.getCurrentUtcTime(),
-                            attendanceType = btnStatus,
-                            attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
-                            isForceAttendance = false,
-                            isLocation = locationTrack.checkLocationPermissions(),
-                            wifiService = wifiScanner.isWifiEnabled(),
-                            dataService = Utils.isMobileDataEnabled(requireContext()),
-                            notification = Utils.isNotificationPermissionGranted(requireContext()),
-                            batterySaver = !Utils.isBatterySaverOn(requireContext()),
-                            batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
-                            wifi_list = wifiList
-                        )
-                        if (Utils.isInternetAvailable(requireContext())) {
+                    if (!isLocationFetched) {
+                        Log.i(TAG, "callApiData: 588 wifiList${wifiList}-->batterySAver:${Utils.isBatterySaverOn(requireContext())}--->optimization:${Utils.isBatteryOptimizationOff(requireContext())}")
+                        if (isLocationFetched) {
+                            Log.i(TAG, "callApiData: already in progress, exiting.")
+                            return@launch
+                        }
 
-                            // Handle saving or API call
-                            updateProgressDialogMessage(getString(R.string.saving_datato_server))
-                            CoroutineScope(Dispatchers.IO).launch {
+                        isLocationFetched = true
+                        val user = SharedPref.getInstance(requireContext())?.getUser()
+                        user?.let { itit ->
+                            Log.i(TAG, "callApiData: 594user found")
+                            val randomUid = Utils.generateRandomUuid()
+                            val record = RecordModel(
+                                uuid = randomUid,
+                                user_id = itit._id,
+                                lat = lat,
+                                lng = lan,
+                                localTime = Utils.getCurrent24HourTime(),
+                                time = Utils.getCurrentUtcTime(),
+                                attendanceType = btnStatus,
+                                attendanceStatus = Utils.checkInternetAndSetStatus(requireContext()),
+                                isForceAttendance = false,
+                                isLocation = locationTrack.checkLocationPermissions(),
+                                wifiService = wifiScanner.isWifiEnabled(),
+                                dataService = Utils.isMobileDataEnabled(requireContext()),
+                                notification = Utils.isNotificationPermissionGranted(requireContext()),
+                                batterySaver = !Utils.isBatterySaverOn(requireContext()),
+                                batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
+                                wifi_list = wifiList
+                            )
+                            if (Utils.isInternetAvailable(requireContext())) {
+
+                                // Handle saving or API call
+                                withContext(Dispatchers.Main) {
+                                    updateProgressDialogMessage(getString(R.string.saving_datato_server))
+                                }
+
                                 try {
 
-                                    val savedIssues = dao.getAllIssues(user?._id.toString())
+                                    val savedIssues = dao.getAllIssues(itit._id)
 
                                     val errorList = savedIssues.map {
                                         ErrorModel(
@@ -1083,7 +1070,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     }
 
                                     Log.i(TAG, "callApiDataTEstError: errorList:${errorList.size}")
-                                    val allRecords = dao.getAllRecords(user._id.toString()).map { it.toDataRequest(errorList) }
+                                    val allRecords = dao.getAllRecords(itit._id).map { it.toDataRequest(errorList) }
 
                                     // Add the new record to the list
                                     val allRecordsWithNew = allRecords + record.toDataRequest(errorList)
@@ -1099,23 +1086,23 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                         mainViewModel.sendAppData(allRecordsWithNew, token, requireContext())
                                     }
                                 } catch (e: Exception) {
-                                    dismissProgressDialog()
+                                    withContext(Dispatchers.Main) {
+                                        dismissProgressDialog()
+                                    }
                                     Log.e(TAG, "Error fetching records: ${e.message}")
                                 }
-                            }
-                        }
-                        else {
-                            Log.i(
-                                TAG,
-                                "callApiData: internet not available saving to database: ${record}"
-                            )
+                            } else {
+                                Log.i(
+                                    TAG,
+                                    "callApiData: internet not available saving to database: ${record}"
+                                )
 
-                            updateProgressDialogMessage(getString(R.string.saving_data_to_database))
+                                withContext(Dispatchers.Main) {
+                                    updateProgressDialogMessage(getString(R.string.saving_data_to_database))
+                                    dismissProgressDialog()
+                                }
 
-                            dismissProgressDialog()
-
-                            // Save to database when no internet is available
-                            CoroutineScope(Dispatchers.IO).launch {
+                                // Save to database when no internet is available
 //                                dao.deleteRecordByUuid("0216a876-472c-4767-889c-0bfd2ca86a6c")
 //                                dao.deleteRecordByUuid("6664af52-682e-47ce-80c1-abe87d6ff0e3")
 //                                dao.deleteRecordByUuid("eea9626a-e1d0-4776-96be-340247962e98")
@@ -1126,19 +1113,21 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     showMessage(getString(R.string.offile_alert_message))
                                 }
                             }
-
                         }
                     }
-
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        dismissProgressDialog()
+                    }
+                    Log.e(TAG, "callApiData: exception: ${e.message}", e)
+                } finally {
+                    // Reset isLocationFetched when everything is done, so the method can be called again if needed
+                    isLocationFetched = false
                 }
-
             }
         } catch (e: Exception) {
             dismissProgressDialog()
             Log.i(TAG, "callApiData: 672 exception:${e.printStackTrace()}")
-        }finally {
-            // Reset isLocationFetched when everything is done, so the method can be called again if needed
-            isLocationFetched = false
         }
 
     }
@@ -1361,13 +1350,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     private var clearTextHandler: Handler? = null
     private var clearTextRunnable: Runnable? = null
 
-    private fun displayWifiNetworks(scanResults: List<ScanResult>) {
+    private fun displayWifiNetworks(wifiList: List<WifiModel>) {
         val wifiInfo = StringBuilder()
 
-        for (result in scanResults) {
-            if (result.SSID.isNotEmpty()) { // Check if SSID is not empty
-                val signalStrengthPercentage = rssiToPercentage(result.level)
-                wifiInfo.append("SSID: ${result.SSID}, BSSID: ${result.BSSID}, Signal Strength: $signalStrengthPercentage%\n")
+        for (wifi in wifiList) {
+            if (wifi.ssid.isNotEmpty()) { // Check if SSID is not empty
+                wifiInfo.append("SSID: ${wifi.ssid}, BSSID: ${wifi.bssid}, Signal Strength: ${wifi.strength}%\n")
             }
         }
 

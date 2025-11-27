@@ -83,6 +83,9 @@ class AttendanceSyncManager @Inject constructor(
         user: UserModel,
         callback: (isInsideShift: Boolean, syncMessage: String) -> Unit
     ): Boolean {
+
+        Log.i(TAG, "saveDataLocally: Record to save: ${record.wifi_list}")
+
         val todayDate = LocalDate.now()
         val activeMulti = user.multipleTimeTables?.find { mt ->
             val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
