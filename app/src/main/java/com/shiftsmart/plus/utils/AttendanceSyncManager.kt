@@ -59,13 +59,6 @@ class AttendanceSyncManager @Inject constructor(
      * @return true if inside shift window (service should continue), false if off-shift (service should stop)
      */
 
-    // for version 8
-//    suspend fun saveRecordLocally(record: RecordModel, user: UserModel): Boolean {
-//        val shifts = user.timetable?.range ?: emptyList()
-//        return saveDataLocally(record, shifts, user)
-//    }
-
-
 // In AttendanceSyncManager.kt
     fun saveRecordLocally(
         record: RecordModel,
@@ -75,7 +68,7 @@ class AttendanceSyncManager @Inject constructor(
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val shifts = user.timetable?.range ?: emptyList()
-                val result = saveDataLocally(record, shifts, user, callback)
+                saveDataLocally(record, shifts, user, callback)
                 // Callback is now called from saveDataLocally with sync message
             } catch (e: Exception) {
                 Log.e("AttendanceSyncManager", "Error saving record", e)

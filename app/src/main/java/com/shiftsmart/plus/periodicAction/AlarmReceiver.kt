@@ -168,7 +168,6 @@ class AlarmReceiver : BroadcastReceiver() {
                     Log.i("AlarmReceiver", "✅ Service will collect data and auto-stop after completion")
                 }
 
-
             }
 
         } catch (e: Exception) {
@@ -256,18 +255,6 @@ class AlarmReceiver : BroadcastReceiver() {
         @JvmStatic
         fun scheduleNextAlarmFromCurrentTime(context: Context) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val sharedPref = SharedPref.getInstance(context)
-            val lastSyncTimestamp = sharedPref?.getLastSyncTimestamp() ?: 0L
-
-//            val nextAligned = if (lastSyncTimestamp > 0L) {
-//                // ✅ Schedule exactly 5 minutes from last sync
-//                lastSyncTimestamp + (5 * 60 * 1000)
-//            } else {
-//                // ✅ No last sync - round up to next 5-minute boundary
-//                val now = System.currentTimeMillis()
-//                ((now / (5 * 60 * 1000)) + 1) * (5 * 60 * 1000)
-//            }
-            // ✅ Always schedule from current time, not last sync
             val now = System.currentTimeMillis()
             val nextAligned = ((now / (5 * 60 * 1000)) + 1) * (5 * 60 * 1000)
 
@@ -414,58 +401,6 @@ class AlarmReceiver : BroadcastReceiver() {
             Log.i("AlarmReceiver", "✅ Single CALL_API alarm scheduled at: $timeStr")
         }
 
-        /**
-         * rescheduleAlarmAtSpecificTime(...)
-         * WHEN: When current alarm time is not aligned with last sync time (not a multiple of 5 minutes)
-         * WHAT: Cancels existing CALL_API PI and schedules alarm at the exact time that aligns with last sync
-         */
-        @JvmStatic
-        fun rescheduleAlarmAtSpecificTime(context: Context, targetTimestamp: Long) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, AlarmReceiver::class.java).apply { action = "CALL_API" }
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                1234,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            alarmManager.cancel(pendingIntent)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                Log.i(
-                    "AlarmReceiver",
-                    "⏰ Rescheduled CALL_API via setAlarmClock at: ${Date(targetTimestamp)}"
-                )
-
-                if (alarmManager.canScheduleExactAlarms()) {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        targetTimestamp,
-                        pendingIntent
-                    )
-                } else {
-                    // Fallback if permission not granted
-                    alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        targetTimestamp,
-                        pendingIntent
-                    )
-                }
-
-
-            } else {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    targetTimestamp,
-                    pendingIntent
-                )
-                Log.i(
-                    "AlarmReceiver",
-                    "⏰ Rescheduled CALL_API (aligned) at: ${Date(targetTimestamp)}"
-                )
-            }
-        }
 
     }
 }

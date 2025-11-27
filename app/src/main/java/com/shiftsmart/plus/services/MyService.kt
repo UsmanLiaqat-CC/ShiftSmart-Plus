@@ -113,6 +113,12 @@ class MyService : Service() {
 
     private val wifiScanResults = mutableListOf<WifiModel>()
 
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+    @Inject lateinit var locationHelper: LocationHelper
+
+    @Inject lateinit var attendanceSyncManager: AttendanceSyncManager
+
     // Broadcast Receivers
     private val wifiScanReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
@@ -135,13 +141,6 @@ class MyService : Service() {
             }
         }
     }
-
-    private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
-    @Inject lateinit var locationHelper: LocationHelper
-
-    @Inject lateinit var attendanceSyncManager: AttendanceSyncManager
-
 
     fun setWifiList(wifiList: MutableList<WifiModel>) {
         wifiScanResults.clear()
@@ -348,10 +347,6 @@ class MyService : Service() {
 
     private var lastCheckDate: LocalDate? = null
 
-
-
-// In MyService.kt
-
     private fun checkAndMaintainService(
     ) {
         Log.d(TAG, "🔄 checkAndMaintainService: ${Utils.getCurrentDateTime()}")
@@ -449,8 +444,6 @@ class MyService : Service() {
 
     }
 
-
-
     private fun forceMidnightSync() {
         serviceScope.launch {
             attendanceSyncManager.startSyncProcess() // or your backup save method
@@ -458,14 +451,11 @@ class MyService : Service() {
         }
     }
 
-
     private fun releaseWakeLock() {
         if (::wakeLock.isInitialized && wakeLock.isHeld) {
             wakeLock.release()
         }
     }
-
-
 
     private fun createNotification(message: String, isDismissable: Boolean = false): Notification {
         val notificationIntent = Intent(this, MainActivity::class.java).apply {

@@ -15,7 +15,7 @@ android {
 
     defaultConfig {
         applicationId = "com.shiftsmart.plus"
-        minSdk = 29
+        minSdk = 26
         targetSdk = 35
         versionCode = 19
         versionName = "19.0"
