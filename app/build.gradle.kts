@@ -17,8 +17,8 @@ android {
         applicationId = "com.shiftsmart.plus"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "20.0"
+        versionCode = 21
+        versionName = "21.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -2,15 +2,19 @@ package com.shiftsmart.plus.utils
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.shiftsmart.plus.models.WifiModel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 /**
  * WiFi Scanner utility class that works across all Android versions
@@ -45,106 +49,12 @@ class WifiScanner(private val context: Context) {
         }
 
         return try {
-            // Get scan results based on Android version
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                    // Android 10+ (API 29+): Scan throttling, use cached results more aggressively
-                    getWifiListModern(maxWaitTimeMs)
-                }
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
-                    // Android 6-9 (API 23-28): Standard scan with permissions
-                    getWifiListLegacy(maxWaitTimeMs)
-                }
-                else -> {
-                    // Android 5.x and below (API < 23): Direct scan
-                    getWifiListOld()
-                }
-            }
+            val result = withTimeoutOrNull(maxWaitTimeMs) { performWifiScan() } ?: (getCachedWifiResults() ?: emptyList())
+            result
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error scanning WiFi: ${e.message}", e)
-            emptyList()
+            getCachedWifiResults()
         }
-    }
-
-    /**
-     * Modern WiFi scanning for Android 10+ (API 29+)
-     * Scan throttling applies: max 4 scans per 2 minutes
-     */
-    @SuppressLint("MissingPermission")
-    private suspend fun getWifiListModern(maxWaitTimeMs: Long): List<WifiModel> {
-        Log.d(TAG, "📱 Using modern WiFi scan (Android 10+)")
-
-        // Try to get cached results first (more reliable on Android 10+)
-        val cachedResults = getCachedWifiResults()
-        if (cachedResults.isNotEmpty()) {
-            Log.i(TAG, "✅ Using cached WiFi results: ${cachedResults.size} networks")
-            return cachedResults
-        }
-
-        // Attempt fresh scan (may be throttled)
-        val scanStarted = wifiManager.startScan()
-        if (!scanStarted) {
-            Log.w(TAG, "⚠️ WiFi scan throttled or failed - using last available results")
-            return getCachedWifiResults()
-        }
-
-        // Wait for scan to complete
-        Log.d(TAG, "⏳ Waiting for scan results (max ${maxWaitTimeMs}ms)...")
-        val result = withTimeoutOrNull(maxWaitTimeMs) {
-            // Poll for new results
-            var attempts = 0
-            val maxAttempts = (maxWaitTimeMs / 500).toInt()
-
-            while (attempts < maxAttempts) {
-                delay(500)
-                val results = getCachedWifiResults()
-                if (results.isNotEmpty()) {
-                    Log.i(TAG, "✅ Fresh scan results received: ${results.size} networks")
-                    return@withTimeoutOrNull results
-                }
-                attempts++
-            }
-            null
-        }
-
-        return result ?: getCachedWifiResults()
-    }
-
-    /**
-     * Legacy WiFi scanning for Android 6-9 (API 23-28)
-     */
-    @SuppressLint("MissingPermission")
-    private suspend fun getWifiListLegacy(maxWaitTimeMs: Long): List<WifiModel> {
-        Log.d(TAG, "📱 Using legacy WiFi scan (Android 6-9)")
-
-        // Start scan
-        val scanStarted = wifiManager.startScan()
-        if (!scanStarted) {
-            Log.w(TAG, "⚠️ Failed to start WiFi scan - using cached results")
-            return getCachedWifiResults()
-        }
-
-        // Wait for results
-        Log.d(TAG, "⏳ Waiting for scan results (max ${maxWaitTimeMs}ms)...")
-        delay(3000) // Fixed 3 second wait for scan to complete
-
-        return getCachedWifiResults()
-    }
-
-    /**
-     * Old WiFi scanning for Android 5.x and below (API < 23)
-     */
-    @SuppressLint("MissingPermission")
-    private fun getWifiListOld(): List<WifiModel> {
-        Log.d(TAG, "📱 Using old WiFi scan (Android 5.x)")
-
-        // Direct scan (no special permissions needed)
-        wifiManager.startScan()
-
-        // Small delay for scan
-        Thread.sleep(2000)
-
-        return getCachedWifiResults()
     }
 
     /**
@@ -173,7 +83,10 @@ class WifiScanner(private val context: Context) {
                         bssid = scanResult.BSSID,
                         strength = strengthPercentage,
                     )
-                }
+                }.sortedByDescending { it.strength }
+//                if (wifiList.isNotEmpty()) {
+//                    lastWifiList = wifiList
+//                }
                 Log.d(TAG, "📶 Retrieved ${wifiList.size} WiFi networks")
                 wifiList
             }
@@ -233,41 +146,51 @@ class WifiScanner(private val context: Context) {
     }
 
     /**
-     * Get WiFi list synchronously (for non-coroutine contexts)
-     * Note: This may block the thread, use sparingly
-     */
-    @SuppressLint("MissingPermission")
-    fun getWifiListSync(): List<WifiModel> {
-        Log.d(TAG, "🔍 Getting WiFi list synchronously...")
-
-        if (!wifiManager.isWifiEnabled) {
-            Log.w(TAG, "⚠️ WiFi is disabled")
-            return emptyList()
-        }
-
-        if (!hasWifiPermissions()) {
-            Log.w(TAG, "⚠️ WiFi permissions not granted")
-            return emptyList()
-        }
-
-        // Try to trigger a scan (may fail due to throttling on Android 10+)
-        try {
-            wifiManager.startScan()
-            // Short wait
-            Thread.sleep(2000)
-        } catch (e: Exception) {
-            Log.w(TAG, "⚠️ Scan trigger failed: ${e.message}")
-        }
-
-        // Return cached results
-        return getCachedWifiResults()
-    }
-
-    /**
      * Check if WiFi is enabled
      */
     fun isWifiEnabled(): Boolean {
         return wifiManager.isWifiEnabled
     }
-}
 
+    /**
+     * Perform WiFi scan using BroadcastReceiver for reliable results
+     */
+    @SuppressLint("MissingPermission")
+    private suspend fun performWifiScan(): List<WifiModel> {
+        return suspendCoroutine { continuation ->
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (intent?.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
+                        try {
+                            context?.unregisterReceiver(this)
+                            val results = getCachedWifiResults()
+                            Log.i(TAG, "✅ Scan results received: ${results.size} networks")
+                            continuation.resume(results)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ Error in receiver: ${e.message}")
+                            continuation.resume(getCachedWifiResults())
+                        }
+                    }
+                }
+            }
+
+            try {
+                context.registerReceiver(receiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION))
+                val scanStarted = wifiManager.startScan()
+                if (!scanStarted) {
+                    Log.w(TAG, "⚠️ Scan not started, using cached results")
+                    context.unregisterReceiver(receiver)
+                    continuation.resume( getCachedWifiResults())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error starting scan: ${e.message}")
+                try {
+                    context.unregisterReceiver(receiver)
+                } catch (e2: Exception) {
+                    // Ignore
+                }
+                continuation.resume(getCachedWifiResults())
+            }
+        }
+    }
+}
