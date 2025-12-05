@@ -185,6 +185,14 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             insets
         }
 
+        // Handle window insets for bottom buttons to prevent overlap with navigation bar
+        ViewCompat.setOnApplyWindowInsetsListener(mBinding.bottomLl) { v, insets ->
+            val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            // Add padding to the bottom to account for navigation bar
+            v.updatePadding(bottom = navigationBars.bottom + v.paddingBottom)
+            insets
+        }
+
         dao = db.dbDao()
 
 

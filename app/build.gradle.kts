@@ -9,16 +9,17 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+//com.swifttechglobix.shiftsmart
 android {
     namespace = "com.shiftsmart.plus"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.shiftsmart.plus"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 21
-        versionName = "21.0"
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -48,7 +49,6 @@ android {
 }
 
 dependencies {
-
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
@@ -102,5 +102,7 @@ dependencies {
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.messaging)
-    implementation(libs.firebase.core)
+
+    implementation(libs.inappupdate)
+
 }

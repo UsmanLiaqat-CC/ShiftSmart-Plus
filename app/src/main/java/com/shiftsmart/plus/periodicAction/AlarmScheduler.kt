@@ -9,8 +9,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import com.shiftsmart.plus.R
+
 import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.services.MyService

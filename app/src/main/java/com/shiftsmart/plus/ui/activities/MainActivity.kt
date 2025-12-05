@@ -16,6 +16,9 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.LayoutInflater
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -41,12 +44,14 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import com.shiftsmart.plus.viewmodels.MainViewModel
+import com.simplifymindfulness.inappupdate_library.InAppUpdateManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
+    private lateinit var activityResultLauncher: ActivityResultLauncher<IntentSenderRequest>
 
     private val PERMISSIONS_REQUEST_CODE = 100
     private  val TAG = "MainActivityPLUS"
@@ -65,6 +70,11 @@ class MainActivity : AppCompatActivity() {
     val mainViewModel: MainViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        activityResultLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            // Handle the result of the update flow here
+        }
+        InAppUpdateManager.init(this, activityResultLauncher)
 
         mBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mBinding.root)

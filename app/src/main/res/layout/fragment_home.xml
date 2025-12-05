@@ -6,7 +6,8 @@
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/white">
+        android:background="@color/white"
+        android:fitsSystemWindows="true">
 
         <!-- Header Section -->
         <RelativeLayout
@@ -135,7 +136,9 @@
                     android:layout_height="match_parent"
                     android:layout_above="@id/bottom_ll"
                     android:layout_alignParentTop="true"
-                    android:fillViewport="true">
+                    android:fillViewport="true"
+                    android:clipToPadding="false"
+                    android:paddingBottom="8dp">
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -544,8 +547,10 @@
                     android:layout_alignParentBottom="true"
                     android:layout_marginStart="16dp"
                     android:layout_marginEnd="16dp"
-                    android:layout_marginBottom="16dp"
-
+                    android:layout_marginBottom="8dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:fitsSystemWindows="true"
                     >
                     <LinearLayout
                         android:id="@+id/btns_ll"
