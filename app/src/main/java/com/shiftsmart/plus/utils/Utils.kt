@@ -146,7 +146,8 @@ object Utils {
     }
 
     fun showPrivacy(context: Context){
-        val url = "https://sites.google.com/view/shift-smart/home" // Replace with your URL
+        val url = "https://sites.google.com/view/shift-smart-plus-privacy/home" // Replace with your URL
+//        val url = "https://sites.google.com/view/shift-smart/home" // Replace with your URL
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
         context.startActivity(intent)
     }

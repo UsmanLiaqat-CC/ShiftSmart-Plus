@@ -133,4 +133,6 @@
     <string name="all_shifts">All Shifts</string>
     <string name="app_version">App Version</string>
     <string name="version_format">%1$s (%2$d)</string>
+    <string name="permissions_required">Permissions Required</string>
+    <string name="try_again">Try Again</string>
 </resources>

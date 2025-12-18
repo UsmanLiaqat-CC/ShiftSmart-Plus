@@ -1,14 +1,11 @@
 package com.shiftsmart.plus.ui.fragments
 
-import android.Manifest
 import com.shiftsmart.plus.models.LoginRequest
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,7 +19,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import com.google.firebase.messaging.FirebaseMessaging
@@ -31,14 +27,13 @@ import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.FragmentLoginBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
-import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.utils.PasswordToggleHandler
+import com.shiftsmart.plus.utils.PermissionHandler
 import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 
 @AndroidEntryPoint
 class LoginFragment : Fragment() {
@@ -50,13 +45,7 @@ class LoginFragment : Fragment() {
 
     private var mProgressDialog: Dialog? = null
 
-    @Inject
-    lateinit var locationTrack: LocationTrack
-
-    @Inject
-    lateinit var locationManager: LocationManager
-
-    var permissionsNeeded = mutableListOf<String>()
+    private lateinit var permissionHandler: PermissionHandler
 
 
     private lateinit var progressDialogBinding: LoadingDialogBinding
@@ -140,21 +129,27 @@ class LoginFragment : Fragment() {
                             Log.i(TAG, "setUpObserver: user:${it.data?.userModel}")
                             SharedPref.getInstance(requireContext())?.saveToken(it.data.accessToken)
                             SharedPref.getInstance(requireContext())?.saveUser(it.data?.userModel)
-                                ?.run {
-                                    findNavController().navigate(R.id.action_loginFragment_to_homeFragment)
-                                }
+
                             FirebaseMessaging.getInstance().subscribeToTopic(it.data?.userModel?._id.toString())
-                            // use here workmanager
-                            //  Schedule WorkManager for periodic API calls
-                            val defaultShifts = it.data?.userModel?.timetable?.range
-                            val multiTimeTables = it.data?.userModel?.multipleTimeTables
 
-                            AlarmScheduler.scheduleAlarms(
-                                context = requireContext(),
-                                defaultShifts = defaultShifts!!,
-                                multipleTimeTables = multiTimeTables!!
-                            )
+                            // ✅ IMPORTANT: Only schedule alarms if basic permissions are granted
+                            // This prevents crash when trying to start foreground service without permissions
+                            if (permissionHandler.hasBasicLoginPermissions()) {
+                                Log.i(TAG, "✅ Permissions granted, scheduling alarms and starting service")
+                                val defaultShifts = it.data?.userModel?.timetable?.range
+                                val multiTimeTables = it.data?.userModel?.multipleTimeTables
 
+                                AlarmScheduler.scheduleAlarms(
+                                    context = requireContext(),
+                                    defaultShifts = defaultShifts!!,
+                                    multipleTimeTables = multiTimeTables!!
+                                )
+                            } else {
+                                Log.i(TAG, "⚠️ Permissions not granted yet, will schedule alarms from HomeFragment")
+                            }
+
+                            // Navigate to home
+                            findNavController().navigate(R.id.action_loginFragment_to_homeFragment)
 
                         } else {
                             Utils.showSnackBar(
@@ -180,28 +175,30 @@ class LoginFragment : Fragment() {
     }
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-
-        val fineLocationGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
-        val coarseLocationGranted = result[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
-//        val backgroundLocationGranted = result[Manifest.permission.ACCESS_BACKGROUND_LOCATION] ?: false
-        Log.i(TAG, "Permissions Result: $result-->FineLoaction:${fineLocationGranted}-->coraseLocation:${coarseLocationGranted}")
-
-        if (fineLocationGranted && coarseLocationGranted) {
-            Log.i(TAG, "✅ All required permissions granted. Proceeding with login. Launcher")
-            doLoginOperations()
-        } else if (fineLocationGranted) {
-            Log.i(TAG, "❌ Background Location permission missing. Prompting user.Launcher")
-            Toast.makeText(requireContext(), "Background location permission is required for full functionality.", Toast.LENGTH_SHORT).show()
-            openAppSettings()
-        } else {
-            Log.i(TAG, "❌ Permissions denied. Cannot proceed. Launcher")
-            Toast.makeText(requireContext(), "Permissions are required to proceed.", Toast.LENGTH_SHORT).show()
-        }
+        permissionHandler.handlePermissionResult(result)
     }
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         mBinding.loginBtn.isEnabled = false
 
+        // Initialize permission handler
+        permissionHandler = PermissionHandler(
+            fragment = this,
+            onPermissionsGranted = {
+                Log.i(TAG, "✅ Permissions granted, proceeding with login")
+                doLoginOperations()
+            },
+            onPermissionsDenied = { deniedPermissions ->
+                Log.i(TAG, "⚠️ Some permissions denied: $deniedPermissions. Proceeding with login anyway.")
+                val message = permissionHandler.getDeniedPermissionsMessage(deniedPermissions)
+                if (message.isNotEmpty()) {
+                    Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+                }
+                // Still allow login even if permissions are denied
+                doLoginOperations()
+            }
+        )
+        permissionHandler.initializePermissionLauncher(permissionLauncher)
 
         val passwordToggleHandler =
             PasswordToggleHandler(mBinding.passwordEdittext, mBinding.passwordToggle)
@@ -211,15 +208,11 @@ class LoginFragment : Fragment() {
 
             if (!Utils.isIgnoringBatteryOptimizations(requireContext())) {
                 requestIgnoreBatteryOptimization(requireContext())
-            }else{
-                
-                val result=checkAndRequestPermissions()
-
-                Log.i(TAG, "onViewCreated: login button pressed : permission:${result}")
-                if (result)
-                {
-                    doLoginOperations()
-                }
+            } else {
+                // Request only basic login permissions (POST_NOTIFICATIONS, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION)
+                // Advanced permissions (background location, battery settings) will be handled at Home screen
+                Log.i(TAG, "onViewCreated: login button pressed, checking basic login permissions")
+                permissionHandler.requestLoginPermissions()
             }
         }
         mBinding.acceptPolicyCheckbox.setOnCheckedChangeListener { _, isChecked ->
@@ -246,91 +239,9 @@ class LoginFragment : Fragment() {
     }
 
 
-    private fun checkAndRequestPermissions(): Boolean {
-        Log.i(TAG, "checkAndRequestPermissions: Checking permissions...")
-
-        // Clear permissionsNeeded list before adding new permissions
-        permissionsNeeded.clear()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                permissionsNeeded.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            permissionsNeeded.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
-
-//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-//            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-//                permissionsNeeded.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-//            }
-//        }
-
-        if (permissionsNeeded.isEmpty()) {
-            Log.i(TAG, "✅ All permissions already granted.")
-            return true
-        }
-
-        Log.i(TAG, "⏳ Requesting permissions: $permissionsNeeded")
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionLauncher.launch(permissionsNeeded.toTypedArray())  // ✅ Correctly launching the permission request
-        } else {
-            requestPermissions(permissionsNeeded.toTypedArray(), 100)  // ✅ For Android 12 and below
-        }
-
-        return false
-    }
-
-
-
-
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-
-        Log.i(TAG, "onRequestPermissionsResult: requestCode = $requestCode, permissions = ${permissions.joinToString()}, grantResults = ${grantResults.joinToString()}")
-
-        if (requestCode == 100) {
-            if (grantResults.isNotEmpty()) {
-                var fineLocationGranted = false
-                var coarseLocationGranted = false
-
-                for (i in permissions.indices) {
-                    when (permissions[i]) {
-                        Manifest.permission.ACCESS_FINE_LOCATION -> fineLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
-                        Manifest.permission.ACCESS_COARSE_LOCATION -> coarseLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
-//                        Manifest.permission.ACCESS_BACKGROUND_LOCATION -> backgroundLocationGranted = grantResults[i] == PackageManager.PERMISSION_GRANTED
-                    }
-                }
-
-                Log.i(TAG, "onRequestPermissionsResult: Fine Location = $fineLocationGranted, Background Location = $coarseLocationGranted")
-
-                if (fineLocationGranted && coarseLocationGranted) {
-                    Log.i(TAG, "onRequestPermissionsResult: ✅ All required permissions granted. Proceeding with login.")
-                    doLoginOperations()
-                } else if (fineLocationGranted && !coarseLocationGranted) {
-                    Log.i(TAG, "onRequestPermissionsResult: ❌ Background Location permission missing. Prompting user.")
-                    Toast.makeText(requireContext(), "Background location permission is required for full functionality.", Toast.LENGTH_SHORT).show()
-                    openAppSettings()
-                } else {
-                    Log.i(TAG, "onRequestPermissionsResult: ❌ Permissions denied. Cannot proceed.")
-                    Toast.makeText(requireContext(), "Permissions are required to proceed.", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
-    private fun openAppSettings() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-        val uri = Uri.fromParts("package", requireContext().packageName, null)
-        intent.data = uri
-        startActivity(intent)
+        permissionHandler.handlePermissionResult(requestCode, permissions, grantResults)
     }
 
 }

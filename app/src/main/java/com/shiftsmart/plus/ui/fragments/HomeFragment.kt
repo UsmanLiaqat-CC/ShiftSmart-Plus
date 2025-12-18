@@ -71,6 +71,7 @@ import androidx.core.content.UnusedAppRestrictionsConstants
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.utils.GpsStatusMonitor
 import com.shiftsmart.plus.utils.ShiftUtils
@@ -116,10 +117,16 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     private var isSyncPressed: Boolean = false
 
+    // Track pending action after permission grant
+    private var pendingAction: (() -> Unit)? = null
+
+    // Track if alarms have been scheduled to prevent duplicate scheduling
+    private var areAlarmsScheduled: Boolean = false
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        permissionHandler.handlePermissionsResult(permissions)
+        permissionHandler.handlePermissionResult(permissions)
     }
 
     private lateinit var gpsStatusMonitor: GpsStatusMonitor
@@ -130,10 +137,29 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         val user = SharedPref.getInstance(requireContext())?.getUser()
         if (user != null) {
-            ShiftRestartAlarmManager.scheduleNextShiftAlarm(requireContext(), user)
+            // Schedule alarms only if permissions are available
+            // This handles the case where user logged in without permissions
+            if (hasLocationPermissions()) {
+                Log.i(TAG, "✅ Scheduling shift alarms with permissions granted")
+                ShiftRestartAlarmManager.scheduleNextShiftAlarm(requireContext(), user)
+                areAlarmsScheduled = true // Mark as scheduled
+            } else {
+                Log.i(TAG, "⚠️ Waiting for permissions before scheduling alarms")
+            }
         }
 
         gpsStatusMonitor = GpsStatusMonitor(requireContext())
+    }
+
+    private fun hasLocationPermissions(): Boolean {
+        return ActivityCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
+        ActivityCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
     override fun onCreateView(
@@ -198,13 +224,21 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         // Set app version
         setAppVersion()
-        // Initialize PermissionHandler
+
         // Initialize PermissionHandler with a callback
-        permissionHandler = PermissionHandler(requireContext(), requireActivity()) {
-            onPermissionsGranted() // Call this method when all permissions are granted
-        }
-        permissionHandler.registerPermissionLauncher(permissionLauncher)
-        permissionHandler.checkPermissions()
+        permissionHandler = PermissionHandler(
+            fragment = this,
+            onPermissionsGranted = {
+                onPermissionsGranted()
+            },
+            onPermissionsDenied = { deniedPermissions ->
+                onPermissionsDenied(deniedPermissions)
+            }
+        )
+        permissionHandler.initializePermissionLauncher(permissionLauncher)
+
+        // Request all permissions in sequence when page opens
+        permissionHandler.requestPermissions()
 
         val user = SharedPref.getInstance(requireContext())?.getUser()
         user?.let {
@@ -449,13 +483,72 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     // This method is called once all permissions are granted
     private fun onPermissionsGranted() {
+        Log.i(TAG, "✅ All permissions granted in HomeFragment")
         setChecksData()
+
+        // ✅ Only schedule alarms if they haven't been scheduled yet
+        // This prevents duplicate scheduling when user clicks button after initial permission grant
+        if (!areAlarmsScheduled) {
+            val user = SharedPref.getInstance(requireContext())?.getUser()
+            if (user != null) {
+                val defaultShifts = user.timetable?.range
+                val multiTimeTables = user.multipleTimeTables
+
+                if (defaultShifts != null) {
+                    Log.i(TAG, "✅ Scheduling shift alarms with AlarmScheduler (first time)")
+                    AlarmScheduler.scheduleAlarms(
+                        context = requireContext(),
+                        defaultShifts = defaultShifts,
+                        multipleTimeTables = multiTimeTables ?: emptyList()
+                    )
+                    areAlarmsScheduled = true // Mark as scheduled
+                } else {
+                    Log.e(TAG, "❌ Cannot schedule alarms - user timetable is null")
+                }
+            }
+        } else {
+            Log.i(TAG, "ℹ️ Alarms already scheduled, skipping duplicate scheduling")
+        }
+
+        // Execute pending action if any (arrival, departure, or sync)
+        pendingAction?.let { action ->
+            Log.i(TAG, "🔄 Executing pending action after permissions granted")
+            pendingAction = null
+            action.invoke()
+        }
+    }
+
+    // This method is called when permissions are denied
+    // Note: PermissionHandler already shows its own dialogs and handles opening settings
+    // We only need to handle cleanup here
+    private fun onPermissionsDenied(deniedPermissions: List<String>) {
+        Log.i(TAG, "❌ Permissions denied: $deniedPermissions")
+
+        // PermissionHandler already handled showing dialogs and opening settings
+        // Just clear pending action if user canceled the entire permission flow
+        // Note: We don't clear pendingAction here because user might still grant permissions
+        // from settings later. Only clear when user explicitly cancels.
+
+        // Optionally show a subtle message (not a dialog to avoid overlap)
+        val message = permissionHandler.getDeniedPermissionsMessage(deniedPermissions)
+        if (message.isNotEmpty()) {
+            // Just log it, PermissionHandler already showed dialogs
+            Log.i(TAG, "Permission message: $message")
+        }
     }
 
     override fun onResume() {
         super.onResume()
         Log.i(TAG, "onResume: HomeFragment")
         setChecksData()
+
+        // Check if user returned from settings and granted permissions
+        if (pendingAction != null && permissionHandler.hasAllPermissions()) {
+            Log.i(TAG, "✅ User returned from settings with permissions granted, executing pending action")
+            val action = pendingAction
+            pendingAction = null
+            action?.invoke()
+        }
     }
 
     override fun onStart() {
@@ -513,78 +606,53 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
 
         mBinding.syncButton.setOnClickListener {
-            if (Utils.isInternetAvailable(requireContext())) {
-                isSyncPressed = true
-                showProgressDialog(getString(R.string.syncing_date))
-
-                val user = SharedPref.getInstance(requireContext())?.getUser()
-
-                user?.let { itit ->
-                    Log.i(TAG, "callApiData: 617 internet available")
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            // Step 1: Fetch all records from the database
-
-                            val savedIssues = dao.getAllIssues(itit._id)
-
-                            val errorList = savedIssues.map {
-                                ErrorModel(
-                                    key = it.issueKey,
-                                    title = it.issueTitle,
-                                    solution = it.solution,
-                                    time = Utils.getUTCFromTimestamp(it.timestamp)
-                                )
-                            }
-                            val allRecords = dao.getAllRecords(itit._id).map { it.toDataRequest(errorList) }
-
-                            // ✅ COMPREHENSIVE VALIDATION: Recheck gaps, fill missing records,
-                            // remove invalid ones, and sort by local time in ascending order
-//                            val validatedRecords = validateAndPrepareRecordsForSync(allRecords)
-
-                            val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
-                            Log.i(TAG, "callApiData: Sending ${allRecords.size} validated records to API")
-
-                            // Switch to Main thread before updating LiveData
-                            withContext(Dispatchers.Main) {
-                                mainViewModel.sendAppData(allRecords, token, requireContext())
-                            }
-                        } catch (e: Exception) {
-                            dismissProgressDialog()
-                            Log.e(TAG, "Error fetching records: ${e.message}")
-                        }
-                    }
-                }
-
-            } else {
-                showMessage(getString(R.string.no_network_connection))
+            // Check all permissions before syncing
+            if (!permissionHandler.hasAllPermissions()) {
+                Log.i(TAG, "⚠️ Sync button: Missing permissions, requesting...")
+                pendingAction = { performSyncAction() }
+                permissionHandler.requestPermissions()
+                return@setOnClickListener
             }
+
+            // All permissions granted, proceed with sync
+            performSyncAction()
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-                // Fingerprint passed, proceed with your original code
-               arrivalButtonPressed()
+            // Check all permissions before arrival action
+            if (!permissionHandler.hasAllPermissions()) {
+                Log.i(TAG, "⚠️ Arrival button: Missing permissions, requesting...")
+                pendingAction = {
+                    performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                        arrivalButtonPressed()
+                    }
+                }
+                permissionHandler.requestPermissions()
+                return@setOnClickListener
             }
 
-//            CoroutineScope(Dispatchers.Main).launch {
-//                val user = SharedPref.getInstance(requireContext())?.getUser()
-//                user?.let {
-////                    deleteRecordsInTimeRange(
-////                        userId = it._id.toString(),
-////                        startTime = "04:00:00",
-////                        endTime = "08:00:00",
-////                        date = "2025-10-30"
-////                    )
-//                    dao.deleteAllRecordsByUserId(it._id)
-//                }
-//            }
-
+            // All permissions granted, proceed with fingerprint check and arrival
+            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                arrivalButtonPressed()
+            }
 
         }
 
         mBinding.departBtn.setOnClickListener {
+            // Check all permissions before departure action
+            if (!permissionHandler.hasAllPermissions()) {
+                Log.i(TAG, "⚠️ Departure button: Missing permissions, requesting...")
+                pendingAction = {
+                    performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                        departireButtonPressed()
+                    }
+                }
+                permissionHandler.requestPermissions()
+                return@setOnClickListener
+            }
+
+            // All permissions granted, proceed with fingerprint check and departure
             performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-                // Fingerprint passed, proceed with your original code
                 departireButtonPressed()
             }
         }
@@ -704,6 +772,50 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             fetchLocationData()
         } else {
             checkandGrantLocationPermission()
+        }
+    }
+
+    private fun performSyncAction() {
+        if (Utils.isInternetAvailable(requireContext())) {
+            isSyncPressed = true
+            showProgressDialog(getString(R.string.syncing_date))
+
+            val user = SharedPref.getInstance(requireContext())?.getUser()
+
+            user?.let { itit ->
+                Log.i(TAG, "callApiData: 617 internet available")
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        // Step 1: Fetch all records from the database
+
+                        val savedIssues = dao.getAllIssues(itit._id)
+
+                        val errorList = savedIssues.map {
+                            ErrorModel(
+                                key = it.issueKey,
+                                title = it.issueTitle,
+                                solution = it.solution,
+                                time = Utils.getUTCFromTimestamp(it.timestamp)
+                            )
+                        }
+                        val allRecords = dao.getAllRecords(itit._id).map { it.toDataRequest(errorList) }
+
+                        val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
+                        Log.i(TAG, "callApiData: Sending ${allRecords.size} validated records to API")
+
+                        // Switch to Main thread before updating LiveData
+                        withContext(Dispatchers.Main) {
+                            mainViewModel.sendAppData(allRecords, token, requireContext())
+                        }
+                    } catch (e: Exception) {
+                        dismissProgressDialog()
+                        Log.e(TAG, "Error fetching records: ${e.message}")
+                    }
+                }
+            }
+
+        } else {
+            showMessage(getString(R.string.no_network_connection))
         }
     }
 
