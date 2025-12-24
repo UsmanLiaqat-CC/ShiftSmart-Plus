@@ -44,7 +44,10 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import com.shiftsmart.plus.viewmodels.MainViewModel
-import com.simplifymindfulness.inappupdate_library.InAppUpdateManager
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.UpdateAvailability
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -73,8 +76,13 @@ class MainActivity : AppCompatActivity() {
 
         activityResultLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
             // Handle the result of the update flow here
+            if (result.resultCode != RESULT_OK) {
+                Log.d(TAG, "Update flow failed! Result code: ${result.resultCode}")
+            }
         }
-        InAppUpdateManager.init(this, activityResultLauncher)
+
+        // Check for app updates using Google Play Core library
+        checkForAppUpdates()
 
         mBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
@@ -90,6 +98,28 @@ class MainActivity : AppCompatActivity() {
 
     }
 
+
+    private fun checkForAppUpdates() {
+        val appUpdateManager = AppUpdateManagerFactory.create(this)
+        val appUpdateInfoTask = appUpdateManager.appUpdateInfo
+
+        appUpdateInfoTask.addOnSuccessListener { appUpdateInfo ->
+            if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
+                && appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
+            ) {
+                // Request the update
+                try {
+                    appUpdateManager.startUpdateFlowForResult(
+                        appUpdateInfo,
+                        activityResultLauncher,
+                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error starting update flow: ${e.message}")
+                }
+            }
+        }
+    }
 
     private fun startPermissionAction(){
         checkPermissionsAndStartService()

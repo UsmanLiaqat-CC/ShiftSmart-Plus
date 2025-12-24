@@ -30,7 +30,7 @@ androidx-core = "1.17.0"
 kotlinx-coroutines = "1.10.2"
 
 firebaseBom = "34.6.0"
-inappupdate = "8.0.2"
+inappupdate = "2.1.0"
 
 
 
@@ -81,7 +81,7 @@ androidx-activity = { group = "androidx.activity", name = "activity", version.re
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 
-inappupdate = { group = "com.github.saurabhthesuperhero", name = "InAppUpdate-Kotlin-Lib", version.ref = "inappupdate" }
+inappupdate = { group = "com.google.android.play", name = "app-update-ktx", version.ref = "inappupdate" }
 
 
 [plugins]
