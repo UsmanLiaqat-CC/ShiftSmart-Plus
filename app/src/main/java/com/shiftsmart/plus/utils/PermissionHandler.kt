@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -24,7 +25,7 @@ class PermissionHandler(
 
     private var permissionLauncher: ActivityResultLauncher<Array<String>>? = null
     private var isForegroundServicePermissionRequested = false
-    private var hasShownRationale = false
+    private var locationDisclosureManager: LocationDisclosureManager? = null
 
     /**
      * Initialize the permission launcher. Call this in onCreate or onViewCreated
@@ -144,6 +145,7 @@ class PermissionHandler(
     /**
      * Request only basic permissions for login screen
      * (POST_NOTIFICATIONS, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION)
+     * Shows location disclosure BEFORE requesting permissions as per Google Play policy
      * @return true if all basic permissions are already granted, false if requesting
      */
     fun requestLoginPermissions(): Boolean {
@@ -158,15 +160,55 @@ class PermissionHandler(
             return true
         }
 
-        Log.i(TAG, "⏳ Requesting basic login permissions: $missingPermissions")
+        // Check if location permissions are in the missing list
+        val needsLocationPermissions = missingPermissions.any {
+            it == Manifest.permission.ACCESS_FINE_LOCATION ||
+            it == Manifest.permission.ACCESS_COARSE_LOCATION
+        }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionLauncher?.launch(missingPermissions.toTypedArray())
+        if (needsLocationPermissions) {
+            // ⚠️ IMPORTANT: Show location disclosure BEFORE requesting permissions
+            Log.i(TAG, "📍 Showing location disclosure before requesting permissions")
+            showLocationDisclosureBeforePermissions(missingPermissions)
         } else {
-            fragment.requestPermissions(missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+            // No location permissions needed, proceed directly
+            Log.i(TAG, "⏳ Requesting basic login permissions: $missingPermissions")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissionLauncher?.launch(missingPermissions.toTypedArray())
+            } else {
+                fragment.requestPermissions(missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+            }
         }
 
         return false
+    }
+
+    /**
+     * Show location disclosure dialog before requesting permissions
+     */
+    private fun showLocationDisclosureBeforePermissions(permissionsToRequest: List<String>) {
+        locationDisclosureManager = LocationDisclosureManager(
+            fragment = fragment,
+            onAccepted = {
+                Log.i(TAG, "✅ User accepted location disclosure, now requesting permissions")
+                // User accepted disclosure, now request permissions
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    permissionLauncher?.launch(permissionsToRequest.toTypedArray())
+                } else {
+                    fragment.requestPermissions(permissionsToRequest.toTypedArray(), PERMISSION_REQUEST_CODE)
+                }
+            },
+            onDeclined = {
+                Log.i(TAG, "❌ User declined location disclosure")
+                Toast.makeText(
+                    fragment.requireContext(),
+                    "Location access is required for shift tracking and attendance verification",
+                    Toast.LENGTH_LONG
+                ).show()
+                onPermissionsDenied?.invoke(permissionsToRequest)
+            }
+        )
+        locationDisclosureManager?.showDisclosureIfNeeded()
     }
 
     /**
@@ -189,7 +231,8 @@ class PermissionHandler(
 
     /**
      * Request ALL permissions with comprehensive flow (for Home screen)
-     * Step 1: Start Permission Check
+     * Shows location disclosure BEFORE requesting permissions as per Google Play policy
+     * Step 1: Location Disclosure → Location Permissions → Notification → Battery → Foreground Service
      * @return true if all permissions are already granted, false if requesting
      */
     fun requestPermissions(): Boolean {
@@ -201,12 +244,160 @@ class PermissionHandler(
             return true
         }
 
-        Log.i(TAG, "⏳ Starting comprehensive permission flow")
-        checkPostNotificationPermission()
+        // Check if location permissions are in the missing list
+        val needsLocationPermissions = missingPermissions.any {
+            it == Manifest.permission.ACCESS_FINE_LOCATION ||
+            it == Manifest.permission.ACCESS_COARSE_LOCATION ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && it == Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+
+        if (needsLocationPermissions) {
+            // ⚠️ IMPORTANT: Show location disclosure BEFORE requesting permissions
+            Log.i(TAG, "📍 Showing location disclosure before requesting comprehensive permissions")
+            showLocationDisclosureForComprehensiveFlow()
+        } else {
+            // No location permissions needed, proceed with notification
+            Log.i(TAG, "⏳ Starting comprehensive permission flow (no location needed)")
+            checkPostNotificationPermission()
+        }
+
         return false
     }
 
-    // Step 2: Check & Request POST_NOTIFICATIONS
+    /**
+     * Show location disclosure dialog before starting comprehensive permission flow
+     */
+    private fun showLocationDisclosureForComprehensiveFlow() {
+        locationDisclosureManager = LocationDisclosureManager(
+            fragment = fragment,
+            onAccepted = {
+                Log.i(TAG, "✅ User accepted location disclosure, requesting notification permission first")
+                // User accepted disclosure, now start with notification permission
+                checkPostNotificationPermission()
+            },
+            onDeclined = {
+                Log.i(TAG, "❌ User declined location disclosure")
+                Toast.makeText(
+                    fragment.requireContext(),
+                    "Location access is required for shift tracking and attendance verification. The app requires 'Allow all the time' permission to function properly.",
+                    Toast.LENGTH_LONG
+                ).show()
+                onPermissionsDenied?.invoke(getMissingPermissions())
+            }
+        )
+        locationDisclosureManager?.showDisclosureIfNeeded()
+    }
+
+    // Step 2: Request Location Permissions (Fine + Coarse, then Background separately)
+    private fun requestLocationPermissions() {
+        Log.i(TAG, "🎯 requestLocationPermissions() called")
+        Log.i(TAG, "🎯 Android version: ${Build.VERSION.SDK_INT}")
+
+        // ⚠️ IMPORTANT: On Android 10+, background location MUST be requested separately
+        // from foreground location permissions. Requesting them together will cause denial.
+
+        // First check if foreground location permissions are granted
+        val hasFineLocation = ContextCompat.checkSelfPermission(
+            fragment.requireContext(),
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val hasCoarseLocation = ContextCompat.checkSelfPermission(
+            fragment.requireContext(),
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val hasForegroundLocation = hasFineLocation && hasCoarseLocation
+        Log.i(TAG, "🎯 Foreground location granted: $hasForegroundLocation (Fine: $hasFineLocation, Coarse: $hasCoarseLocation)")
+
+        if (!hasForegroundLocation) {
+            // Request foreground location permissions first
+            val foregroundPermissions = mutableListOf<String>()
+            if (!hasFineLocation) foregroundPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (!hasCoarseLocation) foregroundPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+
+            Log.i(TAG, "⏳ Requesting FOREGROUND location permissions: $foregroundPermissions")
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    Log.i(TAG, "🚀 Using permissionLauncher (Android 13+)")
+                    permissionLauncher?.launch(foregroundPermissions.toTypedArray())
+                } else {
+                    Log.i(TAG, "🚀 Using fragment.requestPermissions (Android <13)")
+                    fragment.requestPermissions(foregroundPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error requesting foreground location permissions", e)
+                onPermissionsDenied?.invoke(foregroundPermissions)
+            }
+        } else {
+            // Foreground location is granted, now check background location
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val hasBackgroundLocation = ContextCompat.checkSelfPermission(
+                    fragment.requireContext(),
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+
+                Log.i(TAG, "🎯 Background location granted: $hasBackgroundLocation")
+
+                if (!hasBackgroundLocation) {
+                    // Request background location permission separately
+                    Log.i(TAG, "⏳ Requesting BACKGROUND location permission separately")
+                    requestBackgroundLocationPermission()
+                } else {
+                    Log.i(TAG, "✅ All location permissions granted, proceeding to battery optimization")
+                    checkBatteryOptimization()
+                }
+            } else {
+                // Android 9 or lower, no background location needed
+                Log.i(TAG, "✅ Foreground location granted (Android < 10), proceeding to battery optimization")
+                checkBatteryOptimization()
+            }
+        }
+    }
+
+    // Request background location permission (must be done AFTER foreground is granted)
+    private fun requestBackgroundLocationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Show rationale for background location before requesting
+            AlertDialog.Builder(fragment.requireContext())
+                .setTitle("Background Location Required")
+                .setMessage("To track your shifts even when the app is in the background or closed, we need 'Allow all the time' permission.\n\n" +
+                        "This ensures accurate attendance tracking throughout your entire shift.")
+                .setPositiveButton("Allow") { dialog, _ ->
+                    Log.i(TAG, "✅ User accepted background location rationale")
+                    dialog.dismiss()
+                    fragment.view?.postDelayed({
+                        try {
+                            val backgroundPermission = arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                permissionLauncher?.launch(backgroundPermission)
+                            } else {
+                                fragment.requestPermissions(backgroundPermission, PERMISSION_REQUEST_CODE)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ Error requesting background location", e)
+                            // Continue anyway, background location is optional
+                            checkBatteryOptimization()
+                        }
+                    }, 100)
+                }
+                .setNegativeButton("Skip") { dialog, _ ->
+                    Log.i(TAG, "⚠️ User skipped background location")
+                    dialog.dismiss()
+                    Toast.makeText(
+                        fragment.requireContext(),
+                        "Background location is recommended for accurate shift tracking",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    // Continue to battery optimization even if skipped
+                    checkBatteryOptimization()
+                }
+                .setCancelable(false)
+                .show()
+        }
+    }
+
+    // Step 3: Check & Request POST_NOTIFICATIONS
     private fun checkPostNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(fragment.requireContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -214,11 +405,46 @@ class PermissionHandler(
             Log.i(TAG, "⏳ Requesting POST_NOTIFICATIONS permission")
             permissionLauncher?.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
         } else {
-            checkBatteryOptimization()
+            Log.i(TAG, "✅ POST_NOTIFICATIONS already granted or not required, showing location permission rationale")
+            showLocationPermissionRationale()
         }
     }
 
-    // Step 3: Check & Handle Battery Optimization
+    // Show rationale dialog before requesting location permissions
+    private fun showLocationPermissionRationale() {
+        AlertDialog.Builder(fragment.requireContext())
+            .setTitle("Location Permission Required")
+            .setMessage("ShiftSmart Plus needs location access to:\n\n" +
+                    "• Track your attendance during shifts\n" +
+                    "• Verify you're at the correct work location\n" +
+                    "• Record shift start and end times\n\n" +
+                    "The app requires 'Allow all the time' permission to function properly even when the app is in the background.")
+            .setPositiveButton("Allow") { dialog, _ ->
+                Log.i(TAG, "✅ User accepted location rationale, requesting location permissions")
+                dialog.dismiss()
+                // Post to handler to ensure dialog is fully dismissed before requesting permissions
+                fragment.view?.postDelayed({
+                    requestLocationPermissions()
+                }, 100)
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                Log.i(TAG, "❌ User declined location rationale")
+                dialog.dismiss()
+                Toast.makeText(
+                    fragment.requireContext(),
+                    "Location permission is required for shift tracking",
+                    Toast.LENGTH_LONG
+                ).show()
+                onPermissionsDenied?.invoke(listOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ))
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    // Step 4: Check & Handle Battery Optimization
     private fun checkBatteryOptimization() {
         val powerManager = fragment.requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager
         if (powerManager.isIgnoringBatteryOptimizations(fragment.requireContext().packageName)) {
@@ -252,7 +478,7 @@ class PermissionHandler(
         val powerManager = fragment.requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!powerManager.isPowerSaveMode) {
             Log.i(TAG, "✅ Battery Saver mode is OFF")
-            requestLocationPermissions()
+            checkForegroundServicePermission()
         } else {
             Log.i(TAG, "⚠️ Battery Saver mode is ON, showing dialog")
             showBatterySaverDialog()
@@ -267,76 +493,16 @@ class PermissionHandler(
                 val intent = Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
                 fragment.startActivity(intent)
                 // Continue flow even if user goes to settings
-                requestLocationPermissions()
+                checkForegroundServicePermission()
             }
             .setNegativeButton("Cancel") { _, _ ->
-                requestLocationPermissions()
+                checkForegroundServicePermission()
             }
             .setCancelable(false)
             .show()
     }
 
-    // Step 5: Request Required Permissions (Location, etc.)
-    private fun requestLocationPermissions() {
-        val deniedPermissions = getRequiredPermissions().filter {
-            // Skip POST_NOTIFICATIONS as it's already handled
-            val isPostNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                it == Manifest.permission.POST_NOTIFICATIONS
-            } else {
-                false
-            }
-            !isPostNotification && ContextCompat.checkSelfPermission(fragment.requireContext(), it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (deniedPermissions.isNotEmpty()) {
-            val showRationale = deniedPermissions.any {
-                ActivityCompat.shouldShowRequestPermissionRationale(fragment.requireActivity(), it)
-            }
-
-            if (showRationale) {
-                showPermissionRationaleDialog(deniedPermissions)
-            } else {
-                Log.i(TAG, "⏳ Requesting location permissions: $deniedPermissions")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    permissionLauncher?.launch(deniedPermissions.toTypedArray())
-                } else {
-                    fragment.requestPermissions(deniedPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
-                }
-            }
-        } else {
-            checkForegroundServicePermission()
-        }
-    }
-
-    private fun showPermissionRationaleDialog(deniedPermissions: List<String>) {
-        if (hasShownRationale) {
-            // If already shown once, direct to settings
-            showSettingsDialog(deniedPermissions.first())
-            return
-        }
-
-        hasShownRationale = true
-
-        AlertDialog.Builder(fragment.requireContext())
-            .setTitle("Permissions Required")
-            .setMessage("This app needs background location permissions to work correctly. Please allow them all the time.")
-            .setPositiveButton("Grant") { _, _ ->
-                Log.i(TAG, "⏳ User agreed to grant permissions: $deniedPermissions")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    permissionLauncher?.launch(deniedPermissions.toTypedArray())
-                } else {
-                    fragment.requestPermissions(deniedPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
-                }
-            }
-            .setNegativeButton("Cancel") { _, _ ->
-                Log.i(TAG, "❌ User cancelled permission rationale")
-                onPermissionsDenied?.invoke(deniedPermissions)
-            }
-            .setCancelable(false)
-            .show()
-    }
-
-    // Step 6: Handle Foreground Service Permission (Android 14+)
+    // Step 5: Handle Foreground Service Permission (Android 14+)
     private fun checkForegroundServicePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
             ContextCompat.checkSelfPermission(fragment.requireContext(), Manifest.permission.FOREGROUND_SERVICE) != PackageManager.PERMISSION_GRANTED
@@ -353,86 +519,62 @@ class PermissionHandler(
 
     private fun onAllPermissionsGranted() {
         Log.i(TAG, "✅ All permissions granted! Proceeding...")
-        hasShownRationale = false // Reset flag
         onPermissionsGranted()
     }
 
-    private fun showSettingsDialog(missingPermission: String) {
-        val intent = when (missingPermission) {
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_BACKGROUND_LOCATION -> {
-                Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
-            }
-            Manifest.permission.POST_NOTIFICATIONS -> {
-                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, fragment.requireContext().packageName)
-                }
-            }
-            Manifest.permission.FOREGROUND_SERVICE -> {
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.parse("package:${fragment.requireContext().packageName}")
-                }
-            }
-            else -> {
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.parse("package:${fragment.requireContext().packageName}")
-                }
-            }
-        }
-
-        AlertDialog.Builder(fragment.requireContext())
-            .setTitle("Permissions Required")
-            .setMessage("Some permissions were permanently denied or require manual enabling. Please enable them in settings.")
-            .setPositiveButton("Go to Settings") { _, _ ->
-                fragment.startActivity(intent)
-            }
-            .setNegativeButton("Cancel") { dialog, _ ->
-                dialog.dismiss()
-                onPermissionsDenied?.invoke(listOf(missingPermission))
-            }
-            .setCancelable(false)
-            .show()
-    }
 
     /**
      * Handle permission result from ActivityResultLauncher
      */
     fun handlePermissionResult(result: Map<String, Boolean>) {
+        Log.i(TAG, "📋 handlePermissionResult called")
+        Log.i(TAG, "📋 Result map: $result")
+
         val deniedPermissions = result.filter { !it.value }.keys.toList()
+        val grantedPermissions = result.filter { it.value }.keys.toList()
+
+        Log.i(TAG, "✅ Granted: ${grantedPermissions.joinToString()}")
+        Log.i(TAG, "❌ Denied: ${deniedPermissions.joinToString()}")
 
         if (deniedPermissions.isEmpty()) {
             Log.i(TAG, "✅ All requested permissions granted via launcher")
-            hasShownRationale = false // Reset flag
 
-            // Check if this was a basic login permission request or comprehensive flow
-            val isBasicRequest = result.keys.none { permission ->
-                val isBackgroundLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    permission == Manifest.permission.ACCESS_BACKGROUND_LOCATION
-                } else {
-                    false
-                }
-                val isForegroundService = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    permission == Manifest.permission.FOREGROUND_SERVICE
-                } else {
-                    false
-                }
-                isBackgroundLocation || isForegroundService
-            }
+            // Check what permission was granted and proceed accordingly
+            val hasPostNotifications = result.containsKey(Manifest.permission.POST_NOTIFICATIONS)
+            val hasForegroundLocation = result.containsKey(Manifest.permission.ACCESS_FINE_LOCATION) ||
+                    result.containsKey(Manifest.permission.ACCESS_COARSE_LOCATION)
+            val hasBackgroundLocation = result.containsKey(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            val hasForegroundService = result.containsKey(Manifest.permission.FOREGROUND_SERVICE)
 
-            if (isBasicRequest) {
-                // Basic login permissions granted
-                Log.i(TAG, "✅ Basic login permissions complete")
-                onAllPermissionsGranted()
-            } else {
-                // Continue comprehensive flow
-                when {
-                    result.containsKey(Manifest.permission.POST_NOTIFICATIONS) -> checkBatteryOptimization()
-                    result.containsKey(Manifest.permission.ACCESS_FINE_LOCATION) ||
-                    result.containsKey(Manifest.permission.ACCESS_COARSE_LOCATION) ||
-                    result.containsKey(Manifest.permission.ACCESS_BACKGROUND_LOCATION) -> checkForegroundServicePermission()
-                    result.containsKey(Manifest.permission.FOREGROUND_SERVICE) -> onAllPermissionsGranted()
-                    else -> onAllPermissionsGranted()
+            Log.i(TAG, "🔍 Permission check - POST_NOTIFICATIONS: $hasPostNotifications, ForegroundLocation: $hasForegroundLocation, BackgroundLocation: $hasBackgroundLocation, ForegroundService: $hasForegroundService")
+
+            // Continue comprehensive flow: Notification → Location Rationale → Foreground Location → Background Location → Battery → Foreground Service
+            when {
+                hasPostNotifications -> {
+                    Log.i(TAG, "🔔 POST_NOTIFICATIONS granted, showing location permission rationale")
+                    showLocationPermissionRationale()
+                }
+                hasBackgroundLocation -> {
+                    Log.i(TAG, "📍 Background location granted, proceeding to battery optimization")
+                    checkBatteryOptimization()
+                }
+                hasForegroundLocation -> {
+                    Log.i(TAG, "📍 Foreground location granted, requesting background location")
+                    // Request background location separately on Android 10+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        requestBackgroundLocationPermission()
+                    } else {
+                        // No background location needed on older versions
+                        checkBatteryOptimization()
+                    }
+                }
+                hasForegroundService -> {
+                    Log.i(TAG, "🎯 Foreground service permission granted, all done!")
+                    onAllPermissionsGranted()
+                }
+                else -> {
+                    Log.i(TAG, "⚠️ Unknown permission granted (fallback), completing flow")
+                    onAllPermissionsGranted()
                 }
             }
         } else {
@@ -461,7 +603,9 @@ class PermissionHandler(
     ) {
         if (requestCode != PERMISSION_REQUEST_CODE) return
 
-        Log.i(TAG, "onRequestPermissionsResult: permissions = ${permissions.joinToString()}, grantResults = ${grantResults.joinToString()}")
+        Log.i(TAG, "📋 onRequestPermissionsResult called")
+        Log.i(TAG, "📋 Permissions: ${permissions.joinToString()}")
+        Log.i(TAG, "📋 Grant results: ${grantResults.joinToString()}")
 
         if (grantResults.isEmpty()) {
             Log.i(TAG, "❌ Permission request cancelled")
@@ -470,46 +614,59 @@ class PermissionHandler(
         }
 
         val deniedPermissions = mutableListOf<String>()
+        val grantedPermissions = mutableListOf<String>()
         for (i in permissions.indices) {
             if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
                 deniedPermissions.add(permissions[i])
+            } else {
+                grantedPermissions.add(permissions[i])
             }
         }
 
+        Log.i(TAG, "✅ Granted: ${grantedPermissions.joinToString()}")
+        Log.i(TAG, "❌ Denied: ${deniedPermissions.joinToString()}")
+
         if (deniedPermissions.isEmpty()) {
             Log.i(TAG, "✅ All permissions granted via onRequestPermissionsResult")
-            hasShownRationale = false // Reset flag
 
-            // Check if this was a basic login permission request or comprehensive flow
-            val isBasicRequest = permissions.none { permission ->
-                val isBackgroundLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    permission == Manifest.permission.ACCESS_BACKGROUND_LOCATION
-                } else {
-                    false
-                }
-                val isForegroundService = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    permission == Manifest.permission.FOREGROUND_SERVICE
-                } else {
-                    false
-                }
-                isBackgroundLocation || isForegroundService
-            }
+            // Check what permission was granted and proceed accordingly
+            val hasPostNotifications = permissions.contains(Manifest.permission.POST_NOTIFICATIONS)
+            val hasForegroundLocation = permissions.any { it in listOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )}
+            val hasBackgroundLocation = permissions.contains(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            val hasForegroundService = permissions.contains(Manifest.permission.FOREGROUND_SERVICE)
 
-            if (isBasicRequest) {
-                // Basic login permissions granted
-                Log.i(TAG, "✅ Basic login permissions complete")
-                onAllPermissionsGranted()
-            } else {
-                // Continue comprehensive flow based on what was requested
-                when {
-                    permissions.contains(Manifest.permission.POST_NOTIFICATIONS) -> checkBatteryOptimization()
-                    permissions.any { it in listOf(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.ACCESS_COARSE_LOCATION,
-                        Manifest.permission.ACCESS_BACKGROUND_LOCATION
-                    )} -> checkForegroundServicePermission()
-                    permissions.contains(Manifest.permission.FOREGROUND_SERVICE) -> onAllPermissionsGranted()
-                    else -> onAllPermissionsGranted()
+            Log.i(TAG, "🔍 Permission check - POST_NOTIFICATIONS: $hasPostNotifications, ForegroundLocation: $hasForegroundLocation, BackgroundLocation: $hasBackgroundLocation, ForegroundService: $hasForegroundService")
+
+            // Continue comprehensive flow: Notification → Location Rationale → Foreground Location → Background Location → Battery → Foreground Service
+            when {
+                hasPostNotifications -> {
+                    Log.i(TAG, "🔔 POST_NOTIFICATIONS granted, showing location permission rationale")
+                    showLocationPermissionRationale()
+                }
+                hasBackgroundLocation -> {
+                    Log.i(TAG, "📍 Background location granted, proceeding to battery optimization")
+                    checkBatteryOptimization()
+                }
+                hasForegroundLocation -> {
+                    Log.i(TAG, "📍 Foreground location granted, requesting background location")
+                    // Request background location separately on Android 10+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        requestBackgroundLocationPermission()
+                    } else {
+                        // No background location needed on older versions
+                        checkBatteryOptimization()
+                    }
+                }
+                hasForegroundService -> {
+                    Log.i(TAG, "🎯 Foreground service permission granted, all done!")
+                    onAllPermissionsGranted()
+                }
+                else -> {
+                    Log.i(TAG, "⚠️ Unknown permission granted (fallback), completing flow")
+                    onAllPermissionsGranted()
                 }
             }
         } else {

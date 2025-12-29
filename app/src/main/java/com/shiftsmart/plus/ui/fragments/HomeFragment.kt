@@ -486,6 +486,13 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         Log.i(TAG, "✅ All permissions granted in HomeFragment")
         setChecksData()
 
+        // ✅ CRITICAL: Verify ALL required permissions before scheduling alarms
+        // This prevents crash when only notification permission is granted but location is still pending
+        if (!hasAllRequiredPermissions()) {
+            Log.w(TAG, "⚠️ Not all required permissions granted yet, waiting...")
+            return
+        }
+
         // ✅ Only schedule alarms if they haven't been scheduled yet
         // This prevents duplicate scheduling when user clicks button after initial permission grant
         if (!areAlarmsScheduled) {
@@ -495,7 +502,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                 val multiTimeTables = user.multipleTimeTables
 
                 if (defaultShifts != null) {
-                    Log.i(TAG, "✅ Scheduling shift alarms with AlarmScheduler (first time)")
+                    Log.i(TAG, "✅ All permissions granted, scheduling shift alarms with AlarmScheduler (first time)")
                     AlarmScheduler.scheduleAlarms(
                         context = requireContext(),
                         defaultShifts = defaultShifts,
@@ -516,6 +523,61 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             pendingAction = null
             action.invoke()
         }
+    }
+
+    /**
+     * Check if ALL required permissions are granted
+     * This is critical to prevent crash when scheduling alarms
+     *
+     * Required permissions:
+     * 1. ACCESS_FINE_LOCATION - For GPS tracking
+     * 2. ACCESS_COARSE_LOCATION - For network-based location
+     * 3. FOREGROUND_SERVICE_LOCATION - For Android 14+ (checked in service)
+     *
+     * @return true if all required location permissions are granted
+     */
+    private fun hasAllRequiredPermissions(): Boolean {
+        Log.i(TAG, "🔍 Checking if all required permissions are granted...")
+
+        val fineLocation = ActivityCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        val coarseLocation = ActivityCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        // Check notification permission (optional but recommended)
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ActivityCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true // Not required on older versions
+        }
+
+        // Log current permission status
+        Log.i(TAG, "Permission Status:")
+        Log.i(TAG, "   - ACCESS_FINE_LOCATION: $fineLocation")
+        Log.i(TAG, "   - ACCESS_COARSE_LOCATION: $coarseLocation")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Log.i(TAG, "   - POST_NOTIFICATIONS: $notification")
+        }
+
+        // Both location permissions MUST be granted
+        val hasLocationPermissions = fineLocation && coarseLocation
+
+        if (!hasLocationPermissions) {
+            Log.w(TAG, "⚠️ Not all location permissions granted yet")
+            Log.w(TAG, "   Waiting for: ${if (!fineLocation) "FINE_LOCATION " else ""}${if (!coarseLocation) "COARSE_LOCATION" else ""}")
+            return false
+        }
+
+        Log.i(TAG, "✅ All required location permissions are granted!")
+        return true
     }
 
     // This method is called when permissions are denied

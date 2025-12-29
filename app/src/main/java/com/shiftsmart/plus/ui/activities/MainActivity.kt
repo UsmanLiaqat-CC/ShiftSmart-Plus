@@ -55,6 +55,7 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
     private lateinit var activityResultLauncher: ActivityResultLauncher<IntentSenderRequest>
+    private lateinit var appUpdateManager: com.google.android.play.core.appupdate.AppUpdateManager
 
     private val PERMISSIONS_REQUEST_CODE = 100
     private  val TAG = "MainActivityPLUS"
@@ -74,10 +75,17 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Initialize app update manager
+        appUpdateManager = AppUpdateManagerFactory.create(this)
+
         activityResultLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
             // Handle the result of the update flow here
             if (result.resultCode != RESULT_OK) {
-                Log.d(TAG, "Update flow failed! Result code: ${result.resultCode}")
+                Log.d(TAG, "❌ Update flow failed! Result code: ${result.resultCode}")
+                // User cancelled or update failed - show non-dismissible dialog
+                showUpdateRequiredDialog()
+            } else {
+                Log.d(TAG, "✅ Update flow completed successfully")
             }
         }
 
@@ -104,19 +112,149 @@ class MainActivity : AppCompatActivity() {
         val appUpdateInfoTask = appUpdateManager.appUpdateInfo
 
         appUpdateInfoTask.addOnSuccessListener { appUpdateInfo ->
+            // ✅ ENHANCED LOGGING - Debug why update isn't showing
+            Log.i(TAG, "========== APP UPDATE CHECK ==========")
+            Log.i(TAG, "📱 Current Version Code: ${packageManager.getPackageInfo(packageName, 0).versionCode}")
+            Log.i(TAG, "📱 Current Version Name: ${packageManager.getPackageInfo(packageName, 0).versionName}")
+            Log.i(TAG, "🔍 Update Availability: ${appUpdateInfo.updateAvailability()}")
+            Log.i(TAG, "🔍 Available Version Code: ${appUpdateInfo.availableVersionCode()}")
+            Log.i(TAG, "🔍 Is Immediate Update Allowed: ${appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)}")
+            Log.i(TAG, "🔍 Is Flexible Update Allowed: ${appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)}")
+            Log.i(TAG, "🔍 Install Status: ${appUpdateInfo.installStatus()}")
+
+            // Decode update availability status
+            when (appUpdateInfo.updateAvailability()) {
+                UpdateAvailability.UPDATE_AVAILABLE -> {
+                    Log.i(TAG, "✅ UPDATE_AVAILABLE - An update is available")
+                }
+                UpdateAvailability.UPDATE_NOT_AVAILABLE -> {
+                    Log.i(TAG, "ℹ️ UPDATE_NOT_AVAILABLE - No update available")
+                }
+                UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS -> {
+                    Log.i(TAG, "⚠️ DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS - Update already in progress")
+                }
+                UpdateAvailability.UNKNOWN -> {
+                    Log.i(TAG, "❓ UNKNOWN - Update status unknown")
+                }
+            }
+            Log.i(TAG, "======================================")
+
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
                 && appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
             ) {
-                // Request the update
+                // Request the update - IMMEDIATE type blocks app usage until updated
                 try {
+                    Log.i(TAG, "🔄 Update available! Starting immediate update flow...")
                     appUpdateManager.startUpdateFlowForResult(
                         appUpdateInfo,
                         activityResultLauncher,
                         AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
                     )
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error starting update flow: ${e.message}")
+                    Log.e(TAG, "❌ Error starting update flow: ${e.message}")
+                    // Show dialog that app cannot be used without update
+                    showUpdateRequiredDialog()
                 }
+            } else {
+                Log.i(TAG, "✅ No update available or update not required")
+                Log.i(TAG, "ℹ️ NOTE: Internal App Sharing does NOT work with In-App Update API!")
+                Log.i(TAG, "ℹ️ Use Internal Testing, Closed Testing, or Open Testing track instead")
+
+                // ✅ No update available - Show background location permission dialog
+                checkAndRequestBackgroundLocation()
+            }
+        }.addOnFailureListener { e ->
+            Log.e(TAG, "❌ Failed to check for updates: ${e.message}")
+            e.printStackTrace()
+
+            // ✅ On update check failure - also show background location dialog
+            checkAndRequestBackgroundLocation()
+        }
+    }
+
+    /**
+     * Check if background location permission is granted
+     * If not, show dialog to request it
+     */
+    private fun checkAndRequestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val backgroundLocationPermission = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            )
+
+            if (backgroundLocationPermission != PackageManager.PERMISSION_GRANTED) {
+                Log.i(TAG, "⚠️ Background location permission not granted, showing dialog")
+                showBackgroundLocationPermissionDialog()
+            } else {
+                Log.i(TAG, "✅ Background location permission already granted")
+            }
+        } else {
+            Log.i(TAG, "ℹ️ Android version < Q, background location permission not required")
+        }
+    }
+
+    /**
+     * Show dialog to request background location permission
+     */
+    private fun showBackgroundLocationPermissionDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Background Location Required")
+            .setMessage("This app needs background location access to track your location even when the app is closed or not in use. This is required for accurate attendance tracking.\n\nPlease grant \"Allow all the time\" in the next screen.")
+            .setPositiveButton("Grant Permission") { _, _ ->
+                // Request background location permission
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                        PERMISSIONS_REQUEST_CODE
+                    )
+                }
+            }
+            .setNegativeButton("Not Now") { dialog, _ ->
+                dialog.dismiss()
+                Log.i(TAG, "⚠️ User declined background location permission")
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    /**
+     * Show a non-dismissible dialog informing user that app update is required
+     * User cannot use the app without updating
+     */
+    private fun showUpdateRequiredDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Update Required")
+            .setMessage("A new version of the app is available. You must update to continue using the app.")
+            .setPositiveButton("Update Now") { _, _ ->
+                // Try to open Play Store
+                openPlayStoreForUpdate()
+            }
+            .setCancelable(false) // User cannot dismiss this dialog
+            .show()
+    }
+
+    /**
+     * Open Play Store to app's page for manual update
+     */
+    private fun openPlayStoreForUpdate() {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("market://details?id=$packageName")
+                setPackage("com.android.vending")
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            // If Play Store app is not available, open in browser
+            try {
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse("https://play.google.com/store/apps/details?id=$packageName")
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to open Play Store: ${e.message}")
+                // Close app if cannot update
+                finish()
             }
         }
     }
@@ -144,8 +282,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
-
     private fun setUpProgressDialog(
     ) {
         if (mProgressDialog != null && mProgressDialog!!.isShowing) {
@@ -159,13 +295,13 @@ class MainActivity : AppCompatActivity() {
         mProgressDialog?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
     }
+
     fun showProgressDialog(message: String) {
         progressDialogBinding.titleTv.text = message
         if (mProgressDialog != null && mProgressDialog?.isShowing == false) {
             mProgressDialog?.show()
         }
     }
-
 
     fun dismissProgressDialog() {
         if (mProgressDialog != null && mProgressDialog?.isShowing == true) {
@@ -239,8 +375,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-
-
 
     private fun showSnackBarMessage(message: String) {
         Snackbar.make(mBinding.root, message, Snackbar.LENGTH_SHORT).show()
@@ -428,8 +562,6 @@ class MainActivity : AppCompatActivity() {
         drawerLayout.closeDrawer(GravityCompat.START)
     }
 
-
-
     fun toggleDrawer() {
         if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
             drawerLayout.closeDrawer(GravityCompat.START)
@@ -497,6 +629,39 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Log.i(TAG, "onResume: Activity resumed")
+
+        // Check if update was downloaded while app was in background
+        // If update is in IMMEDIATE mode and user returns, they must install it
+        appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
+            if (appUpdateInfo.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
+                // Update download started but user left - resume the update flow
+                Log.i(TAG, "⚠️ Update in progress detected, resuming...")
+                try {
+                    appUpdateManager.startUpdateFlowForResult(
+                        appUpdateInfo,
+                        activityResultLauncher,
+                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to resume update: ${e.message}")
+                    showUpdateRequiredDialog()
+                }
+            } else if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
+                && appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
+                // Update available but not started - enforce it
+                Log.i(TAG, "⚠️ Update available on resume, enforcing...")
+                try {
+                    appUpdateManager.startUpdateFlowForResult(
+                        appUpdateInfo,
+                        activityResultLauncher,
+                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to start update: ${e.message}")
+                    showUpdateRequiredDialog()
+                }
+            }
+        }
     }
 
     private fun checkPermissionsAndStartService() {

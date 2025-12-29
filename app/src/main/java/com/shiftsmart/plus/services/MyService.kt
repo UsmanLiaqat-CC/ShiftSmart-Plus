@@ -97,6 +97,45 @@ class MyService : Service() {
     private lateinit var wifiScanner: WifiScanner
     private var currentIntent: Intent? = null  // ✅ Store intent for access in maybeTriggerApiCall
 
+    /**
+     * Check if all required permissions for foreground service with location are granted
+     * Required for Android 14+ (targetSdk 36) to start foreground service with location type
+     */
+    private fun hasRequiredPermissions(): Boolean {
+        val fineLocation = androidx.core.content.ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        val coarseLocation = androidx.core.content.ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        // For Android 14+ (API 34+), also need FOREGROUND_SERVICE_LOCATION permission
+        val foregroundServiceLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.FOREGROUND_SERVICE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true // Not required on older versions
+        }
+
+        val hasPermissions = fineLocation && coarseLocation && foregroundServiceLocation
+
+        if (!hasPermissions) {
+            Log.e(TAG, "❌ Missing required permissions for foreground service:")
+            Log.e(TAG, "   - ACCESS_FINE_LOCATION: $fineLocation")
+            Log.e(TAG, "   - ACCESS_COARSE_LOCATION: $coarseLocation")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                Log.e(TAG, "   - FOREGROUND_SERVICE_LOCATION: $foregroundServiceLocation")
+            }
+        }
+
+        return hasPermissions
+    }
+
 
     private fun updateForegroundNotification(context: Context, message: String) {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -141,6 +180,14 @@ class MyService : Service() {
     {
         currentIntent = intent
         Log.i(TAG, "Service command received: ${intent?.action}")
+
+        // ✅ CRITICAL: Check if location permissions are granted before starting foreground service
+        if (!hasRequiredPermissions()) {
+            Log.e(TAG, "❌ Cannot start foreground service - missing required permissions")
+            Log.e(TAG, "   Location permissions must be granted before service can start")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         val user = SharedPref.getInstance(this)?.getUser()
         val isInShift = if (user != null) attendanceSyncManager.shouldRunCheck(user) else false

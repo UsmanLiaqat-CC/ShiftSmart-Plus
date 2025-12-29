@@ -1,13 +1,16 @@
 package com.shiftsmart.plus.periodicAction
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.ui.activities.WakeUpActivity
@@ -58,6 +61,7 @@ import java.util.Locale
  */
 class AlarmReceiver : BroadcastReceiver() {
 
+
     override fun onReceive(context: Context, intent: Intent?) {
         // ✅ CRITICAL: Acquire wake lock IMMEDIATELY when alarm fires
         // Use longer wake lock for problematic devices (Mara/Mobicel)
@@ -85,12 +89,21 @@ class AlarmReceiver : BroadcastReceiver() {
             when (intent?.action) {
 
                 "START_SERVICE" -> {
-                    Log.i("AlarmReceiver", "Received START_SERVICE_ALARM")
+                    Log.i(TAG, "Received START_SERVICE_ALARM")
+
+                    // ✅ Check if we have required permissions before starting foreground service
+                    if (!hasRequiredPermissions(context)) {
+                        Log.e(TAG, "❌ Cannot start foreground service - missing required permissions")
+                        Log.e(TAG, "   User needs to grant location permissions from app settings")
+                        // Schedule next attempt in case user grants permissions later
+                        AlarmScheduler.scheduleTomorrowFromPrefs(context)
+                        return
+                    }
 
                     // Check if we're inside shift before starting
                     val user = SharedPref.getInstance(context)?.getUser()
                     if (user != null && isInsideShiftWindow(user)) {
-                        Log.i("AlarmReceiver", "✅ Inside shift - starting service")
+                        Log.i(TAG, "✅ Inside shift - starting service")
 
                         val wakeIntent = Intent(context, WakeUpActivity::class.java).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -105,7 +118,7 @@ class AlarmReceiver : BroadcastReceiver() {
                         else
                             context.startService(serviceIntent)
                     } else {
-                        Log.i("AlarmReceiver", "⏭️ Outside shift window - skipping service start")
+                        Log.i(TAG, "⏭️ Outside shift window - skipping service start")
                     }
 
                     AlarmScheduler.scheduleTomorrowFromPrefs(context)
@@ -123,17 +136,26 @@ class AlarmReceiver : BroadcastReceiver() {
                 }
 
                 "CALL_API" -> {
-                    Log.i("AlarmReceiver", "🔔 Received CALL_API at ${Utils.getCurrentDateTime()}")
+                    Log.i(TAG, "🔔 Received CALL_API at ${Utils.getCurrentDateTime()}")
 
                     val user = SharedPref.getInstance(context)?.getUser()
                     if (user == null) {
-                        Log.w("AlarmReceiver", "❌ No user found; skipping CALL_API")
+                        Log.w(TAG, "❌ No user found; skipping CALL_API")
+                        return
+                    }
+
+                    // ✅ Check if we have required permissions before starting foreground service
+                    if (!hasRequiredPermissions(context)) {
+                        Log.e(TAG, "❌ Cannot start foreground service - missing required permissions")
+                        Log.e(TAG, "   User needs to grant location permissions from app settings")
+                        // Schedule next attempt in case user grants permissions later
+                        scheduleNextAlarmFromCurrentTime(context)
                         return
                     }
 
                     // ✅ Check if we're inside shift window before processing
-                    if (!isInsideShiftWindow( user)) {
-                        Log.i("AlarmReceiver", "⏭️ Outside shift window - skipping CALL_API")
+                    if (!isInsideShiftWindow(user)) {
+                        Log.i(TAG, "⏭️ Outside shift window - skipping CALL_API")
                         // Stop service if running
                         val stopIntent = Intent(context, MyService::class.java).apply {
                             action = MyService.ACTION_STOP
@@ -145,11 +167,11 @@ class AlarmReceiver : BroadcastReceiver() {
                         return
                     }
 
-                    Log.i("AlarmReceiver", "✅ Inside shift window - processing CALL_API")
+                    Log.i(TAG, "✅ Inside shift window - processing CALL_API")
 
                     // ✅ NEW APPROACH: Always start service with ACTION_COLLECT_AND_STOP
                     // This tells service to: collect data → save → sync → stop itself
-                    Log.i("AlarmReceiver", "🔄 Starting service with COLLECT_AND_STOP action")
+                    Log.i(TAG, "🔄 Starting service with COLLECT_AND_STOP action")
                     val collectIntent = Intent(context, MyService::class.java).apply {
                         action = MyService.ACTION_COLLECT_AND_STOP
                     }
@@ -165,7 +187,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     // 3. API sync
                     // 4. Scheduling next alarm
                     // 5. Stopping itself
-                    Log.i("AlarmReceiver", "✅ Service will collect data and auto-stop after completion")
+                    Log.i(TAG, "✅ Service will collect data and auto-stop after completion")
                 }
 
             }
@@ -182,6 +204,47 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        private const val TAG = "AlarmReceiver"
+
+        /**
+         * Check if all required permissions for foreground service with location are granted
+         * Required for Android 14+ (targetSdk 36) to start foreground service with location type
+         */
+        private fun hasRequiredPermissions(context: Context): Boolean {
+            val fineLocation = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            val coarseLocation = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            // For Android 14+ (API 34+), also need FOREGROUND_SERVICE_LOCATION permission
+            val foregroundServiceLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.FOREGROUND_SERVICE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true // Not required on older versions
+            }
+
+            val hasPermissions = fineLocation && coarseLocation && foregroundServiceLocation
+
+            if (!hasPermissions) {
+                Log.e(TAG, "❌ Missing required permissions for foreground service:")
+                Log.e(TAG, "   - ACCESS_FINE_LOCATION: $fineLocation")
+                Log.e(TAG, "   - ACCESS_COARSE_LOCATION: $coarseLocation")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    Log.e(TAG, "   - FOREGROUND_SERVICE_LOCATION: $foregroundServiceLocation")
+                }
+            }
+
+            return hasPermissions
+        }
+
         /**
          * Check if current time is within shift window (with ±1 hour buffer)
          * If shift is 08:00-18:00, service runs 07:00-19:00

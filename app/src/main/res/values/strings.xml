@@ -135,4 +135,13 @@
     <string name="version_format">%1$s (%2$d)</string>
     <string name="permissions_required">Permissions Required</string>
     <string name="try_again">Try Again</string>
+
+    <!-- Location Disclosure Strings -->
+    <string name="location_disclosure_title">Location Data Usage</string>
+    <string name="location_icon_description">Location Permission Icon</string>
+    <string name="decline">Decline</string>
+    <string name="accept_and_continue">Accept &amp; Continue</string>
+    <string name="location_disclosure_required">You must accept location data usage to use this app</string>
+    <string name="location_disclosure_subtitle">Required for shift tracking</string>
+    <string name="location_disclosure_reminder">Remember to select "Allow all the time" when prompted</string>
 </resources>
