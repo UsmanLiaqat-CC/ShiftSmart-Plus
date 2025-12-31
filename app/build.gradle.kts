@@ -18,8 +18,8 @@ android {
         applicationId = "com.shiftsmart.plus"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "6.0"
+        versionCode = 7
+        versionName = "7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -103,6 +103,8 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.messaging)
 
-    implementation(libs.inappupdate)
+    // Google Play In-App Update (Official Google Library v2.1.0)
+    implementation(libs.playcore.appupdate)      // Base library
+    implementation(libs.playcore.appupdate.ktx)  // Kotlin extensions
 
 }

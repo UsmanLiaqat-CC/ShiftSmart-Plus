@@ -29,6 +29,7 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import com.google.android.material.snackbar.Snackbar
+import com.google.android.play.core.appupdate.AppUpdateManager
 import com.google.firebase.messaging.FirebaseMessaging
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.ActivityMainBinding
@@ -55,11 +56,15 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
     private lateinit var activityResultLauncher: ActivityResultLauncher<IntentSenderRequest>
-    private lateinit var appUpdateManager: com.google.android.play.core.appupdate.AppUpdateManager
+    private lateinit var appUpdateManager: AppUpdateManager
 
     private val PERMISSIONS_REQUEST_CODE = 100
     private  val TAG = "MainActivityPLUS"
     private  val REQUEST_IGNORE_BATTERY_OPTIMIZATIONS = 1001
+
+    // State management to prevent dialog overlap
+    private var isUpdateDialogShowing = false
+    private var isUpdateAvailable = false
 
     lateinit var drawerLayout: DrawerLayout
     private lateinit var mBinding:ActivityMainBinding
@@ -75,28 +80,41 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize app update manager
+        // Initialize app update manager - SINGLE INSTANCE
         appUpdateManager = AppUpdateManagerFactory.create(this)
 
-        activityResultLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-            // Handle the result of the update flow here
-            if (result.resultCode != RESULT_OK) {
-                Log.d(TAG, "❌ Update flow failed! Result code: ${result.resultCode}")
-                // User cancelled or update failed - show non-dismissible dialog
-                showUpdateRequiredDialog()
-            } else {
-                Log.d(TAG, "✅ Update flow completed successfully")
+        // Register activity result launcher for update flow
+        activityResultLauncher = registerForActivityResult(
+            ActivityResultContracts.StartIntentSenderForResult()
+        ) { result ->
+            when (result.resultCode) {
+                RESULT_OK -> {
+                    Log.i(TAG, "✅ Update flow completed successfully")
+                    isUpdateDialogShowing = false
+                    // After successful update, app will restart automatically
+                }
+                RESULT_CANCELED -> {
+                    Log.w(TAG, "⚠️ User cancelled update")
+                    isUpdateDialogShowing = false
+                    // For IMMEDIATE updates, user cannot use app without updating
+                    showUpdateRequiredDialog()
+                }
+                else -> {
+                    Log.e(TAG, "❌ Update flow failed! Result code: ${result.resultCode}")
+                    isUpdateDialogShowing = false
+                    showUpdateRequiredDialog()
+                }
             }
         }
-
-        // Check for app updates using Google Play Core library
-        checkForAppUpdates()
 
         mBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
 
         drawerLayout = mBinding.drawerLayout
         Log.i(TAG, "onCreate: Activity created")
+
+        // Check for app updates FIRST (before showing any other dialogs)
+        checkForAppUpdates()
 
         startPermissionAction()
         setupDrawer()
@@ -107,12 +125,15 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+    /**
+     * Check for app updates using Google Play In-App Update API
+     * Uses IMMEDIATE update type - blocks app usage until updated
+     */
     private fun checkForAppUpdates() {
-        val appUpdateManager = AppUpdateManagerFactory.create(this)
-        val appUpdateInfoTask = appUpdateManager.appUpdateInfo
+        Log.i(TAG, "🔍 Checking for app updates...")
 
-        appUpdateInfoTask.addOnSuccessListener { appUpdateInfo ->
-            // ✅ ENHANCED LOGGING - Debug why update isn't showing
+        appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
+            // ✅ ENHANCED LOGGING - Debug update status
             Log.i(TAG, "========== APP UPDATE CHECK ==========")
             Log.i(TAG, "📱 Current Version Code: ${packageManager.getPackageInfo(packageName, 0).versionCode}")
             Log.i(TAG, "📱 Current Version Name: ${packageManager.getPackageInfo(packageName, 0).versionName}")
@@ -123,60 +144,107 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "🔍 Install Status: ${appUpdateInfo.installStatus()}")
 
             // Decode update availability status
-            when (appUpdateInfo.updateAvailability()) {
+            val updateStatus = when (appUpdateInfo.updateAvailability()) {
                 UpdateAvailability.UPDATE_AVAILABLE -> {
-                    Log.i(TAG, "✅ UPDATE_AVAILABLE - An update is available")
+                    isUpdateAvailable = true
+                    "✅ UPDATE_AVAILABLE - An update is available"
                 }
                 UpdateAvailability.UPDATE_NOT_AVAILABLE -> {
-                    Log.i(TAG, "ℹ️ UPDATE_NOT_AVAILABLE - No update available")
+                    isUpdateAvailable = false
+                    "ℹ️ UPDATE_NOT_AVAILABLE - No update available"
                 }
                 UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS -> {
-                    Log.i(TAG, "⚠️ DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS - Update already in progress")
+                    isUpdateAvailable = true
+                    "⚠️ DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS - Update already in progress"
                 }
                 UpdateAvailability.UNKNOWN -> {
-                    Log.i(TAG, "❓ UNKNOWN - Update status unknown")
+                    isUpdateAvailable = false
+                    "❓ UNKNOWN - Update status unknown"
+                }
+                else -> {
+                    isUpdateAvailable = false
+                    "❓ UNEXPECTED STATUS - ${appUpdateInfo.updateAvailability()}"
                 }
             }
+            Log.i(TAG, updateStatus)
             Log.i(TAG, "======================================")
 
+            // Check if update is available and IMMEDIATE type is allowed
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
                 && appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
             ) {
-                // Request the update - IMMEDIATE type blocks app usage until updated
-                try {
-                    Log.i(TAG, "🔄 Update available! Starting immediate update flow...")
-                    appUpdateManager.startUpdateFlowForResult(
-                        appUpdateInfo,
-                        activityResultLauncher,
-                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
-                    )
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error starting update flow: ${e.message}")
-                    // Show dialog that app cannot be used without update
-                    showUpdateRequiredDialog()
-                }
+                // Update available - start IMMEDIATE update flow
+                startImmediateUpdate(appUpdateInfo)
+            } else if (appUpdateInfo.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
+                // Update was started but not completed - resume it
+                startImmediateUpdate(appUpdateInfo)
             } else {
-                Log.i(TAG, "✅ No update available or update not required")
-                Log.i(TAG, "ℹ️ NOTE: Internal App Sharing does NOT work with In-App Update API!")
-                Log.i(TAG, "ℹ️ Use Internal Testing, Closed Testing, or Open Testing track instead")
+                // No update available or not required
+                Log.i(TAG, "✅ No update required - proceeding with normal app flow")
+                isUpdateAvailable = false
+                isUpdateDialogShowing = false
 
-                // ✅ No update available - Show background location permission dialog
+                // Only show background location dialog if NO update is showing
                 checkAndRequestBackgroundLocation()
             }
         }.addOnFailureListener { e ->
             Log.e(TAG, "❌ Failed to check for updates: ${e.message}")
             e.printStackTrace()
 
-            // ✅ On update check failure - also show background location dialog
+            // ✅ Check if error is ERROR_APP_NOT_OWNED (-10)
+            // This happens when app is sideloaded or installed via ADB (not from Play Store)
+            val isAppNotOwnedError = e.message?.contains("-10") == true ||
+                                     e.message?.contains("ERROR_APP_NOT_OWNED") == true ||
+                                     e.message?.contains("not owned by any user") == true
+
+            if (isAppNotOwnedError) {
+                Log.w(TAG, "⚠️ App not installed from Play Store - In-App Updates unavailable")
+                Log.i(TAG, "ℹ️ This is expected for debug builds or sideloaded apps")
+                Log.i(TAG, "ℹ️ In-App Updates only work for apps downloaded from Play Store")
+                Log.i(TAG, "ℹ️ NOTE: Install from Internal Testing or Production track to test updates")
+            }
+
+            // On update check failure - continue with normal app flow
+            isUpdateAvailable = false
+            isUpdateDialogShowing = false
             checkAndRequestBackgroundLocation()
+        }
+    }
+
+    /**
+     * Start IMMEDIATE update flow
+     * This blocks app usage until update is installed
+     */
+    private fun startImmediateUpdate(appUpdateInfo: com.google.android.play.core.appupdate.AppUpdateInfo) {
+        try {
+            Log.i(TAG, "🔄 Starting IMMEDIATE update flow...")
+            isUpdateDialogShowing = true
+
+            appUpdateManager.startUpdateFlowForResult(
+                appUpdateInfo,
+                activityResultLauncher,
+                AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error starting update flow: ${e.message}", e)
+            isUpdateDialogShowing = false
+            // Show fallback dialog to manually update via Play Store
+            showUpdateRequiredDialog()
         }
     }
 
     /**
      * Check if background location permission is granted
      * If not, show dialog to request it
+     * Only shows if update dialog is NOT showing (prevents overlap)
      */
     private fun checkAndRequestBackgroundLocation() {
+        // ✅ Don't show background location dialog if update dialog is showing
+        if (isUpdateDialogShowing || isUpdateAvailable) {
+            Log.i(TAG, "⏸️ Skipping background location check - update dialog is showing")
+            return
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val backgroundLocationPermission = ContextCompat.checkSelfPermission(
                 this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
@@ -197,6 +265,12 @@ class MainActivity : AppCompatActivity() {
      * Show dialog to request background location permission
      */
     private fun showBackgroundLocationPermissionDialog() {
+        // ✅ Double-check update dialog is not showing before showing this dialog
+        if (isUpdateDialogShowing || isUpdateAvailable) {
+            Log.i(TAG, "⏸️ Skipping background location dialog - update in progress")
+            return
+        }
+
         AlertDialog.Builder(this)
             .setTitle("Background Location Required")
             .setMessage("This app needs background location access to track your location even when the app is closed or not in use. This is required for accurate attendance tracking.\n\nPlease grant \"Allow all the time\" in the next screen.")
@@ -630,12 +704,14 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         Log.i(TAG, "onResume: Activity resumed")
 
-        // Check if update was downloaded while app was in background
+        // ✅ Check if update was downloaded while app was in background
         // If update is in IMMEDIATE mode and user returns, they must install it
         appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
                 // Update download started but user left - resume the update flow
-                Log.i(TAG, "⚠️ Update in progress detected, resuming...")
+                Log.i(TAG, "⚠️ Update in progress detected in onResume, resuming...")
+                isUpdateDialogShowing = true
+                isUpdateAvailable = true
                 try {
                     appUpdateManager.startUpdateFlowForResult(
                         appUpdateInfo,
@@ -644,12 +720,15 @@ class MainActivity : AppCompatActivity() {
                     )
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Failed to resume update: ${e.message}")
+                    isUpdateDialogShowing = false
                     showUpdateRequiredDialog()
                 }
             } else if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
                 && appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
                 // Update available but not started - enforce it
                 Log.i(TAG, "⚠️ Update available on resume, enforcing...")
+                isUpdateDialogShowing = true
+                isUpdateAvailable = true
                 try {
                     appUpdateManager.startUpdateFlowForResult(
                         appUpdateInfo,
@@ -658,8 +737,13 @@ class MainActivity : AppCompatActivity() {
                     )
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Failed to start update: ${e.message}")
+                    isUpdateDialogShowing = false
                     showUpdateRequiredDialog()
                 }
+            } else {
+                // No update needed - safe to show other dialogs
+                isUpdateDialogShowing = false
+                isUpdateAvailable = false
             }
         }
     }
