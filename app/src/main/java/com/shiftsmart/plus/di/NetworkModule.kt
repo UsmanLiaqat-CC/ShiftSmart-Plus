@@ -30,17 +30,12 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
 
-//Live Url
-//    http://153.92.211.248/tna-phase2-backend/api/v1/
-
-//    Test Url
-//    http://153.92.211.248/tna-phase2-backend-testing/api/v1/
     @JvmStatic
     @Provides
     @Singleton
     fun provideApiInterface(okHttpClient: OkHttpClient , gson: Gson): ApiService {
         return Retrofit.Builder()
-            .baseUrl("http://153.92.211.248/tna-phase2-backend-testing/api/v1/")
+            .baseUrl("https://api.shiftsmartplus.com/api/v1/")
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()

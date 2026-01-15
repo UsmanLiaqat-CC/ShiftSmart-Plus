@@ -9,7 +9,6 @@ plugins {
     id("com.google.gms.google-services")
 }
 
-//com.swifttechglobix.shiftsmart
 android {
     namespace = "com.shiftsmart.plus"
     compileSdk = 36
@@ -18,8 +17,8 @@ android {
         applicationId = "com.shiftsmart.plus"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "7.0"
+        versionCode = 8
+        versionName = "8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
