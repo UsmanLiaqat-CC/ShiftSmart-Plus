@@ -11,6 +11,7 @@ enum class StatusEnum {
     default,
     arrival,
     departure,
+    complaint,
 }
 enum class ActiveStatusEnum {
     online,

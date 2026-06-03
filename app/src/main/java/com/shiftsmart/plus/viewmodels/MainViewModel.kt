@@ -78,99 +78,6 @@ class MainViewModel @Inject constructor(
         CoroutineScope(Dispatchers.IO  + SupervisorJob() + exceptionHandler)
     }
 
-  /*  fun sendAppData(listDataRequest: List<DataRequest>, token:String, context: Context) {
-
-
-        _sendDataResponse.value = Resource.Loading(application.getString(R.string.saving_datato_server))
-
-        val token = SharedPref.getInstance(context)?.getToken() ?: ""
-        Log.i(TAG, "sendAppData: dataREquest: ${listDataRequest}\nToken:${token}")
-
-        parentScope.launch {
-            try {
-                val response = withContext(Dispatchers.IO) {
-                    repository.sendData(listDataRequest,token)
-                }
-
-                withContext(Dispatchers.Main) {
-
-                    if (response.isSuccessful)
-                    {
-                        val attendaceResponseModel = response.body() as AttendaceResponseModel
-                        Log.i(TAG, "sendAppData: response upper success: ${attendaceResponseModel}")
-
-                        if (attendaceResponseModel.errors?.isNotEmpty() == true) {
-                            Log.i(TAG, "sendAppData: response inner errors: ${attendaceResponseModel}")
-
-//                            if (attendaceResponseModel.errors[0].code==401||attendaceResponseModel.errors[0].code==422 ||attendaceResponseModel.errors[0].code==500)
-//                            {
-//                                _sendDataResponse.value = Resource.Error("${application.getString(R.string.unauthorize)} ${attendaceResponseModel.errors[0].code}")
-//                            }else{
-//                                _sendDataResponse.value = Resource.Error(attendaceResponseModel.errors[0].detail)
-//                            }
-
-                            _sendDataResponse.value = Resource.Error("error")
-
-                        }
-                        else {
-                            Log.i(TAG, "sendAppData: response inner success: ${attendaceResponseModel}")
-
-                            _sendDataResponse.value = Resource.Success(attendaceResponseModel)
-                        }
-                    }
-                    else {
-                        val errorResponse = response.parseErrorBody()
-                        Log.i(TAG, "sendAppData: response not success: ${errorResponse}-->responseBody:${response.body()}\ndataREquest:${listDataRequest}")
-                        if (errorResponse != null && errorResponse.errors?.isNotEmpty() == true) {
-//                            if (errorResponse.errors[0].code==401 ||errorResponse.errors[0].code==422 || errorResponse.errors[0].code==500)
-//                            {
-//                                _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
-//                            }else{
-//                                _sendDataResponse.value = Resource.Error(errorResponse.errors[0].detail)
-//                            }
-                            _sendDataResponse.value = Resource.Error(errorResponse.errors[0].detail)
-                        }
-                        else {
-//                            if (response.code()==401 || response.code()==422 ||response.code()==500)
-//                            {
-//                                _sendDataResponse.value = Resource.Error(application.getString(R.string.unauthorize))
-//                            }else{
-//                                _sendDataResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
-//                            }
-                            _sendDataResponse.value = Resource.Error("Failed with code ${response.code()}: ${response.message()}")
-
-                        }
-                    }
-                }
-            } catch (exception: Exception) {
-                withContext(Dispatchers.Main) {
-                    Log.i(TAG, "sendAppData: response: exception:${exception}")
-                    val errorMessage = when (exception) {
-                        is IOException -> application.getString(R.string.network_error_please_check_your_internet_connection)
-                        is HttpException -> {
-                            val code = exception.code()
-                            when (code) {
-                                500 -> application.getString(R.string.server_error_please_try_again_later)
-                                404 -> application.getString(R.string.resource_not_found_please_check_the_url)
-                                else -> application.getString(
-                                    R.string.http_error,
-                                    exception.message()
-                                )
-                            }
-                        }
-                        else -> application.getString(
-                            R.string.unknown_error,
-                            exception.localizedMessage
-                        )
-                    }
-                    _sendDataResponse.value = Resource.Error(errorMessage)
-                }
-            }
-        }
-
-    }
-*/
-
     fun sendAppData(listDataRequest: List<DataRequest>, token: String, context: Context) {
         val authToken = SharedPref.getInstance(context)?.getToken() ?: ""
 
@@ -179,10 +86,11 @@ class MainViewModel @Inject constructor(
 
         parentScope.launch {
             try {
-                Log.i(TAG, "sendAppData() -> request size: ${listDataRequest.size}, token: $authToken")
+                Log.i(TAG, "sendAppData() -> request request: ${listDataRequest}, token: $authToken")
 
                 // Run the API call entirely on IO thread
                 val response = repository.sendData(listDataRequest, authToken)
+                Log.i(TAG, "sendAppData() -> response: ${response}")
 
                 if (response.isSuccessful) {
                     val attendaceResponse = response.body()
@@ -236,6 +144,8 @@ class MainViewModel @Inject constructor(
 
 
     fun getTimeSheet(userId: String) {
+        val apiUrl = "user/usersTimeSheet/$userId"
+        Log.i(TAG, "getTimeSheet: API URL: $apiUrl\nUserId: $userId\nRequest Method: GET\nHeaders: Content-Type: application/json")
 
         _timeSheetResponse.value = Resource.Loading(application.getString(R.string.please_wait))
 
@@ -245,7 +155,7 @@ class MainViewModel @Inject constructor(
                     repository.getTimeSheet(userId)
                 }
 
-                Log.i(TAG, "getTimeSheet: response: $response")
+                Log.i(TAG, "getTimeSheet: API Response Status: ${response.code()}\nResponse: $response")
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful) {
                         val recordResponseModel = response.body()!!
@@ -282,7 +192,8 @@ class MainViewModel @Inject constructor(
     }
     fun getRecords(startDate: String, token: String, userId: String, page: Int = 1, limit: Int = 10) {
         val request = RecordRequest(startDate,)
-        Log.i(TAG, "getRecords: startDate: $startDate\nToken: $token\nRequest: $request")
+        val apiUrl = "attendanceDetail/getUserAttendanceByDateRange/$userId?page=$page&limit=$limit"
+        Log.i(TAG, "getRecords: startDate: $startDate\nToken: $token\nRequest: ${request}\nAPI URL: $apiUrl")
 
         _attendceRecordResponse.value = Resource.Loading(application.getString(R.string.please_wait))
 

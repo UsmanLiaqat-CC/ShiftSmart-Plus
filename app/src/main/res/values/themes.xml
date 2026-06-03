@@ -11,6 +11,17 @@
         <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>
 
     </style>
+
+    <style name="Theme.ShiftSmartPlus.ComplaintAlert" parent="Theme.Material3.Light.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:showWhenLocked">true</item>
+        <item name="android:turnScreenOn">true</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+    </style>
+
     <style name="TransparentDialog" parent="Theme.MaterialComponents.Light.Dialog.Alert">
         <item name="android:background">@android:color/transparent</item>
         <item name="android:windowFrame">@null</item>

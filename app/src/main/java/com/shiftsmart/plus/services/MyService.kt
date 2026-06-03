@@ -158,9 +158,95 @@ class MyService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val message = intent?.getStringExtra("message")
             Log.i("NotificationReceiver", "Received notification update: $message")
+
             if (context != null) {
+                // ✅ CHECK FOR API ERROR - HANDLE LOGOUT
+                if (message?.contains("API error", ignoreCase = true) == true &&
+                    (message.contains("404") || message.contains("401") || message.contains("403"))) {
+                    Log.e(TAG, "🔴 API Error notification received: $message")
+
+                    // ✅ Check if app is running
+                    val isAppRunning = isActivityRunning(context)
+                    Log.i(TAG, "App running status: $isAppRunning")
+
+                    if (!isAppRunning) {
+                        // ❌ App is closed - Perform cleanup
+                        Log.e(TAG, "App is closed - Performing error cleanup")
+                        handleLogoutErrorCleanup(context)
+                    } else {
+                        // ✅ App is open - HomeFragment will handle dialog via broadcast
+                        Log.i(TAG, "App is open - HomeFragment will handle logout dialog")
+                    }
+                }
+
+                // Update notification normally
                 updateForegroundNotification(context, message.toString())
             }
+        }
+    }
+
+    /**
+     * Check if any activity of the app is currently running
+     */
+    private fun isActivityRunning(context: Context): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val tasks = activityManager.runningAppProcesses
+
+        return tasks?.any { it.processName == context.packageName } ?: false
+    }
+
+    /**
+     * Perform cleanup when logout error happens while app is closed:
+     * - Clear all notifications
+     * - Clear all SharedPreferences
+     * - Cancel all scheduled alarms/work
+     */
+    private fun handleLogoutErrorCleanup(context: Context) {
+        try {
+            Log.i(TAG, "Starting logout error cleanup...")
+
+            // 1. Clear notifications
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.cancelAll()
+            Log.i(TAG, "✅ All notifications cleared")
+
+            // 2. Clear SharedPreferences
+            SharedPref.getInstance(context)?.clearLastSyncTime()
+            SharedPref.getInstance(context)?.clearPrefrence()
+            Log.i(TAG, "✅ SharedPreferences cleared")
+
+            // 3. Cancel all scheduled alarms
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val pendingIntents = listOf(
+                android.app.PendingIntent.getBroadcast(context, 1, Intent(context, AlarmReceiver::class.java),
+                    android.app.PendingIntent.FLAG_NO_CREATE or android.app.PendingIntent.FLAG_IMMUTABLE),
+                android.app.PendingIntent.getBroadcast(context, 2, Intent(context, RestartServiceReceiver::class.java),
+                    android.app.PendingIntent.FLAG_NO_CREATE or android.app.PendingIntent.FLAG_IMMUTABLE)
+            )
+
+            pendingIntents.forEach { pendingIntent ->
+                if (pendingIntent != null) {
+                    alarmManager.cancel(pendingIntent)
+                    Log.i(TAG, "✅ Alarm cancelled")
+                }
+            }
+
+            // 4. Cancel WorkManager tasks
+            try {
+                androidx.work.WorkManager.getInstance(context).cancelAllWork()
+                Log.i(TAG, "✅ All WorkManager tasks cancelled")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not cancel WorkManager tasks: ${e.message}")
+            }
+
+            // 5. Stop the service
+            stopSelf()
+            Log.i(TAG, "✅ Service stopped")
+
+            Log.i(TAG, "✅✅✅ Logout error cleanup complete!")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during logout error cleanup: ${e.message}", e)
         }
     }
 

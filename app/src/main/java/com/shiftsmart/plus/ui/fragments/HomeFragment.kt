@@ -3,8 +3,10 @@ package com.shiftsmart.plus.ui.fragments
 import android.Manifest
 import android.app.Dialog
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.location.LocationManager
@@ -74,6 +76,7 @@ import androidx.core.view.updatePadding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.utils.GpsStatusMonitor
+import com.shiftsmart.plus.utils.SessionLogoutCoordinator
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import kotlinx.coroutines.delay
@@ -131,6 +134,22 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     private lateinit var gpsStatusMonitor: GpsStatusMonitor
 
+    // ✅ Broadcast receiver for logout broadcasts
+    private val logoutBroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == SessionLogoutCoordinator.ACTION_FORCE_LOGOUT) {
+                Log.w(TAG, "🔴 Logout broadcast received from SessionLogoutCoordinator")
+                val message = intent.getStringExtra(SessionLogoutCoordinator.EXTRA_MESSAGE)
+                    ?: SessionLogoutCoordinator.consumePendingMessage()
+                    ?: "Session expired"
+
+                showLogoutDialog(message)
+            }
+        }
+    }
+
+    private var isLogoutReceiverRegistered = false
+    private var isComplaintReceiverRegistered = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -252,6 +271,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                     mBinding.syncButton.visibility = View.GONE
                 }
             })
+
+            // Hide complaint button from home fragment - alerts are shown full-screen instead
+            mBinding.checkinComplaintBtn.visibility = View.GONE
         }
         setUpProgressDialog()
         setUpClickListeners()
@@ -604,6 +626,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         Log.i(TAG, "onResume: HomeFragment")
         setChecksData()
 
+        if (requireActivity().intent.getBooleanExtra(MainActivity.EXTRA_COMPLAINT_CHECK, false)) {
+            Log.i(TAG, "✅ Complaint check intent detected in HomeFragment")
+            requireActivity().intent.removeExtra(MainActivity.EXTRA_COMPLAINT_CHECK)
+            executeComplaintButtonAction()
+        }
+
         // Check if user returned from settings and granted permissions
         if (pendingAction != null && permissionHandler.hasAllPermissions()) {
             Log.i(TAG, "✅ User returned from settings with permissions granted, executing pending action")
@@ -617,12 +645,92 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         super.onStart()
         gpsStatusMonitor.setListener(this)
         gpsStatusMonitor.startMonitoring()
+
+        // ✅ Register logout broadcast receiver using LocalBroadcastManager
+        registerLogoutReceiverIfNeeded()
+        registerComplaintReceiverIfNeeded()
     }
 
     override fun onStop() {
         super.onStop()
         gpsStatusMonitor.removeListener()
         gpsStatusMonitor.stopMonitoring()
+
+        // ✅ Unregister logout broadcast receiver from LocalBroadcastManager
+        try {
+            unregisterLogoutReceiverIfNeeded()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering logout broadcast receiver: ${e.message}")
+        }
+
+        // ✅ Complaint receiver is intentionally NOT unregistered in onStop.
+        // It uses LocalBroadcastManager and is needed to handle the in-process broadcast
+        // that MainActivity sends when the user returns from ComplaintAlertActivity.
+        // It is always cleaned up safely in onDestroy.
+        Log.d(TAG, "🟡 Keeping complaint receiver registered until onDestroy")
+    }
+
+    private fun registerLogoutReceiverIfNeeded() {
+        if (isLogoutReceiverRegistered) return
+        try {
+            val filter = IntentFilter(SessionLogoutCoordinator.ACTION_FORCE_LOGOUT)
+            androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(requireContext())
+                .registerReceiver(logoutBroadcastReceiver, filter)
+            isLogoutReceiverRegistered = true
+            Log.d(TAG, "✅ Logout broadcast receiver registered with LocalBroadcastManager")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error registering logout broadcast receiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterLogoutReceiverIfNeeded() {
+        if (!isLogoutReceiverRegistered) return
+        androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(requireContext())
+            .unregisterReceiver(logoutBroadcastReceiver)
+        isLogoutReceiverRegistered = false
+        Log.d(TAG, "✅ Logout broadcast receiver unregistered from LocalBroadcastManager")
+    }
+
+    private fun registerComplaintReceiverIfNeeded() {
+        if (isComplaintReceiverRegistered) return
+        try {
+            val complaintFilter = IntentFilter(MainActivity.ACTION_PERFORM_COMPLAINT_CHECK)
+            androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(requireContext())
+                .registerReceiver(complaintBroadcastReceiver, complaintFilter)
+            isComplaintReceiverRegistered = true
+            Log.d(TAG, "✅ Complaint broadcast receiver registered")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error registering complaint broadcast receiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterComplaintReceiverIfNeeded() {
+        if (!isComplaintReceiverRegistered) return
+        androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(requireContext())
+            .unregisterReceiver(complaintBroadcastReceiver)
+        isComplaintReceiverRegistered = false
+        Log.d(TAG, "✅ Complaint broadcast receiver unregistered")
+    }
+
+    private val complaintBroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            Log.i(TAG, "✅ Complaint broadcast received in HomeFragment")
+            executeComplaintButtonAction()
+        }
+    }
+
+    private fun executeComplaintButtonAction() {
+        if (!permissionHandler.hasAllPermissions()) {
+            Log.i(TAG, "⚠️ Complaint action requires permissions, requesting...")
+            pendingAction = {
+                complaintButtonPressed()
+            }
+            permissionHandler.requestPermissions()
+            return
+        }
+
+        Log.i(TAG, "✅ Executing complaintButtonPressed from complaint alert")
+        complaintButtonPressed()
     }
 
     private fun setUpProgressDialog(
@@ -647,24 +755,6 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         mBinding.errorsBtn.setOnClickListener {
             findNavController().navigate(R.id.action_homeFragment_to_errorsSolutionsFragment)
         }
-
-//        mBinding.errorsBtn.setOnClickListener {
-//            // Manually stop the service for testing WorkManager restart
-//            Log.i(TAG, "🛑 MANUAL STOP: Stopping service to test WorkManager 15-min restart")
-//
-//            val serviceIntent = Intent(requireContext(), MyService::class.java)
-//            requireContext().stopService(serviceIntent)
-//
-//            // Optional: Show a toast to confirm
-//            Toast.makeText(
-//                requireContext(),
-//                "Service stopped. WorkManager should restart it within 15 minutes if inside shift window.",
-//                Toast.LENGTH_LONG
-//            ).show()
-//
-//            Log.i(TAG, "⏰ WorkManager will check and restart service within 15 minutes if shift is active")
-//        }
-
 
 
         mBinding.syncButton.setOnClickListener {
@@ -716,6 +806,23 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             // All permissions granted, proceed with fingerprint check and departure
             performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                 departireButtonPressed()
+            }
+        }
+
+        mBinding.checkinComplaintBtn.setOnClickListener {
+            if (!permissionHandler.hasAllPermissions()) {
+                Log.i(TAG, "⚠️ Complaint button: Missing permissions, requesting...")
+                pendingAction = {
+                    performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                        complaintButtonPressed()
+                    }
+                }
+                permissionHandler.requestPermissions()
+                return@setOnClickListener
+            }
+
+            performActionWithFingerprintCheck(requireActivity(), requireContext()) {
+                complaintButtonPressed()
             }
         }
 
@@ -827,6 +934,18 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     private fun departireButtonPressed() {
         btnStatus = StatusEnum.departure.name
+        setChecksData()
+        if (locationTrack.checkLocationPermissions()) {
+            locationTrack.stopListener()
+            locationTrack.loc = null
+            fetchLocationData()
+        } else {
+            checkandGrantLocationPermission()
+        }
+    }
+
+    private fun complaintButtonPressed() {
+        btnStatus = StatusEnum.complaint.name
         setChecksData()
         if (locationTrack.checkLocationPermissions()) {
             locationTrack.stopListener()
@@ -1015,7 +1134,8 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                         }
 
                         // Check if main message requires deleting all user records
-                        if (mainMessage.contains("Multiple attendance records", ignoreCase = true)) {
+                        if (mainMessage.contains("Multiple attendance records", ignoreCase = true))
+                        {
 
                             withContext(Dispatchers.Main) {
                                 showMessage(mainMessage)
@@ -1041,7 +1161,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                         }
 
                         // Iterate through attendance data list
-                        attendanceResponse.data.forEach { attendance ->
+                        (attendanceResponse.data ?: emptyList()).forEach { attendance ->
                             Log.i(TAG, "setUpObserver: eachResponse:${attendance}")
                             when (attendance.attendanceStatus) {
                                 "online" -> {
@@ -1063,7 +1183,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                         // Find and delete records with this UUID
                                         db.dbDao().deleteRecordByUuid(uuid)
 
-                                    }
+                                     }
                                 }
                             }
                         }
@@ -1077,14 +1197,17 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                     }
                     Log.i(TAG, "setUpObserver: error:${resource.message}")
 
-                    if (resource.message == "LOGOUT") {
-                        deleteUserDataAndLogout()
-                    } else {
+                    // ✅ LOGOUT will be handled by broadcast receiver (logoutBroadcastReceiver)
+                    // So we only show other error messages here
+                    if (resource.message != "LOGOUT") {
                         if (resource.message.contains("No address associated with hostname")) {
                             showMessage(getString(R.string.unable_to_connect_internet_right_now_please_try_again))
                         } else {
                             showMessage(resource.message)
                         }
+                    } else {
+                        // LOGOUT message - will be handled by broadcast receiver soon
+                        Log.i(TAG, "setUpObserver: LOGOUT error received - waiting for broadcast receiver to handle it")
                     }
 
                 }
@@ -1133,6 +1256,43 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         }
     }
+
+    private fun showLogoutDialog(message: String) {
+        val dialog = Dialog(requireActivity())
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        // ✅ Non-dismissible: outside click won't close it
+        dialog.setCancelable(false)
+
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val dialogBinding = CustomAlertDialogBinding.inflate(layoutInflater)
+        dialog.setContentView(dialogBinding.root)
+
+        // ✅ Set logout message
+        val logoutMessage = if (message.equals("LOGOUT", ignoreCase = true)) {
+            "You have been forcefully logged out by admin.\nYou can no longer use this app."
+        } else {
+            message.takeIf { it.isNotBlank() } ?: "Your session is no longer valid.\nPlease login again."
+        }
+
+        dialogBinding.titleTv.text = "Session Expired"
+        dialogBinding.desTv.text = logoutMessage
+
+        // ✅ Only OK button, no cancel button
+        dialogBinding.postiveBtn.text = "OK"
+        dialogBinding.negativeBtn.visibility = View.GONE
+
+        // ✅ OK button - perform logout
+        dialogBinding.postiveBtn.setOnClickListener {
+            dialog.dismiss()
+            deleteUserDataAndLogout()
+        }
+
+        dialog.show()
+        Log.i(TAG, "Logout dialog shown with message: $logoutMessage")
+    }
+
     fun fetchLocationData() {
         val checkGPS = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
         val checkNetwork = Utils.isInternetAvailable(requireContext())
@@ -1558,6 +1718,8 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterComplaintReceiverIfNeeded() }
+        runCatching { unregisterLogoutReceiverIfNeeded() }
         super.onDestroy()
         // Remove any pending handler callbacks
         clearTextRunnable?.let { clearTextHandler?.removeCallbacks(it) }

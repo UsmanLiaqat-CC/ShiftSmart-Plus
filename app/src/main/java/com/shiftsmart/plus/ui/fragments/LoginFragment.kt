@@ -27,9 +27,11 @@ import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.FragmentLoginBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.utils.AppConfig
 import com.shiftsmart.plus.utils.PasswordToggleHandler
 import com.shiftsmart.plus.utils.PermissionHandler
 import com.shiftsmart.plus.utils.Resource
+import com.shiftsmart.plus.utils.SessionLogoutCoordinator
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.viewmodels.MainViewModel
@@ -124,9 +126,18 @@ class LoginFragment : Fragment() {
                     userResponse.let {
                         Utils.showSnackBar(getString(R.string.login_successfully), mBinding.root)
                         if (it.data?.userModel?.isActive == true) {
+                            SessionLogoutCoordinator.resetTrigger()
 
                             Log.i(TAG, "setUpObserver: Token:${it.data?.accessToken}")
                             Log.i(TAG, "setUpObserver: user:${it.data?.userModel}")
+
+                            // App-level complaint override: when this flag is true, login always stores complaint=true.
+                            // When false, login always stores complaint=false.
+                            it.data?.userModel?.let { user ->
+                                user.isComplaint = AppConfig.forceComplaintLogin
+                                Log.i(TAG, "setUpObserver: forceComplaint=${AppConfig.forceComplaintLogin}, final isComplaint=${user.isComplaint}")
+                            }
+
                             SharedPref.getInstance(requireContext())?.saveToken(it.data.accessToken)
                             SharedPref.getInstance(requireContext())?.saveUser(it.data?.userModel)
 

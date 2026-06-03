@@ -42,6 +42,13 @@
             android:name=".ui.activities.WakeUpActivity"
             android:exported="false" />
         <activity
+            android:name=".ui.activities.ComplaintAlertActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:showOnLockScreen="true"
+            android:theme="@style/Theme.ShiftSmartPlus.ComplaintAlert"
+            android:turnScreenOn="true" />
+        <activity
             android:name=".ui.activities.MainActivity"
             android:exported="true"
             android:screenOrientation="portrait">
@@ -51,15 +58,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-<!--        <receiver-->
-<!--            android:name=".periodicAction.BootReceiver"-->
-<!--            android:enabled="true"-->
-<!--            android:exported="false">-->
-<!--            <intent-filter>-->
-<!--                <action android:name="android.intent.action.BOOT_COMPLETED" />-->
-<!--            </intent-filter>-->
-<!--        </receiver>-->
 
         <receiver
             android:name=".periodicAction.BootReceiver"

@@ -1,6 +1,7 @@
 package com.shiftsmart.plus.utils
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -581,7 +582,14 @@ class AttendanceSyncManager @Inject constructor(
                 } else {
                     Log.e(TAG, "API call failed: ${response.errorBody()}")
                     handleUnsuccessfulResponse(response)
-                    onComplete?.invoke(false, "API call failed")
+
+                    // ✅ CHECK FOR AUTO-LOGOUT ERRORS
+                    if (response.code() == 404 || response.code() == 401 || response.code() == 403) {
+                        Log.e(TAG, "❌ API Error ${response.code()} - User will be auto-logged out")
+                        onComplete?.invoke(false, "API Error ${response.code()} - Session expired")
+                    } else {
+                        onComplete?.invoke(false, "API call failed")
+                    }
                 }
 
             } catch (e: Exception) {
@@ -629,7 +637,7 @@ class AttendanceSyncManager @Inject constructor(
             }
 
             // Iterate through attendance data list
-            attendanceResponse.data.forEach { attendance ->
+            (attendanceResponse.data ?: emptyList()).forEach { attendance ->
                 Log.i(TAG, "handleSuccessfulResponse: Processing attendance: $attendance")
 
                 when (attendance.attendanceStatus) {
@@ -661,19 +669,42 @@ class AttendanceSyncManager @Inject constructor(
     }
 
     private suspend fun handleUnsuccessfulResponse(response: Response<AttendaceResponseModel>) {
-        response.errorBody()?.let {
-            val errorResponse = response.parseErrorBody()
-            Log.i(TAG, "Error response: $errorResponse")
-            errorResponse?.errors?.firstOrNull()?.let { error ->
-                if (error.detail == "LOGOUT" || error.code in listOf(401, 422, 500)) {
-                    withContext(Dispatchers.IO) {
-                        // Clear user data if required
-                        SharedPref.getInstance(context)?.clearPrefrence()
-                    }
+        // ✅ CHECK FOR 404 OR UNAUTHORIZED - TRIGGER LOGOUT USING SessionLogoutCoordinator
+        if (response.code() == 404 || response.code() == 401 || response.code() == 403) {
+            Log.e(TAG, "❌ API Error ${response.code()} - Triggering logout through SessionLogoutCoordinator")
+
+            withContext(Dispatchers.Main) {
+                try {
+                    // ✅ Send notification update to service for error handling
+                    val errorMessage = "API error ${response.code()} - Session expired"
+                    sendNotificationUpdate(errorMessage)
+
+                    // Extract error body as string
+                    val errorBodyString = response.errorBody()?.string()
+
+                    // ✅ Use SessionLogoutCoordinator to broadcast logout intent
+                    // This will be caught by HomeFragment to show logout dialog
+                    SessionLogoutCoordinator.handleIfSessionExpired(
+                        context,
+                        response.code(),
+                        errorBodyString
+                    )
+                    Log.i(TAG, "Logout broadcast sent through SessionLogoutCoordinator")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error triggering logout: ${e.message}", e)
+                }
+            }
+        } else {
+            // Log other errors
+            response.errorBody()?.let {
+                try {
+                    val errorResponse = response.parseErrorBody()
+                    Log.i(TAG, "Error response: $errorResponse")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Unable to parse error body")
                 }
             }
         }
-//        apiCallInProgress = false
     }
 
     /**

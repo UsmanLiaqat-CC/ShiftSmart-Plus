@@ -84,6 +84,7 @@
     <string name="service_will_run_from_to">Service will run from %1$s to %2$s</string>
     <string name="Arrival">Arrival</string>
     <string name="departure">Departure</string>
+    <string name="checkin_compliance">Checkin Compliance</string>
     <string name="sync_date">Sync Data</string>
     <string name="syncing_date">Syncing Data ...</string>
     <string name="data_sync_successfully_to_server">Data sync successfully to server</string>
@@ -121,6 +122,7 @@
     <string name="app_operation_error">App Operation Error</string>
     <string name="app_operation_issues">App Operation Issues</string>
     <string name="my_shifts">My Shifts</string>
+    <string name="alert_settings">Alert Settings</string>
     <string name="shift_timetabel_default">Shift TimeTabel(Default)</string>
     <string name="monday">Monday:</string>
     <string name="tuesday">Tuesday:</string>
@@ -135,6 +137,9 @@
     <string name="version_format">%1$s (%2$d)</string>
     <string name="permissions_required">Permissions Required</string>
     <string name="try_again">Try Again</string>
+    <string name="ok">OK</string>
+    <string name="session_expired_title">Session Ended</string>
+    <string name="session_expired_default_message">Your session is no longer valid. Please login again.</string>
 
     <!-- Location Disclosure Strings -->
     <string name="location_disclosure_title">Location Data Usage</string>
@@ -144,4 +149,8 @@
     <string name="location_disclosure_required">You must accept location data usage to use this app</string>
     <string name="location_disclosure_subtitle">Required for shift tracking</string>
     <string name="location_disclosure_reminder">Remember to select "Allow all the time" when prompted</string>
+    <string name="complaint_alert_title">Complaint Alert</string>
+    <string name="complaint_alert_message">A complaint is active for your shift. Please resolve the compliance issue now.</string>
+    <string name="complaint_alert_details">The SS+ System is not getting the required 5min updates from your device. Please press the Check-In Button and contact the SS+ Support team.</string>
+    <string name="resolve_compliance">Resolve Compliance</string>
 </resources>

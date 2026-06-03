@@ -24,7 +24,7 @@ data class RecordModel(
     val time: String, // utc time
     val attendanceType: String,// enum default(for service every 5 mintues) , arrival
     val attendanceStatus: String,// enum online , offline
-    val isForceAttendance: Boolean,
+    val isForceAttendance: Boolean,  // 5 mintues service false, arrival,departure true
     val isLocation: Boolean,
     val wifiService: Boolean,
     val dataService: Boolean,

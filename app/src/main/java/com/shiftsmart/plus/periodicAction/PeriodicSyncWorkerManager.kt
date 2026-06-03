@@ -107,5 +107,15 @@ object PeriodicSyncWorkerManager {
 
         WorkManager.getInstance(context).enqueue(oneTimeWorkRequest)
     }
-}
 
+    /**
+     * Stop all periodic/immediate sync work.
+     * Use on local logout/session expiry.
+     */
+    fun stopPeriodicSync(context: Context) {
+        Log.i(TAG, "🛑 Stopping periodic sync workers")
+        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+        WorkManager.getInstance(context).cancelAllWorkByTag("periodic_sync")
+        WorkManager.getInstance(context).cancelAllWorkByTag("immediate_sync")
+    }
+}

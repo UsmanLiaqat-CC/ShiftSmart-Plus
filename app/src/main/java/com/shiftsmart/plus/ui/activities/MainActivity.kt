@@ -4,8 +4,10 @@ import android.Manifest
 import android.app.AlarmManager
 import android.app.Dialog
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -28,6 +30,7 @@ import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
+import androidx.navigation.navOptions
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.play.core.appupdate.AppUpdateManager
 import com.google.firebase.messaging.FirebaseMessaging
@@ -36,11 +39,16 @@ import com.shiftsmart.plus.databinding.ActivityMainBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.databinding.LogoutDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.periodicAction.PeriodicSyncWorkerManager
+import com.shiftsmart.plus.periodicAction.RestartWatchdogManager
 import com.shiftsmart.plus.periodicAction.ServiceHealthWorkerManager
+import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.FingerprintHelper
+import com.shiftsmart.plus.utils.FullScreenIntentPermissionHelper
 import com.shiftsmart.plus.utils.Resource
+import com.shiftsmart.plus.utils.SessionLogoutCoordinator
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
@@ -55,6 +63,10 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
+    companion object {
+        const val EXTRA_COMPLAINT_CHECK = "com.shiftsmart.plus.EXTRA_COMPLAINT_CHECK"
+        const val ACTION_PERFORM_COMPLAINT_CHECK = "com.shiftsmart.plus.ACTION_PERFORM_COMPLAINT_CHECK"
+    }
     private lateinit var activityResultLauncher: ActivityResultLauncher<IntentSenderRequest>
     private lateinit var appUpdateManager: AppUpdateManager
 
@@ -65,10 +77,13 @@ class MainActivity : AppCompatActivity() {
     // State management to prevent dialog overlap
     private var isUpdateDialogShowing = false
     private var isUpdateAvailable = false
+    private var isFullScreenIntentDialogShowing = false
 
     lateinit var drawerLayout: DrawerLayout
     private lateinit var mBinding:ActivityMainBinding
     private var logoutDialog: Dialog? = null  // Keep reference to avoid multiple dialogs
+    private var forceLogoutDialog: AlertDialog? = null
+    private var isForceLogoutReceiverRegistered = false
 
     @Inject
     lateinit var locationTrack: LocationTrack
@@ -77,6 +92,16 @@ class MainActivity : AppCompatActivity() {
 
 
     val mainViewModel: MainViewModel by viewModels()
+
+    private val forceLogoutReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val message = intent?.getStringExtra(SessionLogoutCoordinator.EXTRA_MESSAGE)
+                ?: SessionLogoutCoordinator.consumePendingMessage()
+                ?: getString(R.string.session_expired_default_message)
+            showForceLogoutDialog(message)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -109,6 +134,8 @@ class MainActivity : AppCompatActivity() {
 
         mBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
+        handleComplaintIntent(intent)
+        registerForceLogoutReceiver()
 
         drawerLayout = mBinding.drawerLayout
         Log.i(TAG, "onCreate: Activity created")
@@ -270,6 +297,9 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "⏸️ Skipping background location dialog - update in progress")
             return
         }
+
+        // Close drawer before showing dialog
+        closeDrawerSafely()
 
         AlertDialog.Builder(this)
             .setTitle("Background Location Required")
@@ -454,36 +484,90 @@ class MainActivity : AppCompatActivity() {
         Snackbar.make(mBinding.root, message, Snackbar.LENGTH_SHORT).show()
     }
 
+    /**
+     * Safely close drawer - used before showing dialogs
+     * This ensures drawer closes immediately and doesn't interfere with dialogs
+     */
+    private fun closeDrawerSafely() {
+        try {
+            if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                drawerLayout.closeDrawer(GravityCompat.START)
+                Log.i(TAG, "Drawer closed safely")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing drawer: ${e.message}")
+        }
+    }
+
     private fun deleteUserDataAndLogout() {
+        // Close drawer immediately when logout starts
+        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            drawerLayout.closeDrawer(GravityCompat.START)
+        }
 
         lifecycleScope.launch {
             locationTrack.stopListener()
-            if (isServiceRunning(this@MainActivity, MyService::class.java)) {
-                // Clear Notifications
-                val notificationManager =this@MainActivity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                notificationManager.cancelAll()
-                Log.i("Service", "Service is running. Stopping it now.")
-
-                val stopIntent = Intent(this@MainActivity, MyService::class.java).apply {
-                    action = MyService.ACTION_STOP
-                }
-                this@MainActivity.startService(stopIntent)
-            }
             val user=SharedPref.getInstance(this@MainActivity)?.getUser()
             user?.let {
                 FirebaseMessaging.getInstance().unsubscribeFromTopic(it?._id.toString())
             }
 
+            // Stop all schedulers/workers/alarms
+            AlarmScheduler.cancelAllAlarms(this@MainActivity)
+            PeriodicSyncWorkerManager.stopPeriodicSync(this@MainActivity)
             // ✅ Cancel periodic health check worker
             ServiceHealthWorkerManager.cancelPeriodicHealthCheck(this@MainActivity)
+            ShiftRestartAlarmManager.cancelAllRestartSchedules(this@MainActivity)
+            RestartWatchdogManager.cancelOneMinuteRestart(this@MainActivity)
             Log.i(TAG, "✅ Periodic health check worker cancelled on logout")
+
+            // Clear notifications and stop service
+            val notificationManager = this@MainActivity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.cancelAll()
+
+            if (isServiceRunning(this@MainActivity, MyService::class.java)) {
+                Log.i(TAG, "Service is running. Stopping it now.")
+                this@MainActivity.stopService(Intent(this@MainActivity, MyService::class.java))
+            }
 
             FingerprintHelper.setFingerprintEnabled(this@MainActivity, false)
             SharedPref.getInstance(this@MainActivity)?.clearLastSyncTime() // Clear sync timestamps
             SharedPref.getInstance(this@MainActivity)?.clearPrefrence()
             val navController = findNavController(R.id.nav_host_fragment)
-            navController.navigate(R.id.loginFragment)
+            val navOptions = navOptions {
+                popUpTo(R.id.nav_graph) { inclusive = true }
+                launchSingleTop = true
+            }
+            if (navController.currentDestination?.id != R.id.loginFragment) {
+                navController.navigate(R.id.loginFragment, null, navOptions)
+            }
+
+            // Ensure drawer stays closed after navigation
+            if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                drawerLayout.closeDrawer(GravityCompat.START)
+            }
         }
+    }
+
+    private fun showForceLogoutDialog(message: String) {
+        if (isFinishing || isDestroyed) return
+        if (forceLogoutDialog?.isShowing == true) return
+
+        // Close drawer before showing dialog
+        closeDrawerSafely()
+
+        forceLogoutDialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.session_expired_title))
+            .setMessage(message)
+            .setPositiveButton(getString(R.string.ok)) { dialog, _ ->
+                dialog.dismiss()
+                deleteUserDataAndLogout()
+            }
+            .setCancelable(false)
+            .create()
+
+        forceLogoutDialog?.setCanceledOnTouchOutside(false)
+        forceLogoutDialog?.show()
     }
 
     private fun setupDrawer() {
@@ -504,6 +588,9 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (!FingerprintHelper.isFingerprintAvailable(this)) {
+                    // Close drawer before showing dialog
+                    closeDrawerSafely()
+
                     AlertDialog.Builder(this)
                         .setTitle(getString(R.string.fingerprint_not_enabled))
                         .setMessage(getString(R.string.please_enable_fingerprint_in_your_device_settings))
@@ -550,6 +637,11 @@ class MainActivity : AppCompatActivity() {
             mBinding.drawerLayout.closeDrawer(GravityCompat.START)
         }
 
+        mBinding.navAlertSettings.setOnClickListener {
+            openFullScreenIntentSettings()
+            mBinding.drawerLayout.closeDrawer(GravityCompat.START)
+        }
+
         mBinding.navLogout.setOnClickListener {
             showLogoutDialog()
             mBinding.drawerLayout.closeDrawer(GravityCompat.START)
@@ -566,12 +658,8 @@ class MainActivity : AppCompatActivity() {
     private fun showLogoutDialog() {
         if (logoutDialog?.isShowing == true) return  // Prevent duplicate dialog
 
-        val drawerLayout = (this@MainActivity)?.drawerLayout
-        drawerLayout?.let {
-            if (it.isDrawerOpen(GravityCompat.START)) {
-                it.closeDrawer(GravityCompat.START)
-            }
-        }
+        // Close drawer before showing dialog
+        closeDrawerSafely()
 
         val dialogBinding = LogoutDialogBinding.inflate(LayoutInflater.from(this@MainActivity)) // Use ViewBinding
 
@@ -704,6 +792,10 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         Log.i(TAG, "onResume: Activity resumed")
 
+        SessionLogoutCoordinator.consumePendingMessage()?.let { pendingMessage ->
+            showForceLogoutDialog(pendingMessage)
+        }
+
         // ✅ Check if update was downloaded while app was in background
         // If update is in IMMEDIATE mode and user returns, they must install it
         appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
@@ -744,7 +836,82 @@ class MainActivity : AppCompatActivity() {
                 // No update needed - safe to show other dialogs
                 isUpdateDialogShowing = false
                 isUpdateAvailable = false
+                checkAndRequestFullScreenIntentPermission()
             }
+        }
+    }
+
+    private fun checkAndRequestFullScreenIntentPermission() {
+        if (!FullScreenIntentPermissionHelper.isRuntimePermissionCheckSupported()) {
+            Log.i(TAG, "ℹ️ Full-screen intent runtime permission not required on this Android version")
+            return
+        }
+
+        if (isUpdateDialogShowing || isUpdateAvailable) {
+            Log.i(TAG, "⏸️ Skipping full-screen intent check - update dialog is showing")
+            return
+        }
+
+        val canUseFsi = FullScreenIntentPermissionHelper.canUseFullScreenIntent(this)
+        Log.i(TAG, "Full-screen intent permission granted: $canUseFsi")
+
+        if (!canUseFsi) {
+            showFullScreenIntentPermissionDialog()
+        }
+    }
+
+    private fun showFullScreenIntentPermissionDialog() {
+        if (isFinishing || isDestroyed || isFullScreenIntentDialogShowing) return
+
+        // Close drawer before showing dialog
+        closeDrawerSafely()
+
+        isFullScreenIntentDialogShowing = true
+        AlertDialog.Builder(this)
+            .setTitle("Enable Full-Screen Alerts")
+            .setMessage(
+                "To show complaint alerts instantly over other apps and on lock screen, allow Full-screen alerts for this app in system settings."
+            )
+            .setPositiveButton("Open Settings") { _, _ ->
+                openFullScreenIntentSettings()
+                isFullScreenIntentDialogShowing = false
+            }
+            .setNegativeButton("Not Now") { dialog, _ ->
+                dialog.dismiss()
+                isFullScreenIntentDialogShowing = false
+            }
+            .setOnDismissListener {
+                isFullScreenIntentDialogShowing = false
+            }
+            .show()
+    }
+
+    private fun openFullScreenIntentSettings() {
+        try {
+            val intent = FullScreenIntentPermissionHelper.buildManageFullScreenIntentSettingsIntent(this)
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open Full-screen alerts settings directly, opening app details", e)
+            try {
+                val fallbackIntent = FullScreenIntentPermissionHelper.buildAppDetailsSettingsIntent(this)
+                startActivity(fallbackIntent)
+            } catch (fallbackError: Exception) {
+                Log.e(TAG, "Failed to open app settings fallback", fallbackError)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleComplaintIntent(intent)
+    }
+
+    private fun handleComplaintIntent(intent: Intent) {
+        if (intent.getBooleanExtra(EXTRA_COMPLAINT_CHECK, false)) {
+            Log.i(TAG, "✅ Complaint check requested from alert activity")
+            val broadcast = Intent(ACTION_PERFORM_COMPLAINT_CHECK)
+            androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).sendBroadcast(broadcast)
         }
     }
 
@@ -841,7 +1008,7 @@ class MainActivity : AppCompatActivity() {
                 mainViewModel.userDetails(user_token = token ?: "", id = it._id ?: "")
             }
         }else{
-            if (user != null && user.isActive == true) {
+            if (user != null && user.isActive) {
                 Log.i(TAG, "startMyService: User is active, scheduling alarms with WorkManager")
 
                 // Schedule WorkManager for periodic API calls
@@ -859,6 +1026,24 @@ class MainActivity : AppCompatActivity() {
 
     }
 
+    private fun registerForceLogoutReceiver() {
+        if (isForceLogoutReceiverRegistered) return
+        ContextCompat.registerReceiver(
+            this,
+            forceLogoutReceiver,
+            IntentFilter(SessionLogoutCoordinator.ACTION_FORCE_LOGOUT),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        isForceLogoutReceiverRegistered = true
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isForceLogoutReceiverRegistered) {
+            unregisterReceiver(forceLogoutReceiver)
+            isForceLogoutReceiverRegistered = false
+        }
+    }
 
 
 }

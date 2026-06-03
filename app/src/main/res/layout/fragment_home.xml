@@ -586,6 +586,17 @@
 
                     </LinearLayout>
 
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/checkin_complaint_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/checkin_compliance"
+                        android:backgroundTint="@color/primary_color"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="8dp"
+                        android:visibility="gone"
+                        />
+
                     <!-- Check-in Button -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/sync_button"

@@ -23,6 +23,7 @@ import org.json.JSONObject
 
 enum class NotificationType {
     USER_UPDATE,
+    USER_COMPLAINCE,
     REMINDER,
     SHIFT_START,
 }
@@ -92,6 +93,29 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                             Log.e("MyFirebaseMessagingService", "user not null:${isActive}")
                             handleUserFromNotification(applicationContext, user)
                         }else{
+                            Log.e("MyFirebaseMessagingService", "user null")
+                        }
+                    } else if (notificationType == NotificationType.USER_COMPLAINCE.name) {
+                        Log.e("MyFirebaseMessagingService", "Notification Type: USER_COMPLAINCE")
+                        val sharedPref = SharedPref.getInstance(context = applicationContext)
+                        val user = sharedPref?.getUser()
+
+                        if (user != null) {
+                            val wasComplaintActive = user.isComplaint
+                            val isComplaint = jsonObject.optBoolean("isComplaint", user.isComplaint)
+                            user.isComplaint = isComplaint
+                            sharedPref.saveUser(user)
+                            Log.i("MyFirebaseMessagingService", "Updated user isComplaint=$isComplaint")
+
+                            if (isComplaint) {
+                                AlarmScheduler.scheduleComplaintAlarmIfNeeded(
+                                    applicationContext,
+                                    resetExisting = !wasComplaintActive
+                                )
+                            } else {
+                                AlarmScheduler.cancelComplaintAlarm(applicationContext)
+                            }
+                        } else {
                             Log.e("MyFirebaseMessagingService", "user null")
                         }
                     }
@@ -200,4 +224,3 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     }
 
 }
-

@@ -64,4 +64,20 @@ object RestartWatchdogManager {
         }
 
     }
+
+    fun cancelOneMinuteRestart(context: Context) {
+        val intent = Intent(context, RestartWatchdogReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            2001,
+            intent,
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        if (pendingIntent != null) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmManager.cancel(pendingIntent)
+            Log.i("RestartWatchdogManager", "✅ Restart watchdog cancelled")
+        }
+    }
 }

@@ -15,7 +15,8 @@
     <color name="red_card_bg">#26962020</color>
     <color name="red_text">#962020</color>
 
-
+    <color name="dark_gray">#FF5A5A5A</color>
+    <color name="light_gray">#FFDDDDDD</color>
     <color name="primary_color">#133C8B</color>
     <color name="status_bar_color">#FFFFFFFF</color>
 </resources>

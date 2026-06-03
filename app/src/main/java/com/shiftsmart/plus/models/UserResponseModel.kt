@@ -37,7 +37,6 @@ data class UserModel(
     val district: List<District>,
     var timetable: TimeTable?,
     var multipleTimeTables: List<MultipleTimeTable>?,
-
     val store: List<Store>,
     val role: List<Role>,
     var isActive: Boolean,
@@ -46,7 +45,7 @@ data class UserModel(
     val updatedAt: String,
     val __v: Int,
     val expectedHours: Int,
-    val isComplaint: Boolean,
+    var isComplaint: Boolean,
     val lastSeen: String?,
     val days: List<Day>
 )

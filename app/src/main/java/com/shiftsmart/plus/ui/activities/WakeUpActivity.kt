@@ -3,14 +3,14 @@ package com.shiftsmart.plus.ui.activities
 import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import com.shiftsmart.plus.R
 import com.shiftsmart.plus.services.MyService
 
 class WakeUpActivity : AppCompatActivity() {
+    companion object {
+        const val EXTRA_OPEN_COMPLAINT_ALERT = "com.shiftsmart.plus.EXTRA_OPEN_COMPLAINT_ALERT"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -20,11 +20,20 @@ class WakeUpActivity : AppCompatActivity() {
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
 
-        // Optionally, start the service here too
-        val intent = Intent(this, MyService::class.java).apply {
+        val shouldOpenComplaintAlert = intent?.getBooleanExtra(EXTRA_OPEN_COMPLAINT_ALERT, false) == true
+        if (shouldOpenComplaintAlert) {
+            val complaintIntent = Intent(this, ComplaintAlertActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(complaintIntent)
+            finish()
+            return
+        }
+
+        val serviceIntent = Intent(this, MyService::class.java).apply {
             action = "START_SERVICE"
         }
-        startService(intent)
+        startService(serviceIntent)
 
         finish() // Close the activity if it's just for screen wake
     }

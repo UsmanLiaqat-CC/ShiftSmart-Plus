@@ -17,10 +17,12 @@ android {
         applicationId = "com.shiftsmart.plus"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "8.0"
+        versionCode = 9
+        versionName = "9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+
     }
 
     buildTypes {
@@ -39,8 +41,9 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
-    buildFeatures{
+    buildFeatures {
         dataBinding = true
+        buildConfig = true
     }
     kapt {
         correctErrorTypes = true

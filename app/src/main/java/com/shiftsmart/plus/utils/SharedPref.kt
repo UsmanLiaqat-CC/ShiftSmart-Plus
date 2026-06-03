@@ -17,6 +17,7 @@ class SharedPref(private val ctx: Context) {
     private val FINGERPRINT = "fingerprint"
     private val LAST_SYNC_TIME = "last_sync_time" // Format: "2025-10-28 07:10:00" (with date)
     private val LAST_SYNC_TIMESTAMP = "last_sync_timestamp" // Unix timestamp in milliseconds
+    private val COMPLAINT_ALERT_TRIGGER_TIME = "complaint_alert_trigger_time"
 
     // Save Token
     fun saveToken(token: String?) {
@@ -130,6 +131,22 @@ class SharedPref(private val ctx: Context) {
      */
     fun getLastSyncDateTime(): String? {
         return sharedPreferences.getString(LAST_SYNC_TIME, null)
+    }
+
+    fun saveComplaintAlertTriggerTime(triggerTime: Long) {
+        sharedPreferences.edit()
+            .putLong(COMPLAINT_ALERT_TRIGGER_TIME, triggerTime)
+            .apply()
+    }
+
+    fun getComplaintAlertTriggerTime(): Long {
+        return sharedPreferences.getLong(COMPLAINT_ALERT_TRIGGER_TIME, 0L)
+    }
+
+    fun clearComplaintAlertTriggerTime() {
+        sharedPreferences.edit()
+            .remove(COMPLAINT_ALERT_TRIGGER_TIME)
+            .apply()
     }
 
 
