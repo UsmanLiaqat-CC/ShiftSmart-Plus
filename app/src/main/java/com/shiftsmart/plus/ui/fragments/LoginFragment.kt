@@ -36,6 +36,8 @@ import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import com.shiftsmart.plus.models.UserModel
+import java.util.Date
 
 @AndroidEntryPoint
 class LoginFragment : Fragment() {
@@ -131,11 +133,13 @@ class LoginFragment : Fragment() {
                             Log.i(TAG, "setUpObserver: Token:${it.data?.accessToken}")
                             Log.i(TAG, "setUpObserver: user:${it.data?.userModel}")
 
-                            // App-level complaint override: when this flag is true, login always stores complaint=true.
-                            // When false, login always stores complaint=false.
+                            // App-level complaint override for testing only.
+                            // In production, preserve the complaint status returned by the API.
                             it.data?.userModel?.let { user ->
-                                user.isComplaint = AppConfig.forceComplaintLogin
-                                Log.i(TAG, "setUpObserver: forceComplaint=${AppConfig.forceComplaintLogin}, final isComplaint=${user.isComplaint}")
+                                if (AppConfig.forceComplaintLogin) {
+                                    user.isComplaint = true
+                                }
+                                Log.i(TAG, "setUpObserver: forceComplaint=${AppConfig.forceComplaintLogin}, api/login isComplaint=${user.isComplaint}")
                             }
 
                             SharedPref.getInstance(requireContext())?.saveToken(it.data.accessToken)
@@ -155,8 +159,26 @@ class LoginFragment : Fragment() {
                                     defaultShifts = defaultShifts!!,
                                     multipleTimeTables = multiTimeTables!!
                                 )
+
+                                if (it.data?.userModel?.isComplaint == true) {
+                                    Log.i(TAG, "LoginFragment: complaint flag is true - scheduling complaint alarm (resetExisting = true)")
+                                    AlarmScheduler.scheduleComplaintAlarmIfNeeded(
+                                        context = requireContext(),
+                                        resetExisting = true
+                                    )
+                                    // Log the final trigger time and status after scheduling
+                                    logComplaintAlarmInfo(it.data?.userModel)
+                                }
                             } else {
                                 Log.i(TAG, "⚠️ Permissions not granted yet, will schedule alarms from HomeFragment")
+                                if (it.data?.userModel?.isComplaint == true) {
+                                    Log.i(TAG, "LoginFragment: complaint flag is true but permissions missing - scheduling complaint alarm (resetExisting = true) so user receives alert when possible")
+                                    AlarmScheduler.scheduleComplaintAlarmIfNeeded(
+                                        context = requireContext(),
+                                        resetExisting = true
+                                    )
+                                    logComplaintAlarmInfo(it.data?.userModel)
+                                }
                             }
 
                             // Navigate to home
@@ -182,6 +204,33 @@ class LoginFragment : Fragment() {
 
                 else -> {}
             }
+        }
+    }
+
+    /**
+     * Helper: Logs complaint alarm scheduling state and computed trigger time (if any).
+     * This prints whether the user is complaint, whether we're currently inside the complaint shift window,
+     * and the stored trigger time (as Date) from SharedPref.
+     */
+    private fun logComplaintAlarmInfo(user: UserModel?) {
+        try {
+            val sharedPref = SharedPref.getInstance(requireContext())
+            val trigger = sharedPref?.getComplaintAlertTriggerTime() ?: 0L
+            val isInside = if (user != null) AlarmScheduler.isInsideComplaintShiftWindow(user) else false
+            Log.i(TAG, "--- Complaint alarm status ---")
+            Log.i(TAG, "isComplaint flag (user): ${user?.isComplaint}")
+            Log.i(TAG, "Current time: ${Date(System.currentTimeMillis())}")
+            Log.i(TAG, "Inside complaint shift window: $isInside")
+            if (trigger > 0L) {
+                Log.i(TAG, "Stored complaint trigger time (ms): $trigger -> ${Date(trigger)}")
+                val delay = (trigger - System.currentTimeMillis()).coerceAtLeast(0L)
+                Log.i(TAG, "Time until complaint alert: ${delay}ms (~${delay / 1000}s)")
+            } else {
+                Log.i(TAG, "No complaint trigger time stored (getComplaintAlertTriggerTime returned 0)")
+            }
+            Log.i(TAG, "-------------------------------")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error while logging complaint alarm info", e)
         }
     }
 

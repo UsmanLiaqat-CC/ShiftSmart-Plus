@@ -138,12 +138,16 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     private val logoutBroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == SessionLogoutCoordinator.ACTION_FORCE_LOGOUT) {
-                Log.w(TAG, "🔴 Logout broadcast received from SessionLogoutCoordinator")
-                val message = intent.getStringExtra(SessionLogoutCoordinator.EXTRA_MESSAGE)
-                    ?: SessionLogoutCoordinator.consumePendingMessage()
-                    ?: "Session expired"
+                Log.w(TAG, "🔴 Logout broadcast received from SessionLogoutCoordinator (HomeFragment)")
 
-                showLogoutDialog(message)
+                // Atomically consume the pending message. Only the first consumer will get a non-null message.
+                val message = SessionLogoutCoordinator.consumePendingMessage()
+                if (message != null) {
+                    Log.i(TAG, "HomeFragment will handle force-logout: $message")
+                    showLogoutDialog(message)
+                } else {
+                    Log.i(TAG, "No pending force-logout message to consume in HomeFragment - skipping UI to avoid duplicate dialog")
+                }
             }
         }
     }
@@ -1239,6 +1243,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
     private fun deleteUserDataAndLogout() {
+        (activity as? MainActivity)?.prepareDrawerForLoggedOutState()
 
         lifecycleScope.launch {
             locationTrack.stopListener()
@@ -1252,6 +1257,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
             SharedPref.getInstance(requireContext())?.clearLastSyncTime() // Clear sync timestamps
             SharedPref.getInstance(requireContext())?.clearPrefrence()
+            (activity as? MainActivity)?.prepareDrawerForLoggedOutState()
             findNavController().navigate(R.id.action_homeFragment_to_loginFragment)
 
         }
@@ -1291,6 +1297,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         dialog.show()
         Log.i(TAG, "Logout dialog shown with message: $logoutMessage")
+
+        // Note: Consumption of the pending message is handled by the receiver via
+        // SessionLogoutCoordinator.consumePendingMessage(), so we don't call it here.
     }
 
     fun fetchLocationData() {
@@ -2142,4 +2151,3 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
 }
-

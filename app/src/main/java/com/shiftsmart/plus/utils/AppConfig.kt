@@ -7,5 +7,10 @@ object AppConfig {
     val forceImmediateComplaintAlert: Boolean = false
 
     val complaintAlertDelayMs: Long
-    get() = if (forceImmediateComplaintAlert) 1 * 60 * 1000L else 60 * 60 * 1000L  // 1 min (test) or 1 hour (prod)
+        get() = if (forceImmediateComplaintAlert)
+            1 * 60 * 1000L      // 1 minute (test)
+        else
+            2 * 60 * 1000L     // 2 minutes (prod)
+
+//    val complaintAlertDelayMs: Long get() = if (forceImmediateComplaintAlert) 1 * 60 * 1000L else 60 * 60 * 1000L  // 1 min (test) or 1 hour (prod)
 }

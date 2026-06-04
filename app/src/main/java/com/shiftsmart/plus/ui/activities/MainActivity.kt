@@ -30,6 +30,7 @@ import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
+import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.navOptions
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.play.core.appupdate.AppUpdateManager
@@ -95,10 +96,22 @@ class MainActivity : AppCompatActivity() {
 
     private val forceLogoutReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val message = intent?.getStringExtra(SessionLogoutCoordinator.EXTRA_MESSAGE)
-                ?: SessionLogoutCoordinator.consumePendingMessage()
-                ?: getString(R.string.session_expired_default_message)
-            showForceLogoutDialog(message)
+            // Prefer consuming any pending message first (atomic). If none, fallback to intent extra.
+            val consumedMessage = SessionLogoutCoordinator.consumePendingMessage()
+            val intentMessage = intent?.getStringExtra(SessionLogoutCoordinator.EXTRA_MESSAGE)
+            val message = consumedMessage ?: intentMessage
+
+            if (message != null) {
+                // If we're already at the login screen, showing the dialog is acceptable (user hasn't seen Home dialog)
+                val navHost = try { findNavController(R.id.nav_host_fragment) } catch (e: Exception) { null }
+                val currentDestId = navHost?.currentDestination?.id
+                val isAtLogin = currentDestId == R.id.loginFragment
+
+                Log.i(TAG, "MainActivity forceLogoutReceiver: received force-logout (isAtLogin=$isAtLogin): $message")
+                showForceLogoutDialog(message)
+            } else {
+                Log.i(TAG, "MainActivity forceLogoutReceiver: no pending force-logout message to handle")
+            }
         }
     }
 
@@ -145,6 +158,7 @@ class MainActivity : AppCompatActivity() {
 
         startPermissionAction()
         setupDrawer()
+        setupDrawerDestinationState()
         setUpProgressDialog()
 
         setupObserver()
@@ -488,10 +502,10 @@ class MainActivity : AppCompatActivity() {
      * Safely close drawer - used before showing dialogs
      * This ensures drawer closes immediately and doesn't interfere with dialogs
      */
-    private fun closeDrawerSafely() {
+    fun closeDrawerSafely() {
         try {
             if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
-                drawerLayout.closeDrawer(GravityCompat.START)
+                drawerLayout.closeDrawer(GravityCompat.START, false)
                 Log.i(TAG, "Drawer closed safely")
             }
         } catch (e: Exception) {
@@ -499,11 +513,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun deleteUserDataAndLogout() {
-        // Close drawer immediately when logout starts
-        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
-            drawerLayout.closeDrawer(GravityCompat.START)
+    fun prepareDrawerForLoggedOutState() {
+        closeDrawerSafely()
+        drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
+    }
+
+    private fun setupDrawerDestinationState() {
+        val navHostFragment = supportFragmentManager
+            .findFragmentById(R.id.nav_host_fragment) as? NavHostFragment
+            ?: return
+        val navController = navHostFragment.navController
+        navController.addOnDestinationChangedListener { _, destination, _ ->
+            if (destination.id == R.id.loginFragment || destination.id == R.id.splashFragment) {
+                prepareDrawerForLoggedOutState()
+            } else {
+                drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED)
+            }
         }
+    }
+
+    private fun deleteUserDataAndLogout() {
+        prepareDrawerForLoggedOutState()
 
         lifecycleScope.launch {
             locationTrack.stopListener()
@@ -542,10 +572,7 @@ class MainActivity : AppCompatActivity() {
                 navController.navigate(R.id.loginFragment, null, navOptions)
             }
 
-            // Ensure drawer stays closed after navigation
-            if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
-                drawerLayout.closeDrawer(GravityCompat.START)
-            }
+            prepareDrawerForLoggedOutState()
         }
     }
 
