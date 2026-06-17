@@ -46,6 +46,11 @@
     <string name="mobile_data">Mobile Data</string>
     <string name="location_service">Location Service</string>
     <string name="notification_enabled">Notification Enabled</string>
+    <string name="accessibility_permission">Accessibility Permission</string>
+    <string name="enable_accessibility_permission">Enable Accessibility Permission</string>
+    <string name="enable_accessibility_permission_message">Enable ShiftSmart Plus accessibility permission so the app can reopen notification settings if notifications are turned off.</string>
+    <string name="open_accessibility_settings">Open Accessibility Settings</string>
+    <string name="accessibility_service_description">Keeps ShiftSmart Plus notification permission enabled by reopening notification settings when notifications are turned off.</string>
     <string name="battery_saver_mode">Battery Saver Mode</string>
     <string name="battery_optimization">Battery Optimization</string>
     <string name="last_updated">Last Updated:</string>
@@ -123,6 +128,23 @@
     <string name="app_operation_issues">App Operation Issues</string>
     <string name="my_shifts">My Shifts</string>
     <string name="alert_settings">Alert Settings</string>
+    <string name="compliance_reports">Compliance Reports</string>
+    <string name="load_reports">Load Reports</string>
+    <string name="loading_reports">Loading reports…</string>
+    <string name="no_reports_found">No compliance reports found</string>
+    <string name="no_reports_message">Try selecting a different date range and tap Load Reports.</string>
+    <string name="error_loading_reports">Failed to load reports</string>
+    <string name="network_error_message">Please check your internet connection and try again.</string>
+    <string name="acknowledged">Acknowledged</string>
+    <string name="not_acknowledged">Not Acknowledged</string>
+    <string name="compliance_notifications">Compliance Notifications</string>
+    <string name="respond_within_time">⚠️ Please respond within 15 minutes</string>
+    <string name="response_deadline_passed">Response Time Expired</string>
+    <string name="response_deadline_passed_message">You must respond to a compliance notification within 15 minutes of it arriving. This window has now closed.\n\nPlease contact your supervisor for further assistance.</string>
+    <string name="ok">OK</string>
+    <string name="version_format">%1$s (%2$d)</string>
+    <string name="pull_to_refresh">Pull down to refresh</string>
+    <string name="loading_more">Loading more…</string>
     <string name="shift_timetabel_default">Shift TimeTabel(Default)</string>
     <string name="monday">Monday:</string>
     <string name="tuesday">Tuesday:</string>
@@ -134,10 +156,6 @@
     <string name="up_coming_shifts">UpComing Shifts</string>
     <string name="all_shifts">All Shifts</string>
     <string name="app_version">App Version</string>
-    <string name="version_format">%1$s (%2$d)</string>
-    <string name="permissions_required">Permissions Required</string>
-    <string name="try_again">Try Again</string>
-    <string name="ok">OK</string>
     <string name="session_expired_title">Session Ended</string>
     <string name="session_expired_default_message">Your session is no longer valid. Please login again.</string>
 
@@ -149,8 +167,8 @@
     <string name="location_disclosure_required">You must accept location data usage to use this app</string>
     <string name="location_disclosure_subtitle">Required for shift tracking</string>
     <string name="location_disclosure_reminder">Remember to select "Allow all the time" when prompted</string>
-    <string name="complaint_alert_title">Complaint Alert</string>
-    <string name="complaint_alert_message">A complaint is active for your shift. Please resolve the compliance issue now.</string>
+    <string name="complaint_alert_title">Compliant Alert</string>
+    <string name="complaint_alert_message">A compliant is active for your shift. Please resolve the compliance issue now.</string>
     <string name="complaint_alert_details">The SS+ System is not getting the required 5min updates from your device. Please press the Check-In Button and contact the SS+ Support team.</string>
     <string name="resolve_compliance">Resolve Compliance</string>
 </resources>

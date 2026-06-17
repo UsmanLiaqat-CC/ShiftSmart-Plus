@@ -18,6 +18,9 @@ class SharedPref(private val ctx: Context) {
     private val LAST_SYNC_TIME = "last_sync_time" // Format: "2025-10-28 07:10:00" (with date)
     private val LAST_SYNC_TIMESTAMP = "last_sync_timestamp" // Unix timestamp in milliseconds
     private val COMPLAINT_ALERT_TRIGGER_TIME = "complaint_alert_trigger_time"
+    private val IS_COMPLAINT_ACTIVE = "is_complaint_active"
+    private val COMPLIANCE_BADGE_COUNT = "compliance_badge_count"
+    private val LAST_COMPLIANCE_NOTIFICATION_TIME = "last_compliance_notification_time"
 
     // Save Token
     fun saveToken(token: String?) {
@@ -148,6 +151,44 @@ class SharedPref(private val ctx: Context) {
             .remove(COMPLAINT_ALERT_TRIGGER_TIME)
             .apply()
     }
+
+    /**
+     * Synchronously persist the complaint-active flag.
+     * Uses commit() so the write is on disk before the FCM process is killed,
+     * preventing a stale isComplaint=true being read by the AlarmReceiver.
+     */
+    fun saveIsComplaintActive(active: Boolean) {
+        sharedPreferences.edit()
+            .putBoolean(IS_COMPLAINT_ACTIVE, active)
+            .commit()  // synchronous — must survive process death
+        android.util.Log.i("SharedPref", "✅ Saved isComplaintActive=$active (sync)")
+    }
+
+    fun getIsComplaintActive(): Boolean {
+        return sharedPreferences.getBoolean(IS_COMPLAINT_ACTIVE, true) // default true = safe (won't suppress real alerts)
+    }
+
+    // ─── Compliance notification badge ──────────────────────────────────────────
+
+    fun getComplianceBadgeCount(): Int =
+        sharedPreferences.getInt(COMPLIANCE_BADGE_COUNT, 0)
+
+    fun incrementComplianceBadgeCount() {
+        val current = getComplianceBadgeCount()
+        sharedPreferences.edit().putInt(COMPLIANCE_BADGE_COUNT, current + 1).apply()
+    }
+
+    fun resetComplianceBadgeCount() {
+        sharedPreferences.edit().putInt(COMPLIANCE_BADGE_COUNT, 0).apply()
+    }
+
+    /** Save the time (epoch ms) when a USER_COMPLAINCE notification was received. */
+    fun saveLastComplianceNotificationTime(timestampMs: Long) {
+        sharedPreferences.edit().putLong(LAST_COMPLIANCE_NOTIFICATION_TIME, timestampMs).apply()
+    }
+
+    fun getLastComplianceNotificationTime(): Long =
+        sharedPreferences.getLong(LAST_COMPLIANCE_NOTIFICATION_TIME, 0L)
 
 
     // 🔐 Save fingerprint enable/disable state

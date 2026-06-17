@@ -109,4 +109,6 @@ dependencies {
     implementation(libs.playcore.appupdate)      // Base library
     implementation(libs.playcore.appupdate.ktx)  // Kotlin extensions
 
+    implementation(libs.shimmer)
+    implementation(libs.swiperefreshlayout)
 }

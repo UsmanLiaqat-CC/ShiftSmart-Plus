@@ -46,6 +46,7 @@ import com.shiftsmart.plus.periodicAction.ServiceHealthWorkerManager
 import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.services.MyService
+import com.shiftsmart.plus.utils.DialogManager
 import com.shiftsmart.plus.utils.FingerprintHelper
 import com.shiftsmart.plus.utils.FullScreenIntentPermissionHelper
 import com.shiftsmart.plus.utils.Resource
@@ -79,6 +80,8 @@ class MainActivity : AppCompatActivity() {
     private var isUpdateDialogShowing = false
     private var isUpdateAvailable = false
     private var isFullScreenIntentDialogShowing = false
+    private var isBatteryOptimizationDialogShowing = false
+    private var isLogoutDialogShowing = false  // ✅ Track forced logout dialogs
 
     lateinit var drawerLayout: DrawerLayout
     private lateinit var mBinding:ActivityMainBinding
@@ -152,6 +155,11 @@ class MainActivity : AppCompatActivity() {
 
         drawerLayout = mBinding.drawerLayout
         Log.i(TAG, "onCreate: Activity created")
+
+        // ✅ Register progress dialog checker with DialogManager
+        DialogManager.setProgressDialogChecker {
+            mProgressDialog?.isShowing ?: false
+        }
 
         // Check for app updates FIRST (before showing any other dialogs)
         checkForAppUpdates()
@@ -312,28 +320,34 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Close drawer before showing dialog
-        closeDrawerSafely()
+        // ✅ Use DialogManager to queue dialog if one is already showing
+        DialogManager.queueDialog(
+            id = "background_location_permission",
+            type = DialogManager.DialogType.PERMISSION
+        ) {
+            // Close drawer before showing dialog
+            closeDrawerSafely()
 
-        AlertDialog.Builder(this)
-            .setTitle("Background Location Required")
-            .setMessage("This app needs background location access to track your location even when the app is closed or not in use. This is required for accurate attendance tracking.\n\nPlease grant \"Allow all the time\" in the next screen.")
-            .setPositiveButton("Grant Permission") { _, _ ->
-                // Request background location permission
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    ActivityCompat.requestPermissions(
-                        this,
-                        arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
-                        PERMISSIONS_REQUEST_CODE
-                    )
+            AlertDialog.Builder(this)
+                .setTitle("Background Location Required")
+                .setMessage("This app needs background location access to track your location even when the app is closed or not in use. This is required for accurate attendance tracking.\n\nPlease grant \"Allow all the time\" in the next screen.")
+                .setPositiveButton("Grant Permission") { _, _ ->
+                    // Request background location permission
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        ActivityCompat.requestPermissions(
+                            this,
+                            arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                            PERMISSIONS_REQUEST_CODE
+                        )
+                    }
                 }
-            }
-            .setNegativeButton("Not Now") { dialog, _ ->
-                dialog.dismiss()
-                Log.i(TAG, "⚠️ User declined background location permission")
-            }
-            .setCancelable(false)
-            .show()
+                .setNegativeButton("Not Now") { dialog, _ ->
+                    dialog.dismiss()
+                    Log.i(TAG, "⚠️ User declined background location permission")
+                }
+                .setCancelable(false)
+                .create()
+        }
     }
 
     /**
@@ -379,25 +393,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun startPermissionAction(){
         checkPermissionsAndStartService()
-        // Step 2: Check if battery optimization needs to be ignored
-        if (!isIgnoringBatteryOptimizations()) {
-            Log.i(TAG, "onCreate: Requesting to ignore battery optimizations")
-            requestIgnoreBatteryOptimization()
-        } else {
-            Log.i(TAG, "onCreate: Battery optimization already ignored")
-            // 🔹 Check Exact Alarm Permission (Android 12+)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-                if (!alarmManager.canScheduleExactAlarms()) {
-                    Log.i(TAG, "❌ Exact Alarm permission is not granted.")
-                    // We **cannot** request this permission dynamically, so we prompt the user to enable it
-                    val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                        data = Uri.parse("package:${packageName}")
-                    }
-                    startActivity(intent)
-                }
-            }
-        }
+        // ⏸️ SKIP battery dialog during onCreate if app is already initializing
+        // It will be checked again in onResume with proper sequencing
+        Log.i(TAG, "startPermissionAction: Deferring battery optimization check to onResume")
     }
 
     private fun setUpProgressDialog(
@@ -407,23 +405,31 @@ class MainActivity : AppCompatActivity() {
         }
         val inflater = LayoutInflater.from(this)
         progressDialogBinding = LoadingDialogBinding.inflate(inflater)
-        mProgressDialog = Dialog(this)
-        mProgressDialog?.setContentView(progressDialogBinding.root)
-        mProgressDialog?.setCancelable(false)
-        mProgressDialog?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        mProgressDialog = Dialog(this).apply {
+            setContentView(progressDialogBinding.root)
+            setCancelable(false)
+            window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
+            // Set dismiss listener to notify DialogManager
+            setOnDismissListener {
+                Log.i(TAG, "Progress dialog dismissed")
+            }
+        }
     }
 
     fun showProgressDialog(message: String) {
         progressDialogBinding.titleTv.text = message
         if (mProgressDialog != null && mProgressDialog?.isShowing == false) {
             mProgressDialog?.show()
+            // ✅ Inform DialogManager that loading dialog is showing
+            Log.i(TAG, "📊 Progress dialog shown")
         }
     }
 
     fun dismissProgressDialog() {
         if (mProgressDialog != null && mProgressDialog?.isShowing == true) {
             mProgressDialog?.dismiss()
+            Log.i(TAG, "📊 Progress dialog dismissed")
         }
     }
 
@@ -431,16 +437,19 @@ class MainActivity : AppCompatActivity() {
         mainViewModel.logoutResponse.observe(this) { resource ->
             when (resource) {
                 is Resource.Loading -> {
+                    DialogManager.setApiCallInProgress(true)
                     showProgressDialog(resource.message)
                 }
 
                 is Resource.Success -> {
+                    DialogManager.setApiCallInProgress(false)
                     Utils.showSnackBar(getString(R.string.logout_successfully), mBinding.root)
                     dismissProgressDialog()
                     deleteUserDataAndLogout()
                 }
 
                 is Resource.Error -> {
+                    DialogManager.setApiCallInProgress(false)
                     dismissProgressDialog()
                     Log.i(TAG, "setUpObserver: error:${resource.message}")
 
@@ -458,10 +467,12 @@ class MainActivity : AppCompatActivity() {
         mainViewModel.userDetailsResponse.observe(this) { resource ->
             when (resource) {
                 is Resource.Loading -> {
+                    DialogManager.setApiCallInProgress(true)
 //                    showProgressDialog(resource.message)
                 }
 
                 is Resource.Success -> {
+                    DialogManager.setApiCallInProgress(false)
                     Log.i(TAG, "userDetails: successACtivity:${resource.data}")
                     val userModel = resource.data
                     userModel?.let {
@@ -486,6 +497,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 is Resource.Error -> {
+                    DialogManager.setApiCallInProgress(false)
                     Log.i(TAG, "setUpObserver: error:${resource.message}")
                 }
 
@@ -664,11 +676,6 @@ class MainActivity : AppCompatActivity() {
             mBinding.drawerLayout.closeDrawer(GravityCompat.START)
         }
 
-        mBinding.navAlertSettings.setOnClickListener {
-            openFullScreenIntentSettings()
-            mBinding.drawerLayout.closeDrawer(GravityCompat.START)
-        }
-
         mBinding.navLogout.setOnClickListener {
             showLogoutDialog()
             mBinding.drawerLayout.closeDrawer(GravityCompat.START)
@@ -683,6 +690,12 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun showLogoutDialog() {
+        // ✅ Prevent user-initiated logout if forced logout is already showing
+        if (isLogoutDialogShowing) {
+            Log.w(TAG, "⚠️ Forced logout dialog already showing, skipping user-initiated logout")
+            return
+        }
+        
         if (logoutDialog?.isShowing == true) return  // Prevent duplicate dialog
 
         // Close drawer before showing dialog
@@ -702,6 +715,11 @@ class MainActivity : AppCompatActivity() {
 
             dialogBinding.btnCloseDialog.setOnClickListener {
                 dismiss()  // Close dialog
+            }
+
+            // ✅ Clear logout flag when user-initiated logout dialog is dismissed
+            setOnDismissListener {
+                Log.i(TAG, "✅ User logout dialog dismissed")
             }
 
             show()
@@ -766,20 +784,28 @@ class MainActivity : AppCompatActivity() {
 
     // Step 4: Request user to disable battery optimizations
     private fun requestIgnoreBatteryOptimization() {
+        // ✅ Skip if any dialog is already showing
+        if (isUpdateDialogShowing || isUpdateAvailable || isFullScreenIntentDialogShowing) {
+            Log.i(TAG, "⏸️ Skipping battery optimization dialog - another dialog is showing")
+            return
+        }
+
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
             try {
-                Log.i(TAG, "Requesting user to disable battery optimizations.")
+                Log.i(TAG, "🔋 Requesting user to disable battery optimizations.")
+                isBatteryOptimizationDialogShowing = true
 
                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
                 intent.data = Uri.parse("package:$packageName")
-
-//                startActivityForResult(intent, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
                 startActivity(intent)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to request battery optimization, opening settings manually", e)
+                isBatteryOptimizationDialogShowing = true
                 openBatteryOptimizationSettings()
             }
+        } else {
+            Log.i(TAG, "✅ Battery optimization already ignored")
         }
     }
 
@@ -788,12 +814,16 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == REQUEST_IGNORE_BATTERY_OPTIMIZATIONS) {
+            // ✅ Clear battery dialog state when returning
+            isBatteryOptimizationDialogShowing = false
             if (isIgnoringBatteryOptimizations()) {
-                Log.i(TAG, "User ignored battery optimizations successfully.")
-                restartApp() // Optional: Restart the app for changes to take effect
+                Log.i(TAG, "✅ User successfully disabled battery optimizations.")
             } else {
-                Log.w(TAG, "User did NOT ignore battery optimizations.")
+                Log.w(TAG, "⚠️ User did NOT disable battery optimizations (might retry later).")
             }
+            // ✅ Continue with next permission dialog
+            Log.i(TAG, "📋 Battery dialog closed, proceeding to next dialog...")
+            checkAndRequestFullScreenIntentPermission()
         }
     }
 
@@ -822,6 +852,9 @@ class MainActivity : AppCompatActivity() {
         SessionLogoutCoordinator.consumePendingMessage()?.let { pendingMessage ->
             showForceLogoutDialog(pendingMessage)
         }
+
+        // ✅ Clear battery dialog state when returning from system dialogs
+        isBatteryOptimizationDialogShowing = false
 
         // ✅ Check if update was downloaded while app was in background
         // If update is in IMMEDIATE mode and user returns, they must install it
@@ -860,57 +893,89 @@ class MainActivity : AppCompatActivity() {
                     showUpdateRequiredDialog()
                 }
             } else {
-                // No update needed - safe to show other dialogs
+                // No update needed - proceed with sequential permission dialogs
                 isUpdateDialogShowing = false
                 isUpdateAvailable = false
-                checkAndRequestFullScreenIntentPermission()
+                showPermissionDialogsSequentially()
             }
         }
     }
 
+    /**
+     * Show permission dialogs one at a time to prevent overlapping
+     * Sequence: Battery Optimization → Full-Screen Intent
+     */
+    private fun showPermissionDialogsSequentially() {
+        Log.i(TAG, "📋 Starting sequential permission dialog sequence...")
+        
+        // First, check battery optimization
+        if (!isIgnoringBatteryOptimizations()) {
+            Log.i(TAG, "Step 1/2: Showing battery optimization dialog")
+            requestIgnoreBatteryOptimization()
+        } else {
+            Log.i(TAG, "✅ Step 1/2: Battery optimization already ignored, proceeding to next...")
+            // Battery already ok, move to full-screen intent
+            checkAndRequestFullScreenIntentPermission()
+        }
+    }
+
     private fun checkAndRequestFullScreenIntentPermission() {
+        // ✅ Skip if any dialog is already showing
+        if (isUpdateDialogShowing || isUpdateAvailable || isBatteryOptimizationDialogShowing) {
+            Log.i(TAG, "⏸️ Skipping full-screen intent check - another dialog is showing")
+            return
+        }
+
         if (!FullScreenIntentPermissionHelper.isRuntimePermissionCheckSupported()) {
             Log.i(TAG, "ℹ️ Full-screen intent runtime permission not required on this Android version")
             return
         }
 
-        if (isUpdateDialogShowing || isUpdateAvailable) {
-            Log.i(TAG, "⏸️ Skipping full-screen intent check - update dialog is showing")
-            return
-        }
-
         val canUseFsi = FullScreenIntentPermissionHelper.canUseFullScreenIntent(this)
-        Log.i(TAG, "Full-screen intent permission granted: $canUseFsi")
+        Log.i(TAG, "Step 2/2: Checking full-screen intent permission (granted: $canUseFsi)")
 
         if (!canUseFsi) {
+            Log.i(TAG, "⚠️ Step 2/2: Full-screen intent permission missing, showing dialog")
             showFullScreenIntentPermissionDialog()
+        } else {
+            Log.i(TAG, "✅ Step 2/2: Full-screen intent permission already granted")
         }
     }
 
     private fun showFullScreenIntentPermissionDialog() {
-        if (isFinishing || isDestroyed || isFullScreenIntentDialogShowing) return
+        if (isFinishing || isDestroyed) return
 
-        // Close drawer before showing dialog
-        closeDrawerSafely()
-
+        // ✅ Mark dialog as showing to prevent overlap
         isFullScreenIntentDialogShowing = true
-        AlertDialog.Builder(this)
-            .setTitle("Enable Full-Screen Alerts")
-            .setMessage(
-                "To show complaint alerts instantly over other apps and on lock screen, allow Full-screen alerts for this app in system settings."
-            )
-            .setPositiveButton("Open Settings") { _, _ ->
-                openFullScreenIntentSettings()
-                isFullScreenIntentDialogShowing = false
-            }
-            .setNegativeButton("Not Now") { dialog, _ ->
-                dialog.dismiss()
-                isFullScreenIntentDialogShowing = false
-            }
-            .setOnDismissListener {
-                isFullScreenIntentDialogShowing = false
-            }
-            .show()
+
+        // ✅ Use DialogManager to queue dialog if one is already showing
+        DialogManager.queueDialog(
+            id = "full_screen_intent_permission",
+            type = DialogManager.DialogType.FULL_SCREEN_INTENT
+        ) {
+            // Close drawer before showing dialog
+            closeDrawerSafely()
+
+            AlertDialog.Builder(this)
+                .setTitle("Enable Full-Screen Alerts")
+                .setMessage(
+                    "To show compliant alerts instantly over other apps and on lock screen, allow Full-screen alerts for this app in system settings."
+                )
+                .setPositiveButton("Open Settings") { _, _ ->
+                    openFullScreenIntentSettings()
+                }
+                .setNegativeButton("Not Now") { dialog, _ ->
+                    dialog.dismiss()
+                }
+                .create()
+                .apply {
+                    // ✅ Clear dialog state when dismissed to allow next dialog to show
+                    setOnDismissListener {
+                        isFullScreenIntentDialogShowing = false
+                        Log.i(TAG, "✅ Full-screen intent dialog dismissed, cleared state")
+                    }
+                }
+        }
     }
 
     private fun openFullScreenIntentSettings() {
@@ -928,6 +993,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun showForcedLogoutDialog(message: String) {
+        // ✅ Prevent overlap: Only show if no other dialogs are showing
+        if (isUpdateDialogShowing || isFullScreenIntentDialogShowing || isBatteryOptimizationDialogShowing) {
+            Log.w(TAG, "⚠️ Another dialog is showing, deferring forced logout dialog")
+            return
+        }
+
+        isLogoutDialogShowing = true
+        Log.i(TAG, "📋 Showing forced logout dialog")
+
+        val logoutMessage = if (message.equals("LOGOUT", ignoreCase = true)) {
+            "You have been forcefully logged out by admin.\nYou can no longer use this app."
+        } else {
+            message.takeIf { it.isNotBlank() } ?: "Your session is no longer valid.\nPlease login again."
+        }
+
+        forceLogoutDialog = AlertDialog.Builder(this)
+            .setTitle("Session Ended")
+            .setMessage(logoutMessage)
+            .setCancelable(false)
+            .setPositiveButton("OK") { _, _ ->
+                isLogoutDialogShowing = false
+                deleteUserDataAndLogout()
+            }
+            .create()
+            .apply {
+                setOnDismissListener {
+                    isLogoutDialogShowing = false
+                    Log.i(TAG, "✅ Forced logout dialog dismissed")
+                }
+                show()
+            }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -936,9 +1035,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleComplaintIntent(intent: Intent) {
         if (intent.getBooleanExtra(EXTRA_COMPLAINT_CHECK, false)) {
-            Log.i(TAG, "✅ Complaint check requested from alert activity")
-            val broadcast = Intent(ACTION_PERFORM_COMPLAINT_CHECK)
-            androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).sendBroadcast(broadcast)
+            Log.i(TAG, "✅ Complaint check detected in intent")
+            // ✅ On cold start (onCreate), HomeFragment is not yet attached so a broadcast
+            //    would be lost. We leave the extra on the intent so HomeFragment reads it
+            //    directly in onResume() after navigation from SplashFragment.
+            //
+            // ✅ On warm start (onNewIntent), HomeFragment IS already attached and listening,
+            //    so we send the broadcast to reach it immediately.
+            val isHomeVisible = try {
+                val navHost = findNavController(R.id.nav_host_fragment)
+                navHost.currentDestination?.id == R.id.homeFragment
+            } catch (e: Exception) { false }
+
+            if (isHomeVisible) {
+                Log.i(TAG, "✅ HomeFragment visible — sending complaint broadcast directly")
+                val broadcast = Intent(ACTION_PERFORM_COMPLAINT_CHECK)
+                androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this)
+                    .sendBroadcast(broadcast)
+            } else {
+                Log.i(TAG, "⏳ HomeFragment not yet visible — intent extra kept for onResume pickup")
+            }
         }
     }
 

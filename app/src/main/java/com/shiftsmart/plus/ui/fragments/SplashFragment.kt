@@ -12,6 +12,7 @@ import android.view.animation.AnimationUtils
 import androidx.navigation.fragment.findNavController
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.FragmentSplashBinding
+import com.shiftsmart.plus.ui.activities.MainActivity
 import com.shiftsmart.plus.utils.SharedPref
 
 class SplashFragment : Fragment() {
@@ -23,21 +24,31 @@ class SplashFragment : Fragment() {
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? {
-        // Inflate the layout for this fragment
-
-        mBinding= FragmentSplashBinding.inflate(inflater,container,false)
+        mBinding = FragmentSplashBinding.inflate(inflater, container, false)
 
         val fadeInAnimation = AnimationUtils.loadAnimation(requireContext(), R.anim.fade_in)
         val scaleUpAnimation = AnimationUtils.loadAnimation(requireContext(), R.anim.scale_up)
-        // Start animations
         mBinding.ivLog.startAnimation(fadeInAnimation)
         mBinding.ivLog.startAnimation(scaleUpAnimation)
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (isAdded) { // Ensure fragment is still attached to the activity
-                val userModel = SharedPref.getInstance(requireContext())?.getUser()
-                Log.i("TAG", "onAnimationEnd: userModel: $userModel")
 
-                val destinationId = if (userModel != null && userModel?.isActive == true) {
+        // ✅ If launched from a complaint notification, skip the 3-second delay.
+        // HomeFragment will pick up EXTRA_COMPLAINT_CHECK from the activity intent in onResume.
+        val isComplaintLaunch = activity?.intent
+            ?.getBooleanExtra(MainActivity.EXTRA_COMPLAINT_CHECK, false) == true
+
+        val delayMs = if (isComplaintLaunch) {
+            Log.i("SplashFragment", "🚨 Complaint launch detected — skipping splash delay")
+            0L
+        } else {
+            3000L
+        }
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (isAdded) {
+                val userModel = SharedPref.getInstance(requireContext())?.getUser()
+                Log.i("SplashFragment", "onAnimationEnd: userModel: $userModel")
+
+                val destinationId = if (userModel != null && userModel.isActive == true) {
                     R.id.action_splashFragment_to_homeFragment
                 } else {
                     R.id.action_splashFragment_to_loginFragment
@@ -47,8 +58,7 @@ class SplashFragment : Fragment() {
             } else {
                 Log.w("SplashFragment", "Fragment not attached, navigation aborted.")
             }
-        }, 3000)
-
+        }, delayMs)
 
         return mBinding.root
     }

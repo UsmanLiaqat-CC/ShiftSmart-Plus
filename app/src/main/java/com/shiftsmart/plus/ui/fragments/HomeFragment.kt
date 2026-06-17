@@ -64,6 +64,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import android.app.PendingIntent
+import android.os.Process
 import java.time.Duration
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -119,8 +122,15 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     private var btnStatus: String = ""
 
     private var isSyncPressed: Boolean = false
+    private var isComplaintPressed: Boolean = false
+    private var hasHandledComplaintIntent: Boolean = false  // ✅ Track if complaint intent was already handled
 
-    // Track pending action after permission grant
+    // Watchdog: restarts app if complaint action hangs
+    private val complaintWatchdogHandler = Handler(Looper.getMainLooper())
+    private val complaintWatchdogRunnable = Runnable {
+        Log.e(TAG, "🔴 Complaint watchdog fired — app appears stuck, restarting...")
+        restartApp()
+    }
     private var pendingAction: (() -> Unit)? = null
 
     // Track if alarms have been scheduled to prevent duplicate scheduling
@@ -629,10 +639,19 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         super.onResume()
         Log.i(TAG, "onResume: HomeFragment")
         setChecksData()
+        updateNotificationBadge()
 
-        if (requireActivity().intent.getBooleanExtra(MainActivity.EXTRA_COMPLAINT_CHECK, false)) {
+        // If complaint was removed while app was backgrounded, ensure stale watchdog is disarmed.
+        if (!isComplaintCurrentlyActive()) {
+            cancelComplaintWatchdog()
+            isComplaintPressed = false
+        }
+
+        // ✅ Check complaint intent ONLY if not already handled
+        if (!hasHandledComplaintIntent && requireActivity().intent.getBooleanExtra(MainActivity.EXTRA_COMPLAINT_CHECK, false)) {
             Log.i(TAG, "✅ Complaint check intent detected in HomeFragment")
-            requireActivity().intent.removeExtra(MainActivity.EXTRA_COMPLAINT_CHECK)
+            hasHandledComplaintIntent = true  // Mark as handled
+            clearComplaintIntentFlag()
             executeComplaintButtonAction()
         }
 
@@ -724,6 +743,15 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
     private fun executeComplaintButtonAction() {
+        if (!isComplaintCurrentlyActive()) {
+            Log.i(TAG, "⏭️ Complaint action skipped: complaint is inactive")
+            cancelComplaintWatchdog()
+            isComplaintPressed = false
+            hasHandledComplaintIntent = false
+            clearComplaintIntentFlag()
+            return
+        }
+
         if (!permissionHandler.hasAllPermissions()) {
             Log.i(TAG, "⚠️ Complaint action requires permissions, requesting...")
             pendingAction = {
@@ -734,7 +762,62 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         Log.i(TAG, "✅ Executing complaintButtonPressed from complaint alert")
+        startComplaintWatchdog()
         complaintButtonPressed()
+    }
+
+    /** Start a 20-second watchdog. If complaint flow doesn't finish, restart the app. */
+    private fun startComplaintWatchdog(timeoutMs: Long = 20_000L) {
+        complaintWatchdogHandler.removeCallbacks(complaintWatchdogRunnable)
+        complaintWatchdogHandler.postDelayed(complaintWatchdogRunnable, timeoutMs)
+        Log.i(TAG, "⏱️ Complaint watchdog started (${timeoutMs}ms)")
+    }
+
+    /** Cancel watchdog — call this on any completion path. */
+    private fun cancelComplaintWatchdog() {
+        complaintWatchdogHandler.removeCallbacks(complaintWatchdogRunnable)
+        Log.i(TAG, "✅ Complaint watchdog cancelled")
+    }
+
+    private fun isComplaintCurrentlyActive(): Boolean {
+        val sharedPref = SharedPref.getInstance(requireContext())
+        val syncFlag = sharedPref?.getIsComplaintActive() ?: false
+        val userFlag = sharedPref?.getUser()?.isComplaint
+        return syncFlag && userFlag != false
+    }
+
+    private fun clearComplaintIntentFlag() {
+        val activityIntent = requireActivity().intent
+        if (activityIntent.hasExtra(MainActivity.EXTRA_COMPLAINT_CHECK)) {
+            activityIntent.removeExtra(MainActivity.EXTRA_COMPLAINT_CHECK)
+        }
+    }
+
+    /** Close and reopen the app cleanly. */
+    private fun restartApp() {
+        try {
+            val ctx = requireContext().applicationContext
+            val launchIntent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+                ?: return
+            launchIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TASK
+            )
+            val pendingIntent = PendingIntent.getActivity(
+                ctx, 999, launchIntent,
+                PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = ctx.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            alarmManager.set(
+                android.app.AlarmManager.RTC,
+                System.currentTimeMillis() + 800L,
+                pendingIntent
+            )
+            Log.i(TAG, "🔄 App restart scheduled in 800ms")
+            Process.killProcess(Process.myPid())
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ restartApp failed: ${e.message}", e)
+        }
     }
 
     private fun setUpProgressDialog(
@@ -751,6 +834,18 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     }
 
+    /** Updates the badge count on the notification bell icon. Call on resume and after FCM arrives. */
+    fun updateNotificationBadge() {
+        if (!isAdded) return
+        val count = SharedPref.getInstance(requireContext())?.getComplianceBadgeCount() ?: 0
+        if (count > 0) {
+            mBinding.notificationBadgeTv.visibility = android.view.View.VISIBLE
+            mBinding.notificationBadgeTv.text = if (count > 99) "99+" else count.toString()
+        } else {
+            mBinding.notificationBadgeTv.visibility = android.view.View.GONE
+        }
+    }
+
     private fun setUpClickListeners() {
 
         mBinding.menuBtn.setOnClickListener {
@@ -758,6 +853,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
         mBinding.errorsBtn.setOnClickListener {
             findNavController().navigate(R.id.action_homeFragment_to_errorsSolutionsFragment)
+        }
+
+        mBinding.notificationBtn.setOnClickListener {
+            findNavController().navigate(R.id.action_homeFragment_to_complianceReportFragment)
         }
 
 
@@ -949,13 +1048,19 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
     private fun complaintButtonPressed() {
-        btnStatus = StatusEnum.complaint.name
+        isComplaintPressed = true
+        Log.i(TAG, "🚨 Complaint action started - setting btnStatus to compliant")
+        
+        btnStatus = StatusEnum.compliant.name
         setChecksData()
+        
         if (locationTrack.checkLocationPermissions()) {
+            Log.i(TAG, "📍 Location permissions granted, fetching location...")
             locationTrack.stopListener()
             locationTrack.loc = null
             fetchLocationData()
         } else {
+            Log.w(TAG, "⚠️ Location permissions missing")
             checkandGrantLocationPermission()
         }
     }
@@ -1136,6 +1241,16 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                             showMessage(getString(R.string.data_sync_successfully_to_server))
                             isSyncPressed = false
                         }
+                        
+                        // ✅ Handle complaint submission completion
+                        if (isComplaintPressed) {
+                            Log.i(TAG, "✅ Complaint submitted successfully")
+                            isComplaintPressed = false
+                            hasHandledComplaintIntent = false  // ✅ Reset flag for future use
+                            // watchdog cancelled inside showComplaintCompletionDialog
+//                            showComplaintCompletionDialog(mainMessage)
+//                            return@launch  // Don't process other logic below
+                        }
 
                         // Check if main message requires deleting all user records
                         if (mainMessage.contains("Multiple attendance records", ignoreCase = true))
@@ -1201,6 +1316,16 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                     }
                     Log.i(TAG, "setUpObserver: error:${resource.message}")
 
+                    // ✅ Reset complaint flag on error
+                    if (isComplaintPressed) {
+                        Log.e(TAG, "❌ Complaint submission failed: ${resource.message}")
+                        isComplaintPressed = false
+                        hasHandledComplaintIntent = false  // ✅ Reset flag for retry
+                        cancelComplaintWatchdog()  // ✅ Disarm watchdog
+                        showMessage("Failed to submit compliance: ${resource.message}")
+
+                    }
+
                     // ✅ LOGOUT will be handled by broadcast receiver (logoutBroadcastReceiver)
                     // So we only show other error messages here
                     if (resource.message != "LOGOUT") {
@@ -1264,49 +1389,50 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
     private fun showLogoutDialog(message: String) {
+        // ✅ Delegate to MainActivity to centralize dialog state management
+        // This prevents overlap with other dialogs and ensures proper sequencing
+        (activity as? MainActivity)?.let { mainActivity ->
+            Log.i(TAG, "📋 Delegating forced logout to MainActivity for centralized handling")
+            mainActivity.showForcedLogoutDialog(message)
+        } ?: run {
+            // Fallback if MainActivity is not available (shouldn't happen in normal flow)
+            Log.e(TAG, "❌ MainActivity not available, cannot show forced logout dialog")
+        }
+    }
+
+    private fun showComplaintCompletionDialog(serverMessage: String) {
         val dialog = Dialog(requireActivity())
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-
-        // ✅ Non-dismissible: outside click won't close it
         dialog.setCancelable(false)
-
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val dialogBinding = CustomAlertDialogBinding.inflate(layoutInflater)
         dialog.setContentView(dialogBinding.root)
 
-        // ✅ Set logout message
-        val logoutMessage = if (message.equals("LOGOUT", ignoreCase = true)) {
-            "You have been forcefully logged out by admin.\nYou can no longer use this app."
-        } else {
-            message.takeIf { it.isNotBlank() } ?: "Your session is no longer valid.\nPlease login again."
-        }
+        dialogBinding.titleTv.text = "Compliance Submitted"
+        dialogBinding.desTv.text = serverMessage.takeIf { it.isNotBlank() } 
+            ?: "Your compliance status has been submitted successfully."
 
-        dialogBinding.titleTv.text = "Session Expired"
-        dialogBinding.desTv.text = logoutMessage
-
-        // ✅ Only OK button, no cancel button
+        // Only OK button
         dialogBinding.postiveBtn.text = "OK"
         dialogBinding.negativeBtn.visibility = View.GONE
 
-        // ✅ OK button - perform logout
         dialogBinding.postiveBtn.setOnClickListener {
             dialog.dismiss()
-            deleteUserDataAndLogout()
+            Log.i(TAG, "✅ Complaint completion dialog dismissed")
         }
 
+        cancelComplaintWatchdog()  // ✅ Flow completed — disarm watchdog
         dialog.show()
-        Log.i(TAG, "Logout dialog shown with message: $logoutMessage")
-
-        // Note: Consumption of the pending message is handled by the receiver via
-        // SessionLogoutCoordinator.consumePendingMessage(), so we don't call it here.
+        Log.i(TAG, "✅ Complaint completion dialog shown")
     }
 
     fun fetchLocationData() {
         val checkGPS = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
         val checkNetwork = Utils.isInternetAvailable(requireContext())
+        val isDeviceLocked = (requireActivity().getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).isKeyguardLocked
 
-        Log.i(TAG, "fetchLocationData: checkNetwork:$checkNetwork --> checkGps:$checkGPS")
+        Log.i(TAG, "fetchLocationData: checkNetwork:$checkNetwork --> checkGps:$checkGPS --> isDeviceLocked:$isDeviceLocked")
 
         if (checkGPS) {
             val locationTrack = LocationTrack(requireContext())
@@ -1315,31 +1441,40 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
             var locationFetched = false
 
-            // Start 30-second timeout
+            // ✅ Use shorter timeout when device is locked (5 sec) vs unlocked (30 sec)
+            // Device lock restricts location services significantly
+            val timeoutMs = if (isDeviceLocked) 5_000L else 30_000L
+            Log.i(TAG, "📍 Using timeout: ${timeoutMs}ms (device locked: $isDeviceLocked)")
+
+            // Start timeout
             CoroutineScope(Dispatchers.Main).launch {
-                delay(30_000) // wait for 30 seconds
+                delay(timeoutMs)
                 if (!locationFetched) {
-                    Log.i(TAG, "fetchLocationData: Timeout reached, location not fetched.")
-                    showMessage(getString(R.string.unable_to_fetch_location_please_try_again_later))
+                    Log.i(TAG, "fetchLocationData: Timeout reached, location not fetched after ${timeoutMs}ms")
+                    locationFetched = true  // Mark as handled
+                    locationTrack.stopListener()
+                    
+                    // ✅ Fallback: Use 0,0 for now (allows complaint to proceed)
+                    Log.i(TAG, "📍 Proceeding with fallback coordinates (0.0, 0.0) due to timeout")
                     dismissProgressDialog()
-//                    callApiData(0.0, 0.0) // fallback
+                    callApiData(0.0, 0.0)
                 }
             }
 
             // Try to get location
             locationTrack.getLocation(mLocationManager) { location ->
-                if (location != null) {
+                if (location != null && !locationFetched) {
                     locationFetched = true
                     locationTrack.stopListener()
                     locationTrack.loc = null
                     mBinding.coordsStatusTv.text = "${location.latitude} , ${location.longitude}"
                     mBinding.lastUpdateStatusTv.text = getCurrentDateTime().toString()
 
+                    Log.i(TAG, "✅ Location obtained: ${location.latitude}, ${location.longitude}")
+                    dismissProgressDialog()
                     callApiData(location.latitude, location.longitude)
-                    Log.i(TAG, "fetchLocationData: location not null: $location")
-                } else {
-                    Log.i(TAG, "fetchLocationData: location null")
-                    // Let the timeout handle showing message & fallback
+                } else if (!locationFetched) {
+                    Log.i(TAG, "⏳ Location callback returned null, waiting for timeout...")
                 }
             }
         } else {
@@ -1353,7 +1488,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     fun callApiData(lat: Double, lan: Double) {
         isLocationFetched = false
 
-        Log.i(TAG, "callApiData: 577 isLocationEnabled:${isLocationFetched}")
+        Log.i(TAG, "callApiData: Starting with lat=$lat, lng=$lan, isComplaint=$isComplaintPressed")
 
         mBinding.statusTv.text = ""
         try {
@@ -1371,7 +1506,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                     }
 
                     if (!isLocationFetched) {
-                        Log.i(TAG, "callApiData: 588 wifiList${wifiList}-->batterySAver:${Utils.isBatterySaverOn(requireContext())}--->optimization:${Utils.isBatteryOptimizationOff(requireContext())}")
+                        Log.i(TAG, "callApiData: Preparing record with wifiList:${wifiList.size}")
                         if (isLocationFetched) {
                             Log.i(TAG, "callApiData: already in progress, exiting.")
                             return@launch
@@ -1380,7 +1515,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                         isLocationFetched = true
                         val user = SharedPref.getInstance(requireContext())?.getUser()
                         user?.let { itit ->
-                            Log.i(TAG, "callApiData: 594user found")
+                            Log.i(TAG, "callApiData: User found: ${itit.name}")
                             val randomUid = Utils.generateRandomUuid()
                             val record = RecordModel(
                                 uuid = randomUid,
@@ -1426,15 +1561,28 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     // Add the new record to the list
                                     val allRecordsWithNew = allRecords + record.toDataRequest(errorList)
 
-                                    Log.i(TAG, "callApiData: Total records before validation: ${allRecordsWithNew.size}")
-
-                                    // ✅ COMPREHENSIVE VALIDATION: Recheck gaps, fill missing records,
-                                    // remove invalid ones, and sort by local time in ascending order
-//                                    val validatedRecords = validateAndPrepareRecordsForSync(allRecordsWithNew)
+                                    Log.i(TAG, "callApiData: Total records: ${allRecordsWithNew.size}")
 
                                     val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
-                                    withContext(Dispatchers.Main) {
-                                        mainViewModel.sendAppData(allRecordsWithNew, token, requireContext())
+                                    
+                                    // ✅ Add timeout for complaint actions to prevent hanging on locked device
+                                    if (isComplaintPressed) {
+                                        Log.i(TAG, "⏱️ Setting 10-second timeout for complaint API call")
+                                        withContext(Dispatchers.Main) {
+                                            val result = withTimeoutOrNull(10_000L) {
+                                                mainViewModel.sendAppData(allRecordsWithNew, token, requireContext())
+                                            }
+                                            if (result == null) {
+                                                Log.e(TAG, "❌ Complaint API call timed out after 10 seconds")
+                                                dismissProgressDialog()
+                                                isComplaintPressed = false
+                                                showMessage("Complaint submitted (timeout on confirmation)")
+                                            }
+                                        }
+                                    } else {
+                                        withContext(Dispatchers.Main) {
+                                            mainViewModel.sendAppData(allRecordsWithNew, token, requireContext())
+                                        }
                                     }
                                 } catch (e: Exception) {
                                     withContext(Dispatchers.Main) {
@@ -1445,7 +1593,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                             } else {
                                 Log.i(
                                     TAG,
-                                    "callApiData: internet not available saving to database: ${record}"
+                                    "callApiData: internet not available saving to database"
                                 )
 
                                 withContext(Dispatchers.Main) {
@@ -1453,15 +1601,17 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                     dismissProgressDialog()
                                 }
 
-                                // Save to database when no internet is available
-//                                dao.deleteRecordByUuid("0216a876-472c-4767-889c-0bfd2ca86a6c")
-//                                dao.deleteRecordByUuid("6664af52-682e-47ce-80c1-abe87d6ff0e3")
-//                                dao.deleteRecordByUuid("eea9626a-e1d0-4776-96be-340247962e98")
-
                                 dao.insertRecord(record)
 
                                 withContext(Dispatchers.Main) {
-                                    showMessage(getString(R.string.offile_alert_message))
+                                    if (isComplaintPressed) {
+                                        isComplaintPressed = false
+                                        hasHandledComplaintIntent = false  // ✅ Reset flag
+                                        // watchdog cancelled inside showComplaintCompletionDialog
+//                                        showComplaintCompletionDialog("Complaint saved offline. Will sync when online.")
+                                    } else {
+                                        showMessage(getString(R.string.offile_alert_message))
+                                    }
                                 }
                             }
                         }
@@ -1471,14 +1621,20 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                         dismissProgressDialog()
                     }
                     Log.e(TAG, "callApiData: exception: ${e.message}", e)
+                    isComplaintPressed = false
+                    hasHandledComplaintIntent = false  // ✅ Reset flag
+                    cancelComplaintWatchdog()  // ✅ Disarm watchdog on exception
                 } finally {
-                    // Reset isLocationFetched when everything is done, so the method can be called again if needed
+                    // Reset isLocationFetched when everything is done
                     isLocationFetched = false
                 }
             }
         } catch (e: Exception) {
             dismissProgressDialog()
-            Log.i(TAG, "callApiData: 672 exception:${e.printStackTrace()}")
+            Log.e(TAG, "callApiData: outer exception: ${e.message}", e)
+            isComplaintPressed = false
+            hasHandledComplaintIntent = false  // ✅ Reset flag
+            cancelComplaintWatchdog()  // ✅ Disarm watchdog on outer exception
         }
 
     }
@@ -1729,6 +1885,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     override fun onDestroy() {
         runCatching { unregisterComplaintReceiverIfNeeded() }
         runCatching { unregisterLogoutReceiverIfNeeded() }
+        cancelComplaintWatchdog()
         super.onDestroy()
         // Remove any pending handler callbacks
         clearTextRunnable?.let { clearTextHandler?.removeCallbacks(it) }

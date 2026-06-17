@@ -20,6 +20,7 @@ import com.shiftsmart.plus.models.ErrorModel
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.models.WifiModel
+import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Utils.getCurrentDayName
@@ -675,6 +676,12 @@ class AttendanceSyncManager @Inject constructor(
 
             withContext(Dispatchers.Main) {
                 try {
+                    // Ensure complaint alert chain is stopped on forced logout.
+                    SharedPref.getInstance(context)?.saveIsComplaintActive(false)
+                    AlarmScheduler.cancelComplaintAlarm(context)
+                    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    notificationManager.cancel(ComplaintAlertNotification.NOTIFICATION_ID)
+
                     // ✅ Send notification update to service for error handling
                     val errorMessage = "API error ${response.code()} - Session expired"
                     sendNotificationUpdate(errorMessage)

@@ -14,7 +14,6 @@ import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeRange
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
-import com.shiftsmart.plus.utils.AppConfig
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.ShiftUtils.getCalendarForShift
 import com.shiftsmart.plus.utils.Utils
@@ -142,9 +141,6 @@ object AlarmScheduler {
                     // Schedules one-shot CALL_API aligned to next 5-min mark (receiver re-arms)
                     schedulePeriodicAlarm(context)
                 }
-
-                // Schedule complaint reminder alarm if user complaint is active and inside shift
-                scheduleComplaintAlarmIfNeeded(context)
             }
         } else {
             Log.i(TAG, "No shift found for today.")
@@ -240,154 +236,21 @@ object AlarmScheduler {
             )
         }
 
-//        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
         Log.i(TAG, "Scheduled CALL_API alarm at ${Date(triggerTime)}")
-    }
-
-    fun scheduleComplaintAlarmIfNeeded(context: Context, resetExisting: Boolean = false) {
-        val sharedPref = SharedPref.getInstance(context)
-        val user = sharedPref?.getUser()
-        val activeShiftWindow = user?.let { getCurrentComplaintShiftWindow(it) }
-
-        if (user != null && user.isComplaint && activeShiftWindow != null) {
-            val now = System.currentTimeMillis()
-            val existingTriggerTime = sharedPref.getComplaintAlertTriggerTime()
-            val triggerTime = when {
-                resetExisting || existingTriggerTime <= 0L -> now + AppConfig.complaintAlertDelayMs
-                existingTriggerTime > now -> existingTriggerTime
-                else -> now + 1_000L
-            }
-
-            if (triggerTime < activeShiftWindow.endTimeMillis) {
-                if (triggerTime != existingTriggerTime) {
-                    sharedPref.saveComplaintAlertTriggerTime(triggerTime)
-                }
-
-                scheduleComplaintAlarm(context, triggerTime)
-            } else {
-                Log.i(
-                    TAG,
-                    "Skipping COMPLAINT_ALERT alarm; next trigger ${Date(triggerTime)} is outside shift ending ${Date(activeShiftWindow.endTimeMillis)}"
-                )
-                cancelComplaintAlarm(context)
-            }
-        } else {
-            cancelComplaintAlarm(context)
-        }
-    }
-
-    fun scheduleNextComplaintAlarm(context: Context) {
-        scheduleComplaintAlarmIfNeeded(context, resetExisting = true)
-    }
-
-    fun isInsideComplaintShiftWindow(user: UserModel): Boolean {
-        return getCurrentComplaintShiftWindow(user) != null
-    }
-
-    private fun getCurrentComplaintShiftWindow(user: UserModel): ComplaintShiftWindow? {
-        val now = Calendar.getInstance()
-        val today = LocalDate.now()
-        val candidateDates = listOf(today, today.minusDays(1))
-
-        for (shiftDate in candidateDates) {
-            val effectiveRange = getEffectiveRangeForDate(user, shiftDate) ?: continue
-            val dayName = shiftDate.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
-            val shift = effectiveRange.find { it.day.equals(dayName, ignoreCase = true) } ?: continue
-            val startTime = shift.start ?: continue
-            val endTime = shift.end ?: continue
-
-            val startCal = getCalendarForDate(shiftDate, startTime, 0)
-            val endCal = getCalendarForDate(shiftDate, endTime, 0)
-            if (endCal.timeInMillis <= startCal.timeInMillis) {
-                endCal.add(Calendar.DAY_OF_YEAR, 1)
-            }
-
-            if (now.timeInMillis >= startCal.timeInMillis && now.timeInMillis < endCal.timeInMillis) {
-                Log.i(TAG, "Inside complaint shift window: $dayName ${Date(startCal.timeInMillis)} - ${Date(endCal.timeInMillis)}")
-                return ComplaintShiftWindow(startCal.timeInMillis, endCal.timeInMillis)
-            }
-        }
-
-        Log.i(TAG, "Outside complaint shift window")
-        return null
-    }
-
-    private fun getEffectiveRangeForDate(user: UserModel, date: LocalDate): List<TimeRange>? {
-        val activeMultiTable = user.multipleTimeTables?.find { mt ->
-            val startDate = mt.startDate.toLocalDate()
-            val endDate = mt.endDate.toLocalDate()
-            date in startDate..endDate
-        }
-
-        return activeMultiTable?.timetable?.range ?: user.timetable?.range
-    }
-
-    private data class ComplaintShiftWindow(
-        val startTimeMillis: Long,
-        val endTimeMillis: Long
-    )
-
-    private fun scheduleComplaintAlarm(context: Context, triggerTime: Long) {
-        try {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            // Schedule a broadcast to our AlarmReceiver; the receiver will attempt
-            // to start the activity directly and fall back to a full-screen notification
-            // with the same sound if direct start is blocked.
-            val intent = Intent(context, AlarmReceiver::class.java).apply { action = "COMPLAINT_ALERT" }
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                5678,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            alarmManager.cancel(pendingIntent)
-            val complaintDelay = (triggerTime - System.currentTimeMillis()).coerceAtLeast(0L)
-            Log.i(TAG, "Scheduled COMPLAINT_ALERT alarm delay=${complaintDelay}ms")
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (alarmManager.canScheduleExactAlarms()) {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerTime,
-                        pendingIntent
-                    )
-                } else {
-                    alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerTime,
-                        pendingIntent
-                    )
-                }
-            } else {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerTime,
-                    pendingIntent
-                )
-            }
-
-            Log.i(TAG, "Scheduled COMPLAINT_ALERT alarm at ${Date(triggerTime)}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error scheduling complaint alarm", e)
-        }
     }
 
     @JvmStatic
     fun cancelComplaintAlarm(context: Context) {
+        // Cancel any previously scheduled complaint alarm (request code 5678)
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = Intent(context, AlarmReceiver::class.java).apply { action = "COMPLAINT_ALERT" }
         val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            5678,
-            intent,
-            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            context, 5678, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        if (pendingIntent != null) {
-            alarmManager.cancel(pendingIntent)
-            Log.i(TAG, "Canceled COMPLAINT_ALERT alarm")
-        }
+        alarmManager.cancel(pendingIntent)
         SharedPref.getInstance(context)?.clearComplaintAlertTriggerTime()
+        Log.i(TAG, "Complaint alarm cancelled (no-op — alarm scheduler removed)")
     }
 
     /**
@@ -712,8 +575,6 @@ object AlarmScheduler {
             PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         )
         periodicPi?.let { alarmManager.cancel(it) }
-
-        cancelComplaintAlarm(context)
 
         Log.i(TAG, "✅ Cancelled all scheduled alarms")
     }

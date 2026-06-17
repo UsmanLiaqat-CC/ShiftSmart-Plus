@@ -76,6 +76,15 @@
             app:popEnterAnim="@anim/nav_slide_in_left"
             app:popUpToInclusive="false"
             app:popUpTo="@id/homeFragment"/>
+        <action
+            android:id="@+id/action_homeFragment_to_complianceReportFragment"
+            app:destination="@id/complianceReportFragment"
+            app:enterAnim="@anim/nav_slide_in_right"
+            app:exitAnim="@anim/nav_slide_out_left"
+            app:popExitAnim="@anim/nav_slide_out_right"
+            app:popEnterAnim="@anim/nav_slide_in_left"
+            app:popUpToInclusive="false"
+            app:popUpTo="@id/homeFragment"/>
     </fragment>
     <fragment
         android:id="@+id/profileFragment"
@@ -102,4 +111,9 @@
         android:name="com.shiftsmart.plus.ui.fragments.my_shifts.MyShiftsFragment"
         android:label="fragment_my_shifts"
         tools:layout="@layout/fragment_my_shifts" />
+    <fragment
+        android:id="@+id/complianceReportFragment"
+        android:name="com.shiftsmart.plus.ui.fragments.ComplianceReportFragment"
+        android:label="fragment_compliance_report"
+        tools:layout="@layout/fragment_compliance_report" />
 </navigation>

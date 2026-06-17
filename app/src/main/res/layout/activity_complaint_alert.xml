@@ -45,7 +45,7 @@
                     android:layout_gravity="center"
                     android:src="@android:drawable/ic_dialog_alert"
                     app:tint="@color/primary_color"
-                    android:contentDescription="Complaint Alert" />
+                    android:contentDescription="Compliant Alert" />
 
                 <TextView
                     android:id="@+id/complaint_title"
@@ -55,7 +55,7 @@
                     android:textSize="24sp"
                     android:textStyle="bold"
                     android:textColor="@color/black"
-                    android:text="Complaint Alert"
+                    android:text="Compliant Alert"
                     android:gravity="center" />
 
                 <TextView

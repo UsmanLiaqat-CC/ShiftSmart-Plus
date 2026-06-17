@@ -42,14 +42,53 @@
                 android:textStyle="bold"
                 android:textColor="@color/black" />
 
-            <ImageButton
-                android:id="@+id/errors_btn"
-                android:layout_width="@dimen/_40sdp"
-                android:layout_height="@dimen/_40sdp"
+            <!-- Right side: errors + notification bell -->
+            <LinearLayout
+                android:id="@+id/right_buttons_ll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:layout_alignParentEnd="true"
-                android:backgroundTint="@android:color/transparent"
-                android:src="@drawable/ic_errors"
-                app:tint="@color/black" />
+                android:layout_centerVertical="true"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageButton
+                    android:id="@+id/errors_btn"
+                    android:layout_width="@dimen/_40sdp"
+                    android:layout_height="@dimen/_40sdp"
+                    android:backgroundTint="@android:color/transparent"
+                    android:src="@drawable/ic_errors"
+                    app:tint="@color/black" />
+
+                <!-- Notification bell with badge -->
+                <FrameLayout
+                    android:layout_width="@dimen/_40sdp"
+                    android:layout_height="@dimen/_40sdp">
+
+                    <ImageButton
+                        android:id="@+id/notification_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:backgroundTint="@android:color/transparent"
+                        android:src="@drawable/ic_bell"
+                        app:tint="@color/black"
+                        android:contentDescription="Compliance Notifications" />
+
+                    <TextView
+                        android:id="@+id/notification_badge_tv"
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:background="@drawable/badge_background"
+                        android:gravity="center"
+                        android:textColor="@color/white"
+                        android:textSize="9sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
+            </LinearLayout>
 
         </RelativeLayout>
 

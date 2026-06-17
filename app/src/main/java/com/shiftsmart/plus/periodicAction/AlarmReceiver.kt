@@ -1,37 +1,24 @@
 package com.shiftsmart.plus.periodicAction
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.shiftsmart.plus.R
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.services.MyService
-import com.shiftsmart.plus.ui.activities.ComplaintAlertActivity
 import com.shiftsmart.plus.ui.activities.WakeUpActivity
-import com.shiftsmart.plus.utils.MyApp
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.ShiftUtils
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.utils.Utils.toLocalDate
 import com.shiftsmart.plus.utils.DeviceCompatibilityHelper
-import com.shiftsmart.plus.utils.FullScreenIntentPermissionHelper
-import com.shiftsmart.plus.utils.ComplaintAlertNotification
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.util.Calendar
@@ -128,7 +115,6 @@ class AlarmReceiver : BroadcastReceiver() {
                         else
                             context.startService(serviceIntent)
 
-                        AlarmScheduler.scheduleComplaintAlarmIfNeeded(context)
                     } else {
                         Log.i(TAG, "⏭️ Outside shift window - skipping service start")
                     }
@@ -193,8 +179,6 @@ class AlarmReceiver : BroadcastReceiver() {
                         context.startService(collectIntent)
                     }
 
-                    AlarmScheduler.scheduleComplaintAlarmIfNeeded(context)
-
                     // ✅ Service will handle:
                     // 1. 5-minute boundary validation
                     // 2. Data collection and saving
@@ -202,30 +186,6 @@ class AlarmReceiver : BroadcastReceiver() {
                     // 4. Scheduling next alarm
                     // 5. Stopping itself
                     Log.i(TAG, "✅ Service will collect data and auto-stop after completion")
-                }
-
-                "COMPLAINT_ALERT" -> {
-                    Log.i(TAG, "🚨 Received COMPLAINT_ALERT")
-                    val user = SharedPref.getInstance(context)?.getUser()
-                    if (user == null) {
-                        Log.w(TAG, "❌ No user found; skipping COMPLAINT_ALERT")
-                        return
-                    }
-
-                    if (!user.isComplaint) {
-                        Log.i(TAG, "✅ Complaint no longer active; cancelling complaint alarm")
-                        AlarmScheduler.cancelComplaintAlarm(context)
-                        return
-                    }
-
-                    if (!AlarmScheduler.isInsideComplaintShiftWindow(user)) {
-                        Log.i(TAG, "⏭️ Outside shift window; cancelling complaint alarm")
-                        AlarmScheduler.cancelComplaintAlarm(context)
-                        return
-                    }
-
-                    showComplaintAlert(context)
-                    AlarmScheduler.scheduleNextComplaintAlarm(context)
                 }
 
             }
@@ -243,11 +203,9 @@ class AlarmReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "AlarmReceiver"
-        private const val COMPLAINT_CHANNEL_ID = "complaint_alert_fullscreen_v3"
 
         /**
          * Check if all required permissions for foreground service with location are granted
-         * Required for Android 14+ (targetSdk 36) to start foreground service with location type
          */
         private fun hasRequiredPermissions(context: Context): Boolean {
             val fineLocation = ContextCompat.checkSelfPermission(
@@ -454,109 +412,6 @@ class AlarmReceiver : BroadcastReceiver() {
             val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(nextAligned))
             Log.i("AlarmReceiver", "⏰ Next CALL_API alarm scheduled at: $timeStr (${Date(nextAligned)})")
         }
-
-        @JvmStatic
-        private fun showComplaintAlert(context: Context) {
-            Log.i(TAG, "App foreground state: ${MyApp.isInForeground}")
-
-            val alertIntent = Intent(context, ComplaintAlertActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-
-            if (MyApp.isInForeground) {
-                try {
-                    context.startActivity(alertIntent)
-                    Log.i(TAG, "🚨 Opened ComplaintAlertActivity directly while app is foreground")
-                    return
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Foreground ComplaintAlertActivity launch failed; falling back to notification", e)
-                }
-            }
-
-            try {
-                @Suppress("DEPRECATION")
-                val screenWakeLock = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).newWakeLock(
-                    PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
-                    "ShiftSmart::ComplaintScreenWakeLock"
-                )
-                screenWakeLock.acquire(10_000)
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to acquire complaint screen wake lock", e)
-            }
-
-            val pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            val fullScreenPendingIntent = PendingIntent.getActivity(
-                context,
-                ComplaintAlertNotification.NOTIFICATION_ID,
-                alertIntent,
-                pendingIntentFlags
-            )
-
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val canUseFullScreenIntent = FullScreenIntentPermissionHelper.canUseFullScreenIntent(context)
-            Log.i(TAG, "Full-screen intent allowed by system: $canUseFullScreenIntent")
-            createComplaintAlertChannel(context, notificationManager)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-            ) {
-                Log.e(TAG, "❌ POST_NOTIFICATIONS not granted; attempting direct complaint activity launch")
-                runCatching { context.startActivity(alertIntent) }
-                    .onSuccess { Log.i(TAG, "🚨 Direct ComplaintAlertActivity launch succeeded without notification permission") }
-                    .onFailure { Log.e(TAG, "❌ Direct ComplaintAlertActivity launch failed without notification permission", it) }
-                return
-            }
-
-            val notification = NotificationCompat.Builder(context, COMPLAINT_CHANNEL_ID)
-                .setSmallIcon(R.drawable.app_logo)
-                .setContentTitle(context.getString(R.string.complaint_alert_title))
-                .setContentText(context.getString(R.string.complaint_alert_message))
-                .setStyle(NotificationCompat.BigTextStyle().bigText(context.getString(R.string.complaint_alert_details)))
-                .setPriority(NotificationCompat.PRIORITY_MAX)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setSound(buildComplaintSoundUri(context), android.media.AudioManager.STREAM_ALARM)
-                .setOngoing(true)
-                .setOnlyAlertOnce(false)
-                .setAutoCancel(false)
-                .setContentIntent(fullScreenPendingIntent)
-                .setFullScreenIntent(fullScreenPendingIntent, true)
-                .build()
-                .apply {
-                    flags = flags or android.app.Notification.FLAG_NO_CLEAR or android.app.Notification.FLAG_ONGOING_EVENT
-                }
-
-            notificationManager.notify(ComplaintAlertNotification.NOTIFICATION_ID, notification)
-            Log.i(TAG, "🚨 Posted full-screen complaint alert notification")
-        }
-
-        private fun createComplaintAlertChannel(context: Context, notificationManager: NotificationManager) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-
-            val audioAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ALARM)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-
-            val channel = NotificationChannel(
-                COMPLAINT_CHANNEL_ID,
-                "Complaint Alerts",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Full-screen complaint alerts"
-                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
-                setSound(buildComplaintSoundUri(context), audioAttributes)
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 1000, 500, 1000, 500, 1000)
-            }
-
-            notificationManager.createNotificationChannel(channel)
-        }
-
-        private fun buildComplaintSoundUri(context: Context): Uri {
-            return Uri.parse("android.resource://${context.packageName}/${R.raw.loud_sound}")
-        }
-
 
         /**
          * scheduleAtExactTime(...)

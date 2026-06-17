@@ -161,23 +161,12 @@ class LoginFragment : Fragment() {
                                 )
 
                                 if (it.data?.userModel?.isComplaint == true) {
-                                    Log.i(TAG, "LoginFragment: complaint flag is true - scheduling complaint alarm (resetExisting = true)")
-                                    AlarmScheduler.scheduleComplaintAlarmIfNeeded(
-                                        context = requireContext(),
-                                        resetExisting = true
-                                    )
-                                    // Log the final trigger time and status after scheduling
-                                    logComplaintAlarmInfo(it.data?.userModel)
+                                    Log.i(TAG, "LoginFragment: user has active compliance flag")
                                 }
                             } else {
                                 Log.i(TAG, "⚠️ Permissions not granted yet, will schedule alarms from HomeFragment")
                                 if (it.data?.userModel?.isComplaint == true) {
-                                    Log.i(TAG, "LoginFragment: complaint flag is true but permissions missing - scheduling complaint alarm (resetExisting = true) so user receives alert when possible")
-                                    AlarmScheduler.scheduleComplaintAlarmIfNeeded(
-                                        context = requireContext(),
-                                        resetExisting = true
-                                    )
-                                    logComplaintAlarmInfo(it.data?.userModel)
+                                    Log.i(TAG, "LoginFragment: user has active compliance flag (permissions not yet granted)")
                                 }
                             }
 
@@ -216,11 +205,9 @@ class LoginFragment : Fragment() {
         try {
             val sharedPref = SharedPref.getInstance(requireContext())
             val trigger = sharedPref?.getComplaintAlertTriggerTime() ?: 0L
-            val isInside = if (user != null) AlarmScheduler.isInsideComplaintShiftWindow(user) else false
             Log.i(TAG, "--- Complaint alarm status ---")
             Log.i(TAG, "isComplaint flag (user): ${user?.isComplaint}")
             Log.i(TAG, "Current time: ${Date(System.currentTimeMillis())}")
-            Log.i(TAG, "Inside complaint shift window: $isInside")
             if (trigger > 0L) {
                 Log.i(TAG, "Stored complaint trigger time (ms): $trigger -> ${Date(trigger)}")
                 val delay = (trigger - System.currentTimeMillis()).coerceAtLeast(0L)
