@@ -3,33 +3,63 @@ package com.shiftsmart.plus.ui.fragments
 import android.app.DatePickerDialog
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.FragmentComplianceReportBinding
 import com.shiftsmart.plus.models.ComplianceReportItem
+import com.shiftsmart.plus.models.FieldWorkerComplianceItem
 import com.shiftsmart.plus.ui.activities.ComplaintAlertActivity
+import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
+import com.shiftsmart.plus.viewmodels.MainViewModel
+import dagger.hilt.android.AndroidEntryPoint
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.util.Calendar
 import java.util.Locale
-import java.util.UUID
+import java.util.TimeZone
+import javax.inject.Inject
+import androidx.lifecycle.lifecycleScope
+import com.shiftsmart.plus.database.DBDao
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
+@AndroidEntryPoint
 class ComplianceReportFragment : Fragment() {
 
+    private val TAG = "ComplianceReportFragment"
     private lateinit var mBinding: FragmentComplianceReportBinding
     private lateinit var adapter: ComplianceReportAdapter
+    private val mainViewModel: MainViewModel by viewModels()
 
     private var startCalendar: Calendar? = null
     private var endCalendar: Calendar? = null
 
-    private val dateFormat = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+    private val displayDateFormat = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
+    // Used only for FORMATTING dates to send to the API endpoint
+    private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
+    /**
+     * Parses any ISO-8601 timestamp string (with/without ms, with/without tz offset)
+     * using java.time.Instant which handles all standard variants.
+     * Returns null if unparseable — callers should treat null as "very old" (epoch 0).
+     */
+    private fun parseIso(ts: String): Long? = try {
+        Instant.parse(ts).toEpochMilli()
+    } catch (_: Exception) { null }
 
     // Pagination state
     private var currentPage = 1
@@ -39,8 +69,38 @@ class ComplianceReportFragment : Fragment() {
 
     private val FIFTEEN_MINUTES_MS = 15 * 60 * 1000L
 
+    @Inject lateinit var dao: DBDao
+
     companion object {
         const val PAGE_SIZE = 10
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (allItems.isNotEmpty()) {
+            // Re-fetch the list so the server-acknowledged status updates are reflected.
+            loadReports(reset = true)
+            // checkAndMarkPendingSync is called inside the observer after data loads.
+        }
+    }
+
+    /** Checks DB for locally acknowledged compliance records and marks them as Pending Sync in the list. */
+    private fun checkAndMarkPendingSync() {
+        val userId = SharedPref.getInstance(requireContext())?.getUser()?._id ?: return
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val acknowledgedIds = dao.getAcknowledgedComplianceIds(userId).toSet()
+            if (acknowledgedIds.isEmpty()) return@launch
+            withContext(Dispatchers.Main) {
+                val updated = allItems.map { item ->
+                    if (!item.isAcknowledged && acknowledgedIds.contains(item.id))
+                        item.copy(isPendingSync = true)
+                    else item
+                }
+                allItems.clear()
+                allItems.addAll(updated)
+                adapter.submitList(allItems.toList())
+            }
+        }
     }
 
     override fun onCreateView(
@@ -57,9 +117,37 @@ class ComplianceReportFragment : Fragment() {
         // Reset badge count when this screen is opened
         SharedPref.getInstance(requireContext())?.resetComplianceBadgeCount()
 
+        setDefaultDateRange()
         setupRecyclerView()
         setupClickListeners()
         setupSwipeRefresh()
+        observeViewModel()
+
+        // Auto-load on first open
+        loadReports(reset = true)
+    }
+
+    /** Sets start = 7 days ago, end = today, and fills the EditTexts. All in UTC. */
+    private fun setDefaultDateRange() {
+        val utc = TimeZone.getTimeZone("UTC")
+        val end = Calendar.getInstance(utc).apply {
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        val start = (end.clone() as Calendar).apply {
+            add(Calendar.DAY_OF_YEAR, -7)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        startCalendar = start
+        endCalendar = end
+        mBinding.startDateEt.setText(displayDateFormat.format(start.time))
+        mBinding.endDateEt.setText(displayDateFormat.format(end.time))
+        Log.d(TAG, "Default date range: ${isoFormat.format(start.time)} → ${isoFormat.format(end.time)}")
     }
 
     private fun setupRecyclerView() {
@@ -67,15 +155,13 @@ class ComplianceReportFragment : Fragment() {
         mBinding.recyclerView.layoutManager = LinearLayoutManager(requireContext())
         mBinding.recyclerView.adapter = adapter
 
-        // Endless scroll pagination
         mBinding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(rv, dx, dy)
                 if (!isLoadingMore && hasMorePages) {
                     val lm = rv.layoutManager as LinearLayoutManager
                     val lastVisible = lm.findLastVisibleItemPosition()
-                    val total = lm.itemCount
-                    if (lastVisible >= total - 3) {
+                    if (lastVisible >= lm.itemCount - 3) {
                         loadMoreItems()
                     }
                 }
@@ -85,12 +171,9 @@ class ComplianceReportFragment : Fragment() {
 
     private fun setupClickListeners() {
         mBinding.backBtn.setOnClickListener { findNavController().popBackStack() }
-
         mBinding.startDateEt.setOnClickListener { showStartDatePicker() }
         mBinding.endDateEt.setOnClickListener { showEndDatePicker() }
-
         mBinding.loadReportsBtn.setOnClickListener { loadReports(reset = true) }
-
         mBinding.retryBtn.setOnClickListener { loadReports(reset = true) }
     }
 
@@ -98,31 +181,94 @@ class ComplianceReportFragment : Fragment() {
         mBinding.swipeRefresh.setOnRefreshListener { loadReports(reset = true) }
     }
 
+    private fun observeViewModel() {
+        mainViewModel.complianceResponse.observe(viewLifecycleOwner) { resource ->
+            isLoadingMore = false
+            mBinding.swipeRefresh.isRefreshing = false
+            when (resource) {
+                is Resource.Loading -> {
+                    if (currentPage == 1) showShimmer()
+                }
+                is Resource.Success -> {
+                    hideShimmer()
+                    val body = resource.data ?: return@observe
+                    val meta = body.meta
+                    hasMorePages = meta.currentPage < meta.totalPages
+                    Log.d(TAG, "observeViewModel SUCCESS: total=${meta.total}, items=${body.data.size}")
+
+                    val newItems = try {
+                        body.data.map { it.toComplianceReportItem() }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to map compliance items: ${e.message}", e)
+                        emptyList()
+                    }
+                    if (currentPage == 1) allItems.clear()
+                    allItems.addAll(newItems)
+
+                    if (allItems.isEmpty()) {
+                        onEmpty()
+                    } else {
+                        showRecyclerView()
+                        adapter.submitList(allItems.toList())
+                        // Check DB immediately after list renders so pending-sync
+                        // items are marked even on the very first load.
+                        checkAndMarkPendingSync()
+                    }
+                    Log.d(TAG, "Loaded page $currentPage / ${meta.totalPages}, total=${meta.total}")
+                }
+                is Resource.Error -> {
+                    hideShimmer()
+                    onError(showRetry = true)
+                    Log.e(TAG, "Compliance API error: ${resource.message}")
+                }
+                else -> {}
+            }
+        }
+    }
+
+    private fun FieldWorkerComplianceItem.toComplianceReportItem(): ComplianceReportItem {
+        // If sentAt cannot be parsed, treat as epoch-0 so the item is always "too old" to acknowledge.
+        val sentAtMs = parseIso(sentAt) ?: 0L
+        val respondedAtMs = respondedAt?.let { parseIso(it) }
+        return ComplianceReportItem(
+            id = id,
+            title = compliance.title,
+            description = compliance.description ?: "",
+            complianceType = compliance.complianceType,
+            isAcknowledged = status != "pending",
+            createdAt = sentAtMs,
+            status = status,
+            respondedAt = respondedAtMs
+        )
+    }
+
     private fun showStartDatePicker() {
-        val cal = startCalendar ?: Calendar.getInstance()
+        val utc = TimeZone.getTimeZone("UTC")
+        val cal = startCalendar ?: Calendar.getInstance(utc)
         DatePickerDialog(
             requireContext(),
             { _, year, month, day ->
-                startCalendar = Calendar.getInstance().apply {
+                startCalendar = Calendar.getInstance(utc).apply {
                     set(year, month, day, 0, 0, 0)
                     set(Calendar.MILLISECOND, 0)
                 }
-                mBinding.startDateEt.setText(dateFormat.format(startCalendar!!.time))
+                mBinding.startDateEt.setText(displayDateFormat.format(startCalendar!!.time))
             },
             cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)
         ).show()
     }
 
     private fun showEndDatePicker() {
-        val cal = endCalendar ?: Calendar.getInstance()
+        val utc = TimeZone.getTimeZone("UTC")
+        val cal = endCalendar ?: Calendar.getInstance(utc)
         DatePickerDialog(
             requireContext(),
             { _, year, month, day ->
-                endCalendar = Calendar.getInstance().apply {
+                endCalendar = Calendar.getInstance(utc).apply {
                     set(year, month, day, 23, 59, 59)
                     set(Calendar.MILLISECOND, 999)
                 }
-                mBinding.endDateEt.setText(dateFormat.format(endCalendar!!.time))
+                mBinding.endDateEt.setText(displayDateFormat.format(endCalendar!!.time))
             },
             cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)
         ).show()
@@ -134,124 +280,36 @@ class ComplianceReportFragment : Fragment() {
             allItems.clear()
             hasMorePages = false
         }
-        showShimmer()
-        simulateFetchFromApi(
-            startMs = startCalendar?.timeInMillis,
-            endMs = endCalendar?.timeInMillis,
-            page = currentPage
-        )
+        val token = SharedPref.getInstance(requireContext())?.getToken() ?: ""
+        val startIso = isoFormat.format(startCalendar!!.time)
+        val endIso = isoFormat.format(endCalendar!!.time)
+        mainViewModel.getFieldWorkerCompliance(startIso, endIso, currentPage, PAGE_SIZE, token)
     }
 
     private fun loadMoreItems() {
         if (isLoadingMore || !hasMorePages) return
         isLoadingMore = true
         currentPage++
-        simulateFetchFromApi(
-            startMs = startCalendar?.timeInMillis,
-            endMs = endCalendar?.timeInMillis,
-            page = currentPage
-        )
+        loadReports(reset = false)
     }
 
-    /**
-     * Stub for the real API call. Replace with actual Retrofit/ViewModel call when API is ready.
-     * Currently loads sample data to preview how the list will look.
-     */
-    private fun simulateFetchFromApi(startMs: Long?, endMs: Long?, page: Int) {
-        mBinding.root.postDelayed({
-            if (!isAdded) return@postDelayed
-            isLoadingMore = false
-            mBinding.swipeRefresh.isRefreshing = false
-            hideShimmer()
-
-            // TODO: Replace with real API response handling when backend is ready.
-            // Load sample data so the UI layout is visible during development.
-            val now = System.currentTimeMillis()
-            val sampleItems = listOf(
-                ComplianceReportItem(
-                    id = "1",
-                    title = "Location Update Missing",
-                    message = "No location update received for over 10 minutes during active shift. Please check-in to confirm your presence.",
-                    complianceType = "Location",
-                    isAcknowledged = false,
-                    createdAt = now - (8 * 60 * 1000L)  // 8 minutes ago — within 15-min window
-                ),
-                ComplianceReportItem(
-                    id = "2",
-                    title = "Check-In Compliance",
-                    message = "You missed the scheduled check-in at 09:00 AM. Supervisor has been notified. Please provide a reason for the delay.",
-                    complianceType = "Attendance",
-                    isAcknowledged = true,
-                    createdAt = now - (2 * 60 * 60 * 1000L)  // 2 hours ago
-                ),
-                ComplianceReportItem(
-                    id = "3",
-                    title = "GPS Signal Lost",
-                    message = "GPS signal was lost for an extended period. Ensure location services are enabled and the app is running in the background.",
-                    complianceType = "Location",
-                    isAcknowledged = false,
-                    createdAt = now - (45 * 60 * 1000L)  // 45 minutes ago
-                ),
-                ComplianceReportItem(
-                    id = "4",
-                    title = "Shift Start Compliance",
-                    message = "Shift started at 08:00 AM but first location ping was received at 08:22 AM. A 22-minute gap was detected.",
-                    complianceType = "Shift",
-                    isAcknowledged = true,
-                    createdAt = now - (24 * 60 * 60 * 1000L)  // yesterday
-                ),
-                ComplianceReportItem(
-                    id = "5",
-                    title = "Data Sync Failure",
-                    message = "Attendance data could not be synced to the server. Poor network connectivity detected. Data will sync automatically once connected.",
-                    complianceType = "Sync",
-                    isAcknowledged = false,
-                    createdAt = now - (30 * 60 * 1000L)  // 30 minutes ago
-                ),
-                ComplianceReportItem(
-                    id = "6",
-                    title = "Overtime Detected",
-                    message = "You worked 2 hours beyond your scheduled shift end time. Please confirm with your supervisor if this was authorised overtime.",
-                    complianceType = "Attendance",
-                    isAcknowledged = true,
-                    createdAt = now - (3 * 60 * 60 * 1000L)  // 3 hours ago
-                )
-            )
-            onDataLoaded(sampleItems, hasMore = false)
-        }, 1200L)
-    }
-
-    // Call this from ViewModel/API callback with actual data
-    fun onDataLoaded(newItems: List<ComplianceReportItem>, hasMore: Boolean) {
-        hideShimmer()
-        mBinding.swipeRefresh.isRefreshing = false
-        hasMorePages = hasMore
-        allItems.addAll(newItems)
-        if (allItems.isEmpty()) {
-            onEmpty()
-        } else {
-            showRecyclerView()
-            adapter.submitList(allItems.toList())
-        }
-    }
-
-    // Call this on API/network error
-    fun onError(title: String = getString(R.string.error_loading_reports),
-                message: String = getString(R.string.network_error_message),
-                showRetry: Boolean = true) {
-        hideShimmer()
-        mBinding.swipeRefresh.isRefreshing = false
-        showErrorView(title, message, showRetry)
-    }
-
-    // Call this when response is empty
-    fun onEmpty() {
+    private fun onEmpty() {
         hideShimmer()
         mBinding.swipeRefresh.isRefreshing = false
         showErrorView(
             getString(R.string.no_reports_found),
             getString(R.string.no_reports_message),
             showRetry = false
+        )
+    }
+
+    private fun onError(showRetry: Boolean = true) {
+        hideShimmer()
+        mBinding.swipeRefresh.isRefreshing = false
+        showErrorView(
+            getString(R.string.error_loading_reports),
+            getString(R.string.network_error_message),
+            showRetry
         )
     }
 
@@ -284,32 +342,41 @@ class ComplianceReportFragment : Fragment() {
     }
 
     private fun onItemClicked(item: ComplianceReportItem) {
-        if (item.isAcknowledged) return  // already acknowledged, do nothing
+        // Already acknowledged on server
+        if (item.isAcknowledged) return
+        // Acknowledged locally, waiting for server confirmation — block re-submission
+        if (item.isPendingSync) {
+            android.widget.Toast.makeText(
+                requireContext(),
+                "Already acknowledged. Waiting for server sync.",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
 
         val ageMs = System.currentTimeMillis() - item.createdAt
         if (ageMs <= FIFTEEN_MINUTES_MS) {
-            // Within 15 minutes — open full-screen ComplaintAlertActivity
-            val intent = Intent(requireContext(), ComplaintAlertActivity::class.java)
+            val intent = Intent(requireContext(), ComplaintAlertActivity::class.java).apply {
+                putExtra(com.shiftsmart.plus.ui.activities.MainActivity.EXTRA_COMPLIANCE_RECORD_ID, item.id)
+                putExtra(ComplaintAlertActivity.EXTRA_TITLE, item.title)
+                putExtra(ComplaintAlertActivity.EXTRA_DESCRIPTION, item.description)
+                putExtra(ComplaintAlertActivity.EXTRA_SENT_AT_MS, item.createdAt)
+            }
             startActivity(intent)
         } else {
-            // Past 15 minutes — show stylish dialog
             showDeadlinePassedDialog()
         }
     }
 
     private fun showDeadlinePassedDialog() {
         if (!isAdded || activity?.isFinishing == true) return
-
         val builder = AlertDialog.Builder(requireContext(), com.google.android.material.R.style.ThemeOverlay_Material3_MaterialAlertDialog)
         builder.setTitle("⏰ ${getString(R.string.response_deadline_passed)}")
         builder.setMessage(getString(R.string.response_deadline_passed_message))
         builder.setPositiveButton(getString(R.string.ok)) { dialog, _ -> dialog.dismiss() }
         builder.setCancelable(true)
-
         val dialog = builder.create()
         dialog.show()
-
-        // Style the button red for urgency
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(
             requireContext().getColor(android.R.color.holo_red_dark)
         )

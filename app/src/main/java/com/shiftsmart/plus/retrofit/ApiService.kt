@@ -1,7 +1,9 @@
 package com.shiftsmart.plus.retrofit
 import com.shiftsmart.plus.models.LoginRequest
 import com.shiftsmart.plus.models.AttendaceResponseModel
+import com.shiftsmart.plus.models.ComplianceDateRequest
 import com.shiftsmart.plus.models.DataRequest
+import com.shiftsmart.plus.models.FieldWorkerComplianceResponse
 import com.shiftsmart.plus.models.RecordRequest
 import com.shiftsmart.plus.models.RecordsResponseModel
 import com.shiftsmart.plus.models.TimeSheetModel
@@ -42,6 +44,11 @@ interface ApiService {
         @Body loginRequest: LoginRequest
     ): Response<UserResponseModel>
 
+    @GET("user/me")
+    suspend fun getMe(
+        @Header("Authorization") authToken: String,
+    ): Response<UserDetailsResponseModel>
+
     @GET("user/logout/{id}")
     suspend fun logout(
         @Path("id") id: String,
@@ -59,4 +66,13 @@ interface ApiService {
     suspend fun timeSheet(
         @Path("id") id: String,
     ): Response<TimeSheetModel>
+
+    @Headers("Content-Type: application/json")
+    @POST("user-compliance/field-worker")
+    suspend fun getFieldWorkerCompliance(
+        @Query("page") page: Int,
+        @Query("limit") limit: Int,
+        @Body request: ComplianceDateRequest,
+        @Header("Authorization") authToken: String,
+    ): Response<FieldWorkerComplianceResponse>
 }

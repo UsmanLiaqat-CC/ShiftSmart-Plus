@@ -17,6 +17,7 @@ import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
 
 import android.net.wifi.WifiManager
 import android.os.Build
+import com.shiftsmart.plus.BuildConfig
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -524,7 +525,10 @@ class MyService : Service() {
                     notification = Utils.isNotificationPermissionGranted(this@MyService),
                     batterySaver = !Utils.isBatterySaverOn(this@MyService),
                     batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiList
+                    wifi_list = wifiList,
+                    deviceName = Build.MODEL,
+                    appVersion = BuildConfig.VERSION_NAME,
+                    deviceType = "android"
                 )
 
                 Log.i(TAG, "📝 Record created at ${record.localTime}")
@@ -663,7 +667,10 @@ class MyService : Service() {
                     notification = Utils.isNotificationPermissionGranted(this@MyService),
                     batterySaver = !Utils.isBatterySaverOn(this@MyService),
                     batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiList
+                    wifi_list = wifiList,
+                    deviceName = Build.MODEL,
+                    appVersion = BuildConfig.VERSION_NAME,
+                    deviceType = "android"
                 )
 
                 Log.i(TAG, "💾 Saving final record at ${record.localTime}")
@@ -852,7 +859,10 @@ class MyService : Service() {
                     notification = Utils.isNotificationPermissionGranted(this@MyService),
                     batterySaver = !Utils.isBatterySaverOn(this@MyService),
                     batteryOptimization = !Utils.isBatteryOptimizationOff(this@MyService),
-                    wifi_list = wifiList
+                    wifi_list = wifiList,
+                    deviceName = Build.MODEL,
+                    appVersion = BuildConfig.VERSION_NAME,
+                    deviceType = "android"
                 )
 
                 Log.i(TAG, "📝 Created record at ${record.localTime}")

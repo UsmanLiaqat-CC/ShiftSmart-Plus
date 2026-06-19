@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Log
+import com.shiftsmart.plus.BuildConfig
 import androidx.core.app.ActivityCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.gms.maps.model.LatLng
@@ -368,7 +369,12 @@ class AttendanceSyncManager @Inject constructor(
             batterySaver = this.batterySaver,
             batteryOptimization = this.batteryOptimization,
             wifi_list = this.wifi_list,
-            errorlogs =errorsList?: emptyList(),
+            errorlogs = errorsList ?: emptyList(),
+            appVersion = this.appVersion.ifBlank { BuildConfig.VERSION_NAME },
+            deviceName = this.deviceName.ifBlank { Build.MODEL },
+            deviceType = this.deviceType.ifBlank { "android" },
+            complianceRecordId = this.complianceRecordId,
+            complianceStatus = this.complianceStatus,
         )
     }
 

@@ -30,6 +30,11 @@ data class DataRequest(
     val batteryOptimization : Boolean,
     var wifi_list   : List<WifiModel> = listOf<WifiModel>(),
     var errorlogs   : List<ErrorModel> = listOf<ErrorModel>(),
+    val appVersion  : String = "",
+    val deviceName  : String = "",
+    val deviceType  : String = "android",
+    val complianceRecordId: String = "",
+    val complianceStatus  : String = "",
 )
 
 data class ErrorModel(

@@ -27,7 +27,6 @@ import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.FragmentLoginBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
-import com.shiftsmart.plus.utils.AppConfig
 import com.shiftsmart.plus.utils.PasswordToggleHandler
 import com.shiftsmart.plus.utils.PermissionHandler
 import com.shiftsmart.plus.utils.Resource
@@ -134,18 +133,17 @@ class LoginFragment : Fragment() {
                             Log.i(TAG, "setUpObserver: user:${it.data?.userModel}")
 
                             // App-level complaint override for testing only.
-                            // In production, preserve the complaint status returned by the API.
-                            it.data?.userModel?.let { user ->
-                                if (AppConfig.forceComplaintLogin) {
-                                    user.isComplaint = true
-                                }
-                                Log.i(TAG, "setUpObserver: forceComplaint=${AppConfig.forceComplaintLogin}, api/login isComplaint=${user.isComplaint}")
-                            }
+
 
                             SharedPref.getInstance(requireContext())?.saveToken(it.data.accessToken)
                             SharedPref.getInstance(requireContext())?.saveUser(it.data?.userModel)
 
-                            FirebaseMessaging.getInstance().subscribeToTopic(it.data?.userModel?._id.toString())
+                            val userId = it.data?.userModel?._id.toString()
+                            FirebaseMessaging.getInstance().subscribeToTopic(userId)
+                                .addOnSuccessListener {
+                                    SharedPref.getInstance(requireContext())?.saveSubscribedFcmUserId(userId)
+                                    Log.i(TAG, "✅ FCM subscribed to topic: $userId")
+                                }
 
                             // ✅ IMPORTANT: Only schedule alarms if basic permissions are granted
                             // This prevents crash when trying to start foreground service without permissions

@@ -67,7 +67,9 @@ import javax.inject.Inject
 class MainActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_COMPLAINT_CHECK = "com.shiftsmart.plus.EXTRA_COMPLAINT_CHECK"
+        const val EXTRA_COMPLIANCE_RECORD_ID = "com.shiftsmart.plus.EXTRA_COMPLIANCE_RECORD_ID"
         const val ACTION_PERFORM_COMPLAINT_CHECK = "com.shiftsmart.plus.ACTION_PERFORM_COMPLAINT_CHECK"
+        const val ACTION_COMPLIANCE_BADGE_UPDATED = "com.shiftsmart.plus.ACTION_COMPLIANCE_BADGE_UPDATED"
     }
     private lateinit var activityResultLauncher: ActivityResultLauncher<IntentSenderRequest>
     private lateinit var appUpdateManager: AppUpdateManager
@@ -150,7 +152,9 @@ class MainActivity : AppCompatActivity() {
 
         mBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
-        handleComplaintIntent(intent)
+        if (!handleComplianceNotificationTap(intent)) {
+            handleComplaintIntent(intent)
+        }
         registerForceLogoutReceiver()
 
         drawerLayout = mBinding.drawerLayout
@@ -552,6 +556,8 @@ class MainActivity : AppCompatActivity() {
             val user=SharedPref.getInstance(this@MainActivity)?.getUser()
             user?.let {
                 FirebaseMessaging.getInstance().unsubscribeFromTopic(it?._id.toString())
+                // Clear the subscribed state so re-login subscribes fresh
+                SharedPref.getInstance(this@MainActivity)?.saveSubscribedFcmUserId("")
             }
 
             // Stop all schedulers/workers/alarms
@@ -1030,11 +1036,74 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleComplaintIntent(intent)
+        if (!handleComplianceNotificationTap(intent)) {
+            handleComplaintIntent(intent)
+        }
+    }
+
+    /**
+     * Called from onCreate + onNewIntent when the app is opened by tapping an FCM tray
+     * notification that was shown by Android (background/closed state, notification payload).
+     * The FCM data-payload fields arrive as intent string extras.
+     * Returns true if the tap was handled (opened ComplaintAlertActivity), false otherwise.
+     */
+    private fun handleComplianceNotificationTap(intent: Intent): Boolean {
+        // The server wraps everything in data.payload JSON string:
+        // data: { payload: '{"type":"USER_COMPLIANCE","userComplianceRecordId":"...","timestamp":"..."}' }
+        // When the tray notification is tapped in background, Android passes these as intent extras.
+        val rawPayload = intent.getStringExtra("payload") ?: ""
+        val payloadObj = if (rawPayload.isNotBlank()) {
+            try { org.json.JSONObject(rawPayload) } catch (_: Exception) { org.json.JSONObject() }
+        } else org.json.JSONObject()
+
+        val type = intent.getStringExtra("type")
+            ?: payloadObj.optString("type").takeIf { it.isNotBlank() }
+            ?: ""
+        val isCompliant = intent.getStringExtra("isComplaint")?.toBooleanStrictOrNull()
+            ?: (type.equals("USER_COMPLIANCE", ignoreCase = true) || type.equals("USER_COMPLAINCE", ignoreCase = true))
+        val complianceRecordId = intent.getStringExtra("userComplianceRecordId")
+            ?: intent.getStringExtra("complianceRecordId")
+            ?: payloadObj.optString("userComplianceRecordId").takeIf { it.isNotBlank() }
+            ?: payloadObj.optString("complianceRecordId").takeIf { it.isNotBlank() }
+            ?: ""
+
+        val isComplianceNotification = isCompliant &&
+            (type.equals("USER_COMPLIANCE", ignoreCase = true) ||
+             type.equals("USER_COMPLAINCE", ignoreCase = true) ||
+             complianceRecordId.isNotBlank())
+
+        if (!isComplianceNotification) return false
+
+        val title     = intent.getStringExtra("title")?.ifBlank { null }
+            ?: payloadObj.optString("title").takeIf { it.isNotBlank() }
+            ?: getString(R.string.complaint_alert_title)
+        val body      = intent.getStringExtra("body")?.ifBlank { null }
+            ?: payloadObj.optString("body").takeIf { it.isNotBlank() }
+            ?: payloadObj.optString("message").takeIf { it.isNotBlank() }
+            ?: getString(R.string.complaint_alert_message)
+        val timestamp = intent.getStringExtra("timestamp")
+            ?: payloadObj.optString("timestamp").takeIf { it.isNotBlank() }
+            ?: ""
+        val sentAtMs  = try {
+            if (timestamp.isNotBlank()) java.time.Instant.parse(timestamp).toEpochMilli() else 0L
+        } catch (_: Exception) { 0L }
+
+        // Increment badge (onMessageReceived was skipped in background)
+        SharedPref.getInstance(this)?.incrementComplianceBadgeCount()
+
+        val alertIntent = Intent(this, ComplaintAlertActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(ComplaintAlertActivity.EXTRA_TITLE, title)
+            putExtra(ComplaintAlertActivity.EXTRA_DESCRIPTION, body)
+            putExtra(ComplaintAlertActivity.EXTRA_SENT_AT_MS, sentAtMs)
+            putExtra(EXTRA_COMPLIANCE_RECORD_ID, complianceRecordId)
+        }
+        startActivity(alertIntent)
+        Log.i(TAG, "✅ Compliance notification tap handled → opening ComplaintAlertActivity (recordId=$complianceRecordId)")
+        return true
     }
 
     private fun handleComplaintIntent(intent: Intent) {
-        if (intent.getBooleanExtra(EXTRA_COMPLAINT_CHECK, false)) {
             Log.i(TAG, "✅ Complaint check detected in intent")
             // ✅ On cold start (onCreate), HomeFragment is not yet attached so a broadcast
             //    would be lost. We leave the extra on the intent so HomeFragment reads it
@@ -1049,14 +1118,17 @@ class MainActivity : AppCompatActivity() {
 
             if (isHomeVisible) {
                 Log.i(TAG, "✅ HomeFragment visible — sending complaint broadcast directly")
-                val broadcast = Intent(ACTION_PERFORM_COMPLAINT_CHECK)
+                val complianceRecordId = intent.getStringExtra(EXTRA_COMPLIANCE_RECORD_ID) ?: ""
+                val broadcast = Intent(ACTION_PERFORM_COMPLAINT_CHECK).apply {
+                    putExtra(EXTRA_COMPLIANCE_RECORD_ID, complianceRecordId)
+                }
                 androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this)
                     .sendBroadcast(broadcast)
             } else {
                 Log.i(TAG, "⏳ HomeFragment not yet visible — intent extra kept for onResume pickup")
             }
         }
-    }
+
 
     private fun checkPermissionsAndStartService() {
         Log.i(TAG, "checkPermissionsAndStartService: Checking permissions")

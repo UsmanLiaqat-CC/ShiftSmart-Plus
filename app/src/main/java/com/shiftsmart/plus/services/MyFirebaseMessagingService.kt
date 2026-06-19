@@ -21,7 +21,9 @@ import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeTable
 import com.shiftsmart.plus.models.UserModel
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
+import com.shiftsmart.plus.ui.activities.ComplaintAlertActivity
 import com.shiftsmart.plus.ui.activities.MainActivity
+import com.shiftsmart.plus.utils.ComplaintAlertNotification
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import org.json.JSONObject
@@ -48,8 +50,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         try {
-            Log.d("MyFirebaseMessagingService", "📬 FCM received at ${System.currentTimeMillis()}")
-            Log.d("MyFirebaseMessagingService", "FromBody: ${remoteMessage.notification?.body}  --> ${remoteMessage.notification?.title}")
+            Log.e("MyFirebaseMessagingService", "📬 FCM received at ${System.currentTimeMillis()}")
+            Log.e("MyFirebaseMessagingService", "📦 notification.title=${remoteMessage.notification?.title} | notification.body=${remoteMessage.notification?.body}")
+            Log.e("MyFirebaseMessagingService", "🗃️ data map (${remoteMessage.data.size} keys): ${remoteMessage.data.entries.joinToString { "${it.key}=${it.value}" }}")
 
             if (remoteMessage.notification != null) {
                 Log.w(
@@ -67,12 +70,27 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     Log.e("MyFirebaseMessagingService", "Invalid user payload JSON", it)
                     JSONObject()
                 }
-                Log.d("MyFirebaseMessagingService", "Message data payload: $jsonObject")
+
+                // ── Parse the nested `payload` field the server sends ──────────────────────
+                // Server structure: data: { payload: '{"type":"USER_COMPLIANCE","userComplianceRecordId":"...","timestamp":"..."}' }
+                val payloadJson = data["payload"]
+                val payloadObject = runCatching {
+                    if (payloadJson.isNullOrBlank()) JSONObject() else JSONObject(payloadJson)
+                }.getOrElse { JSONObject() }
+                Log.e("MyFirebaseMessagingService", "🗃️ data.payload parsed: $payloadObject")
 
                 // Prefer data payload fields so this also works for data-only FCM messages
                 // (required for reliable background delivery to onMessageReceived).
-                val title = data["title"] ?: remoteMessage.notification?.title ?: "New Update"
-                val body = data["body"] ?: remoteMessage.notification?.body ?: "You have a new notification."
+                // Fall back through: data["title"] → notification.title → payloadObject["title"] → default string
+                val title = data["title"]
+                    ?: remoteMessage.notification?.title
+                    ?: payloadObject.optString("title").takeIf { it.isNotBlank() }
+                    ?: getString(R.string.complaint_alert_title)
+                val body = data["body"]
+                    ?: remoteMessage.notification?.body
+                    ?: payloadObject.optString("body").takeIf { it.isNotBlank() }
+                    ?: payloadObject.optString("message").takeIf { it.isNotBlank() }
+                    ?: getString(R.string.complaint_alert_message)
 
                 // Global safety: if backend sends "Removed from Compliance" in title,
                 // always cancel complaint alarms immediately.
@@ -82,23 +100,70 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
                 try {
                     val isActive = data["isActive"]?.toBooleanStrictOrNull() ?: jsonObject.optBoolean("isActive")
-                    val notificationType = data["type"] ?: jsonObject.optString("type")
+                    // Type: check flat data → userJson → payloadObject
+                    val notificationType = data["type"]
+                        ?: jsonObject.optString("type").takeIf { it.isNotBlank() }
+                        ?: payloadObject.optString("type").takeIf { it.isNotBlank() }
+                        ?: ""
                     val complaintFlag = extractComplaintFlag(
                         data = data,
                         jsonObject = jsonObject,
+                        payloadObject = payloadObject,
                         title = title,
                         body = body
                     )
 
-                    // Fallback for payloads missing `type` but still carrying isComplaint state.
-                    if (notificationType.isBlank() && complaintFlag != null) {
-                        val sharedPref = SharedPref.getInstance(context = applicationContext)
-                        sharedPref?.saveIsComplaintActive(complaintFlag)
-                        if (!complaintFlag) {
-                            val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-                            notificationManager.cancel(9110)
+                Log.e("MyFirebaseMessagingService", "🔍 title='$title' | body='$body' | type='$notificationType' | complaintFlag=$complaintFlag")
+
+                    // ── Compliance detection ──────────────────────────────────────────────────
+                    // Detect compliance notification even when `type` or `isCompliant` are absent,
+                    // using presence of compliance record ID or title/body keywords as signals.
+                    val hasComplianceRecordId =
+                        !data["userComplianceRecordId"].isNullOrBlank() ||
+                        !data["complianceRecordId"].isNullOrBlank() ||
+                        payloadObject.optString("userComplianceRecordId").isNotBlank() ||
+                        payloadObject.optString("complianceRecordId").isNotBlank()
+                    val textLower = "$title $body".lowercase()
+                    val isComplianceByText = textLower.contains("compliance") &&
+                        !textLower.contains("removed") && !textLower.contains("disabled")
+
+                    val detectedAsCompliance =
+                        notificationType.equals("USER_COMPLAINCE", ignoreCase = true) ||
+                        notificationType.equals("USER_COMPLIANCE", ignoreCase = true) ||
+                        hasComplianceRecordId ||
+                        (isComplianceByText && complaintFlag != false)
+
+                    Log.e("MyFirebaseMessagingService", "🔎 hasComplianceRecordId=$hasComplianceRecordId | isComplianceByText=$isComplianceByText | detectedAsCompliance=$detectedAsCompliance")
+
+                    if (detectedAsCompliance) {
+                        if (complaintFlag == false) {
+                            // Compliance was explicitly cancelled
+                            val sharedPref = SharedPref.getInstance(context = applicationContext)
+                            sharedPref?.saveIsComplaintActive(false)
+                            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                            nm.cancel(9110)
+                            Log.e("MyFirebaseMessagingService", "Compliance cancelled (isComplaint=false)")
+                        } else {
+                            // Active compliance — increment badge and show full-screen alert
+                            val sharedPref = SharedPref.getInstance(context = applicationContext)
+                            sharedPref?.saveIsComplaintActive(true)
+                            sharedPref?.incrementComplianceBadgeCount()
+                            sharedPref?.saveLastComplianceNotificationTime(System.currentTimeMillis())
+                            androidx.localbroadcastmanager.content.LocalBroadcastManager
+                                .getInstance(applicationContext)
+                                .sendBroadcast(android.content.Intent(com.shiftsmart.plus.ui.activities.MainActivity.ACTION_COMPLIANCE_BADGE_UPDATED))
+                            val complianceRecordId = data["userComplianceRecordId"]
+                                ?: data["complianceRecordId"]
+                                ?: payloadObject.optString("userComplianceRecordId").takeIf { it.isNotBlank() }
+                                ?: payloadObject.optString("complianceRecordId").takeIf { it.isNotBlank() }
+                                ?: ""
+                            val sentAtMs = parseIsoTimestamp(
+                                data["timestamp"] ?: payloadObject.optString("timestamp").takeIf { it.isNotBlank() }
+                            )
+                            showComplianceNotification(title, body, complianceRecordId, sentAtMs)
+                            Log.e("MyFirebaseMessagingService", "✅ Compliance: badge incremented, ComplaintAlertActivity notification shown")
                         }
-                        Log.i("MyFirebaseMessagingService", "Fallback complaint sync from payload without type: isComplaint=$complaintFlag")
+                        return@let  // handled — skip the type-based branches below
                     }
 
                     if (notificationType==NotificationType.REMINDER.name || notificationType==NotificationType.SHIFT_START.name) {
@@ -207,6 +272,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                             sharedPref?.incrementComplianceBadgeCount()
                             sharedPref?.saveLastComplianceNotificationTime(System.currentTimeMillis())
                             Log.i("MyFirebaseMessagingService", "✅ Compliance badge incremented")
+                            // Notify HomeFragment in real-time so the badge updates immediately
+                            // if the screen is currently visible.
+                            androidx.localbroadcastmanager.content.LocalBroadcastManager
+                                .getInstance(applicationContext)
+                                .sendBroadcast(android.content.Intent(com.shiftsmart.plus.ui.activities.MainActivity.ACTION_COMPLIANCE_BADGE_UPDATED))
                         } else {
                             // ✅ IMMEDIATELY cancel alarm (no user tap needed)
                             AlarmScheduler.cancelComplaintAlarm(applicationContext)
@@ -218,21 +288,15 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                         }
                     }
 
-                    // 🔔 Show notification (for foreground and as system tray entry when backgrounded)
-                    // For complaint notifications, include data so system can process even if closed
-                    if (notificationType == NotificationType.USER_COMPLAINCE.name && complaintFlag != null) {
-                        val complaintData = ComplaintNotificationData(
-                            userJson = userJson,
-                            isComplaint = complaintFlag,
-                            type = notificationType
-                        )
-                        showNotification(
-                            title,
-                            "Complaint status updated: ${if (complaintFlag) "ENABLED" else "DISABLED"} (Auto-scheduled)",
-                            complaintData
-                        )
-                        Log.i("MyFirebaseMessagingService", "📢 Complaint notification shown with auto-action data")
-                    } else {
+                    // 🔔 Show notification
+                    if (notificationType == NotificationType.USER_COMPLAINCE.name && complaintFlag == true) {
+                        // Active compliance → tap opens ComplaintAlertActivity with real content
+                        val complianceRecordId = data["userComplianceRecordId"]
+                            ?: data["complianceRecordId"] ?: ""
+                        val sentAtMs = parseIsoTimestamp(data["timestamp"])
+                        showComplianceNotification(title, body, complianceRecordId, sentAtMs)
+                        Log.i("MyFirebaseMessagingService", "📢 Compliance notification shown → ComplaintAlertActivity")
+                    } else if (notificationType != NotificationType.USER_COMPLAINCE.name) {
                         showNotification(title, body)
                     }
 
@@ -247,6 +311,79 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d("MyFirebaseMessagingService", "Wake lock released")
             }
         }
+    }
+
+    private fun showComplianceNotification(
+        title: String,
+        body: String,
+        complianceRecordId: String,
+        sentAtMs: Long
+    ) {
+        val channelId = "user_updates_channel"
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId, "New Notification", NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Channel for user update notifications"
+                setSound(
+                    android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                    android.media.AudioAttributes.Builder()
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .build()
+                )
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 1000, 500, 1000)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+                setShowBadge(true)
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val alertIntent = Intent(this, ComplaintAlertActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(ComplaintAlertActivity.EXTRA_TITLE, title)
+            putExtra(ComplaintAlertActivity.EXTRA_DESCRIPTION, body)
+            putExtra(ComplaintAlertActivity.EXTRA_SENT_AT_MS, sentAtMs)
+            putExtra(MainActivity.EXTRA_COMPLIANCE_RECORD_ID, complianceRecordId)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, System.currentTimeMillis().toInt(), alertIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(R.drawable.app_logo)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
+            .setVibrate(longArrayOf(0, 1000, 500, 1000))
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(pendingIntent)
+            .setFullScreenIntent(pendingIntent, true)  // heads-up / lock-screen full-screen
+            .build()
+
+        notificationManager.notify(ComplaintAlertNotification.NOTIFICATION_ID, notification)
+    }
+
+    /** Parse an ISO-8601 UTC string ("2026-06-19T09:36:59.678Z") to epoch milliseconds, or 0 on failure. */
+    private fun parseIsoTimestamp(iso: String?): Long {
+        if (iso.isNullOrBlank()) return 0L
+        return try {
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            sdf.parse(iso)?.time ?: run {
+                // Retry without milliseconds
+                val sdf2 = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+                sdf2.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                sdf2.parse(iso)?.time ?: 0L
+            }
+        } catch (e: Exception) { 0L }
     }
 
     private fun showNotification(title: String, message: String, complaintData: ComplaintNotificationData? = null) {
@@ -364,12 +501,23 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     private fun extractComplaintFlag(
         data: Map<String, String>,
         jsonObject: JSONObject,
+        payloadObject: JSONObject = JSONObject(),
         title: String,
         body: String
     ): Boolean? {
         data["isComplaint"]?.toBooleanStrictOrNull()?.let { return it }
         if (jsonObject.has("isComplaint")) {
             return jsonObject.optBoolean("isComplaint")
+        }
+        if (payloadObject.has("isComplaint")) {
+            return payloadObject.optBoolean("isComplaint")
+        }
+
+        // If the payload type is USER_COMPLIANCE/USER_COMPLAINCE treat as active compliance
+        val payloadType = payloadObject.optString("type")
+        if (payloadType.equals("USER_COMPLIANCE", ignoreCase = true) ||
+            payloadType.equals("USER_COMPLAINCE", ignoreCase = true)) {
+            return true
         }
 
         // Defensive fallback for backends that only send complaint state in text.

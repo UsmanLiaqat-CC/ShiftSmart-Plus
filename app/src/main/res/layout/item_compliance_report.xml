@@ -10,7 +10,7 @@
         android:layout_marginTop="6dp"
         android:layout_marginBottom="6dp"
         app:cardCornerRadius="10dp"
-        app:cardElevation="3dp"
+        app:cardElevation="2dp"
         app:strokeWidth="0dp"
         android:clickable="true"
         android:focusable="true"
@@ -22,85 +22,106 @@
             android:orientation="vertical"
             android:padding="14dp">
 
-            <!-- Title row -->
+            <!-- Row 1: title + description + ack status badge (top-right) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:gravity="top">
 
-                <TextView
-                    android:id="@+id/title_tv"
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:textSize="15sp"
-                    android:textStyle="bold"
-                    android:textColor="#1A1A1A"
-                    android:text="Compliance Alert" />
+                    android:orientation="vertical">
 
-                <TextView
-                    android:id="@+id/compliance_type_tv"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="4dp"
-                    android:paddingBottom="4dp"
-                    android:textSize="11sp"
-                    android:textColor="#FFFFFF"
-                    android:background="@drawable/bg_compliance_type"
-                    android:text="General" />
-            </LinearLayout>
+                    <TextView
+                        android:id="@+id/title_tv"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#111111"
+                        android:text="Compliance Title" />
 
-            <!-- Message -->
-            <TextView
-                android:id="@+id/message_tv"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
-                android:textColor="#555555"
-                android:lineSpacingMultiplier="1.2"
-                android:text="Compliance notification message appears here." />
+                    <TextView
+                        android:id="@+id/message_tv"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="3dp"
+                        android:textSize="13sp"
+                        android:textColor="#555555"
+                        android:lineSpacingMultiplier="1.3"
+                        android:text="Compliance notification message."
+                        android:visibility="gone" />
 
-            <!-- Divider -->
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="10dp"
-                android:layout_marginBottom="10dp"
-                android:background="#F0F0F0" />
-
-            <!-- Bottom row: ack status + time -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/ack_status_tv"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="4dp"
-                    android:paddingBottom="4dp"
-                    android:textSize="11sp"
-                    android:textColor="#FFFFFF"
-                    android:background="@drawable/bg_not_acknowledged"
-                    android:text="Not Acknowledged" />
-
-                <TextView
-                    android:id="@+id/time_tv"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="5dp"
                     android:textSize="11sp"
-                    android:textColor="#999999"
-                    android:text="2 mins ago" />
+                    android:textColor="#FFFFFF"
+                    android:background="@drawable/bg_not_acknowledged"
+                    android:drawablePadding="4dp"
+                    android:gravity="center_vertical"
+                    android:text="Not Acknowledged" />
+            </LinearLayout>
+
+            <!-- Row 2: sent date with clock icon -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="10dp">
+
+                <ImageView
+                    android:layout_width="15dp"
+                    android:layout_height="15dp"
+                    android:src="@drawable/ic_clock"
+                    app:tint="#F77128"
+                    android:contentDescription="Sent time" />
+
+                <TextView
+                    android:id="@+id/sent_date_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:textSize="12sp"
+                    android:textColor="#777777"
+                    android:text="18 Jun 2026, 12:04 PM" />
+            </LinearLayout>
+
+            <!-- Row 3: response status with icon -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="4dp">
+
+                <ImageView
+                    android:id="@+id/response_icon_iv"
+                    android:layout_width="15dp"
+                    android:layout_height="15dp"
+                    android:src="@drawable/ic_circle_uncheck"
+                    android:contentDescription="Response status" />
+
+                <TextView
+                    android:id="@+id/response_status_tv"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:textSize="12sp"
+                    android:textColor="#777777"
+                    android:text="Not Responded" />
             </LinearLayout>
 
         </LinearLayout>

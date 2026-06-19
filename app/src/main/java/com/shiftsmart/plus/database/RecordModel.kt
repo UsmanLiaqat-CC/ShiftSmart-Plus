@@ -5,6 +5,8 @@ import androidx.room.TypeConverters
 import com.shiftsmart.plus.database.Converters
 import com.shiftsmart.plus.database.DbConstants
 import com.shiftsmart.plus.models.WifiModel
+import android.os.Build
+import com.shiftsmart.plus.BuildConfig
 
 /**
  * Created by Usman Liaqat on 28,Jan,2025
@@ -32,6 +34,10 @@ data class RecordModel(
     val batterySaver: Boolean,
     val batteryOptimization: Boolean,
     var wifi_list: List<WifiModel> = listOf<WifiModel>(),
-
+    val appVersion: String = BuildConfig.VERSION_NAME,
+    val deviceName: String = Build.MODEL,
+    val deviceType: String = "android",
+    val complianceRecordId: String = "",
+    val complianceStatus: String = "",
 )
 

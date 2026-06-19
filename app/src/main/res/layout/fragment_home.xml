@@ -647,6 +647,18 @@
                         android:visibility="gone"
                         />
 
+                    <!-- DEBUG ONLY: Delete all local records -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/debug_delete_records_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="[DEBUG] Delete All Local Records"
+                        android:backgroundTint="#B71C1C"
+                        android:textColor="@color/white"
+                        android:visibility="gone"
+                        />
+
                 </LinearLayout>
 
 

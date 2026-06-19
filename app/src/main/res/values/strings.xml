@@ -171,4 +171,5 @@
     <string name="complaint_alert_message">A compliant is active for your shift. Please resolve the compliance issue now.</string>
     <string name="complaint_alert_details">The SS+ System is not getting the required 5min updates from your device. Please press the Check-In Button and contact the SS+ Support team.</string>
     <string name="resolve_compliance">Resolve Compliance</string>
+    <string name="acknowledge">Acknowledge</string>
 </resources>

@@ -8,7 +8,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.shiftsmart.plus.R
 import com.shiftsmart.plus.models.AttendaceResponseModel
+import com.shiftsmart.plus.models.ComplianceDateRequest
 import com.shiftsmart.plus.models.DataRequest
+import com.shiftsmart.plus.models.FieldWorkerComplianceResponse
 import com.shiftsmart.plus.models.RecordRequest
 import com.shiftsmart.plus.models.RecordsResponseModel
 import com.shiftsmart.plus.models.TimeSheetModel
@@ -19,6 +21,8 @@ import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.parseErrorBody
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -64,6 +68,9 @@ class MainViewModel @Inject constructor(
     private val _logoutResponse = MutableLiveData<Resource<UserModel>>()
     val logoutResponse: LiveData<Resource<UserModel>> get() = _logoutResponse
 
+    private val _complianceResponse = MutableLiveData<Resource<FieldWorkerComplianceResponse>>()
+    val complianceResponse: LiveData<Resource<FieldWorkerComplianceResponse>> get() = _complianceResponse
+
     val exceptionHandler = CoroutineExceptionHandler { coroutineContext, throwable ->
         _attendceRecordResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
         _sendDataResponse.value=Resource.Error("${application.getString(R.string.exception_handled)} ${throwable.localizedMessage}")
@@ -78,6 +85,28 @@ class MainViewModel @Inject constructor(
         CoroutineScope(Dispatchers.IO  + SupervisorJob() + exceptionHandler)
     }
 
+    /**
+     * Silently fetches the current user from /api/v1/user/me and updates SharedPreferences.
+     * No loading state or error UI is shown — failures are swallowed silently.
+     */
+    fun fetchAndUpdateUserSilently(token: String, sharedPref: SharedPref) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val response = repository.getMe(token)
+                if (response.isSuccessful) {
+                    response.body()?.data?.let { updatedUser ->
+                        sharedPref.saveUser(updatedUser)
+                        Log.i(TAG, "Silent user refresh: updated SharedPrefs for ${updatedUser._id}")
+                    }
+                } else {
+                    Log.w(TAG, "Silent user refresh failed: HTTP ${response.code()}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Silent user refresh error: ${e.localizedMessage}")
+            }
+        }
+    }
+
     fun sendAppData(listDataRequest: List<DataRequest>, token: String, context: Context) {
         val authToken = SharedPref.getInstance(context)?.getToken() ?: ""
 
@@ -86,7 +115,9 @@ class MainViewModel @Inject constructor(
 
         parentScope.launch {
             try {
-                Log.i(TAG, "sendAppData() -> request request: ${listDataRequest}, token: $authToken")
+                val bodyJson = GsonBuilder().setPrettyPrinting().create().toJson(listDataRequest)
+                Log.i(TAG, "sendAppData() -> FULL REQUEST BODY:\n$bodyJson")
+                Log.i(TAG, "sendAppData() -> token: $authToken")
 
                 // Run the API call entirely on IO thread
                 val response = repository.sendData(listDataRequest, authToken)
@@ -453,7 +484,39 @@ class MainViewModel @Inject constructor(
                 }
             }
         }
+    }
 
+    fun getFieldWorkerCompliance(startDate: String, endDate: String, page: Int, limit: Int, token: String) {
+        _complianceResponse.value = Resource.Loading(application.getString(R.string.please_wait))
+        parentScope.launch {
+            try {
+                val request = ComplianceDateRequest(startDate, endDate)
+                Log.i(TAG, "getFieldWorkerCompliance URL: https://api.shiftsmartplus.com/api/v1/user-compliance/field-worker?page=$page&limit=$limit | body: startDate=$startDate, endDate=$endDate \n token: $token")
+
+                val response = withContext(Dispatchers.IO) {
+                    repository.getFieldWorkerCompliance(page, limit, request, token)
+                }
+                withContext(Dispatchers.Main) {
+                    Log.i(TAG, "getFieldWorkerCompliance: HTTP ${response.code()}, body=${response.body()}, errorBody=${response.errorBody()?.string()}")
+                    if (response.isSuccessful && response.body() != null) {
+                        val body = response.body()!!
+                        Log.i(TAG, "getFieldWorkerCompliance: SUCCESS — total=${body.meta.total}, items=${body.data.size}")
+                        _complianceResponse.value = Resource.Success(body)
+                    } else {
+                        _complianceResponse.value = Resource.Error("Error ${response.code()}: ${response.message()}")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    val errorMessage = when (e) {
+                        is IOException -> application.getString(R.string.network_error_please_check_your_internet_connection)
+                        is HttpException -> application.getString(R.string.http_error, e.message())
+                        else -> application.getString(R.string.unknown_error, e.localizedMessage)
+                    }
+                    _complianceResponse.value = Resource.Error(errorMessage)
+                }
+            }
+        }
     }
 
 }

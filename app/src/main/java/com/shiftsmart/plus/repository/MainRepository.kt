@@ -1,5 +1,6 @@
 package com.shiftsmart.plus.repository
 
+import com.shiftsmart.plus.models.ComplianceDateRequest
 import com.shiftsmart.plus.models.LoginRequest
 import com.shiftsmart.plus.models.DataRequest
 import com.shiftsmart.plus.models.RecordRequest
@@ -19,4 +20,8 @@ class MainRepository @Inject constructor(private val retrofitService: ApiService
     suspend fun getUserById(user_id: String,token:String) = retrofitService.getUserById(id = user_id, authToken = "Bearer $token")
     suspend fun getTimeSheet(user_id: String) = retrofitService.timeSheet(id = user_id)
     suspend fun loginUser(loginRequest: LoginRequest) = retrofitService.login(loginRequest = loginRequest)
+
+    suspend fun getMe(token: String) = retrofitService.getMe(authToken = "Bearer $token")
+    suspend fun getFieldWorkerCompliance(page: Int, limit: Int, request: ComplianceDateRequest, token: String) =
+        retrofitService.getFieldWorkerCompliance(page, limit, request, "Bearer $token")
 }

@@ -11,6 +11,8 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.location.LocationManager
 import android.os.Build
+import com.shiftsmart.plus.BuildConfig
+import com.shiftsmart.plus.config.AppConfig
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -120,6 +122,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     private lateinit var permissionHandler: PermissionHandler
 
     private var btnStatus: String = ""
+    private var currentComplianceRecordId: String = ""
 
     private var isSyncPressed: Boolean = false
     private var isComplaintPressed: Boolean = false
@@ -640,6 +643,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         Log.i(TAG, "onResume: HomeFragment")
         setChecksData()
         updateNotificationBadge()
+        // Silently refresh user data from server whenever HomeFragment becomes visible
+        if (Utils.isInternetAvailable(requireContext())) fetchAndUpdateUserSilently()
+        // Subscribe to the user's FCM topic if not already subscribed
+        subscribeToUserTopicIfNeeded()
 
         // If complaint was removed while app was backgrounded, ensure stale watchdog is disarmed.
         if (!isComplaintCurrentlyActive()) {
@@ -651,6 +658,8 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         if (!hasHandledComplaintIntent && requireActivity().intent.getBooleanExtra(MainActivity.EXTRA_COMPLAINT_CHECK, false)) {
             Log.i(TAG, "✅ Complaint check intent detected in HomeFragment")
             hasHandledComplaintIntent = true  // Mark as handled
+            currentComplianceRecordId = requireActivity().intent.getStringExtra(MainActivity.EXTRA_COMPLIANCE_RECORD_ID) ?: ""
+            Log.i(TAG, "📋 complianceRecordId from intent: $currentComplianceRecordId")
             clearComplaintIntentFlag()
             executeComplaintButtonAction()
         }
@@ -672,6 +681,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         // ✅ Register logout broadcast receiver using LocalBroadcastManager
         registerLogoutReceiverIfNeeded()
         registerComplaintReceiverIfNeeded()
+        registerBadgeReceiverIfNeeded()
     }
 
     override fun onStop() {
@@ -685,6 +695,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering logout broadcast receiver: ${e.message}")
         }
+        unregisterBadgeReceiverIfNeeded()
 
         // ✅ Complaint receiver is intentionally NOT unregistered in onStop.
         // It uses LocalBroadcastManager and is needed to handle the in-process broadcast
@@ -738,8 +749,40 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     private val complaintBroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             Log.i(TAG, "✅ Complaint broadcast received in HomeFragment")
+            currentComplianceRecordId = intent?.getStringExtra(MainActivity.EXTRA_COMPLIANCE_RECORD_ID) ?: ""
+            Log.i(TAG, "📋 complianceRecordId from broadcast: $currentComplianceRecordId")
             executeComplaintButtonAction()
         }
+    }
+
+    /** Receiver that updates the notification badge in real-time when a USER_COMPLIANCE FCM arrives. */
+    private var isBadgeReceiverRegistered = false
+    private val complianceBadgeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            Log.i(TAG, "🔔 Compliance badge broadcast received — refreshing badge")
+            updateNotificationBadge()
+        }
+    }
+
+    private fun registerBadgeReceiverIfNeeded() {
+        if (isBadgeReceiverRegistered) return
+        try {
+            val filter = IntentFilter(MainActivity.ACTION_COMPLIANCE_BADGE_UPDATED)
+            androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(requireContext())
+                .registerReceiver(complianceBadgeReceiver, filter)
+            isBadgeReceiverRegistered = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error registering badge receiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterBadgeReceiverIfNeeded() {
+        if (!isBadgeReceiverRegistered) return
+        try {
+            androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(requireContext())
+                .unregisterReceiver(complianceBadgeReceiver)
+        } catch (_: Exception) {}
+        isBadgeReceiverRegistered = false
     }
 
     private fun executeComplaintButtonAction() {
@@ -846,6 +889,34 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
     }
 
+    /** Silently calls /user/me and refreshes user data in SharedPreferences. No UI is shown. */
+    private fun fetchAndUpdateUserSilently() {
+        val sharedPref = SharedPref.getInstance(requireContext()) ?: return
+        val token = sharedPref.getToken() ?: return
+        if (token.isBlank()) return
+        mainViewModel.fetchAndUpdateUserSilently(token, sharedPref)
+    }
+
+    /**
+     * Subscribes to the current user's FCM topic (their user ID) if not already subscribed.
+     * Safe to call repeatedly — it only calls [FirebaseMessaging.subscribeToTopic] once per user ID.
+     */
+    private fun subscribeToUserTopicIfNeeded() {
+        val sharedPref = SharedPref.getInstance(requireContext()) ?: return
+        val userId = sharedPref.getUser()?._id ?: return
+        if (userId.isBlank()) return
+        if (sharedPref.getSubscribedFcmUserId() == userId) return   // already subscribed
+        com.google.firebase.messaging.FirebaseMessaging.getInstance()
+            .subscribeToTopic(userId)
+            .addOnSuccessListener {
+                sharedPref.saveSubscribedFcmUserId(userId)
+                Log.i(TAG, "✅ FCM subscribed to topic: $userId")
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "⚠️ FCM topic subscribe failed: ${e.localizedMessage}")
+            }
+    }
+
     private fun setUpClickListeners() {
 
         mBinding.menuBtn.setOnClickListener {
@@ -871,6 +942,26 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
             // All permissions granted, proceed with sync
             performSyncAction()
+        }
+
+        // Debug-only: show delete button and handle click
+        if (AppConfig.IS_DEBUG_MODE) {
+            mBinding.debugDeleteRecordsBtn.visibility = View.VISIBLE
+            mBinding.debugDeleteRecordsBtn.setOnClickListener {
+                AlertDialog.Builder(requireContext())
+                    .setTitle("[DEBUG] Delete All Records")
+                    .setMessage("This will permanently delete ALL local attendance records from the database. Continue?")
+                    .setPositiveButton("Delete") { _, _ ->
+                        CoroutineScope(Dispatchers.IO).launch {
+                            dao.deleteAllRecords()
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "All local records deleted", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
         }
 
         mBinding.arrivalBtn.setOnClickListener {
@@ -1517,6 +1608,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                         user?.let { itit ->
                             Log.i(TAG, "callApiData: User found: ${itit.name}")
                             val randomUid = Utils.generateRandomUuid()
+                            // Capture compliance fields and reset state before async work
+                            val complianceId = if (isComplaintPressed) currentComplianceRecordId else ""
+                            val complianceStatusVal = if (isComplaintPressed) "acknowledged" else ""
+                            if (isComplaintPressed) currentComplianceRecordId = ""
                             val record = RecordModel(
                                 uuid = randomUid,
                                 user_id = itit._id,
@@ -1533,7 +1628,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                 notification = Utils.isNotificationPermissionGranted(requireContext()),
                                 batterySaver = !Utils.isBatterySaverOn(requireContext()),
                                 batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
-                                wifi_list = wifiList
+                                wifi_list = wifiList,
+                                deviceName = Build.MODEL,
+                                appVersion = BuildConfig.VERSION_NAME,
+                                deviceType = "android",
+                                complianceRecordId = complianceId,
+                                complianceStatus = complianceStatusVal
                             )
                             if (Utils.isInternetAvailable(requireContext())) {
 
@@ -1696,7 +1796,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                             notification = Utils.isNotificationPermissionGranted(requireContext()),
                             batterySaver = !Utils.isBatterySaverOn(requireContext()),
                             batteryOptimization = !Utils.isBatteryOptimizationOff(requireContext()),
-                            wifi_list = wifiList
+                            wifi_list = wifiList,
+                            deviceName = Build.MODEL,
+                            appVersion = BuildConfig.VERSION_NAME,
+                            deviceType = "android"
                         )
                         if (Utils.isInternetAvailable(requireContext())) {
 
@@ -2144,7 +2247,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                     notification = nextRecord.notification,
                     batterySaver = nextRecord.batterySaver,
                     batteryOptimization = nextRecord.batteryOptimization,
-                    wifi_list = nextRecord.wifi_list
+                    wifi_list = nextRecord.wifi_list,
+                    deviceName = nextRecord.deviceName,
+                    appVersion = nextRecord.appVersion,
+                    deviceType = nextRecord.deviceType
                 )
 
                 dummyRecords.add(dummyRecord)

@@ -88,4 +88,7 @@ interface DBDao {
     @Query("SELECT * FROM issues WHERE userId = :uId ORDER BY timestamp ASC")
     suspend fun getAllIssues(uId: String): List<IssueModel>
 
+    @Query("SELECT complianceRecordId FROM record WHERE user_id = :userId AND complianceRecordId != '' AND complianceStatus = 'acknowledged'")
+    suspend fun getAcknowledgedComplianceIds(userId: String): List<String>
+
 }

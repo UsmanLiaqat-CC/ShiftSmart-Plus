@@ -21,6 +21,7 @@ class SharedPref(private val ctx: Context) {
     private val IS_COMPLAINT_ACTIVE = "is_complaint_active"
     private val COMPLIANCE_BADGE_COUNT = "compliance_badge_count"
     private val LAST_COMPLIANCE_NOTIFICATION_TIME = "last_compliance_notification_time"
+    private val SUBSCRIBED_FCM_USER_ID = "subscribed_fcm_user_id"
 
     // Save Token
     fun saveToken(token: String?) {
@@ -189,6 +190,15 @@ class SharedPref(private val ctx: Context) {
 
     fun getLastComplianceNotificationTime(): Long =
         sharedPreferences.getLong(LAST_COMPLIANCE_NOTIFICATION_TIME, 0L)
+
+    /** Returns the user ID that is currently subscribed to an FCM topic, or null if none. */
+    fun getSubscribedFcmUserId(): String? =
+        sharedPreferences.getString(SUBSCRIBED_FCM_USER_ID, null)
+
+    /** Persists the user ID that has been subscribed so we can skip redundant subscribe calls. */
+    fun saveSubscribedFcmUserId(userId: String) {
+        sharedPreferences.edit().putString(SUBSCRIBED_FCM_USER_ID, userId).apply()
+    }
 
 
     // 🔐 Save fingerprint enable/disable state
