@@ -16,6 +16,7 @@ import com.shiftsmart.plus.config.AppConfig
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.net.Uri
 import android.provider.Settings
 import android.util.Log
 import androidx.fragment.app.Fragment
@@ -95,6 +96,11 @@ import kotlin.toString
 @AndroidEntryPoint
 class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
+    companion object {
+        // Persists across fragment recreations for the whole app process.
+        // Resets only when the app process is killed — so the dialog shows at most once per session.
+        private var hasPromptedNotificationPermission: Boolean = false
+    }
 
     private val TAG = "HomeFragment"
     private lateinit var mBinding: FragmentHomeBinding
@@ -625,16 +631,32 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     private fun onPermissionsDenied(deniedPermissions: List<String>) {
         Log.i(TAG, "❌ Permissions denied: $deniedPermissions")
 
-        // PermissionHandler already handled showing dialogs and opening settings
-        // Just clear pending action if user canceled the entire permission flow
-        // Note: We don't clear pendingAction here because user might still grant permissions
-        // from settings later. Only clear when user explicitly cancels.
-
-        // Optionally show a subtle message (not a dialog to avoid overlap)
         val message = permissionHandler.getDeniedPermissionsMessage(deniedPermissions)
         if (message.isNotEmpty()) {
-            // Just log it, PermissionHandler already showed dialogs
             Log.i(TAG, "Permission message: $message")
+        }
+
+        // If notification is the only denied permission and the system will no longer show
+        // the dialog ("Don't ask again" selected), guide the user to app Settings.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            deniedPermissions.size == 1 &&
+            deniedPermissions.contains(Manifest.permission.POST_NOTIFICATIONS) &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(
+                requireActivity(), Manifest.permission.POST_NOTIFICATIONS
+            )
+        ) {
+            Log.i(TAG, "🔔 Notification permanently denied — prompting to open Settings")
+            AlertDialog.Builder(requireContext())
+                .setTitle(getString(R.string.post_notification))
+                .setMessage(getString(R.string.please_allow_enable_post_notification))
+                .setPositiveButton(getString(R.string.go_to_settings)) { _, _ ->
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", requireContext().packageName, null)
+                    }
+                    startActivity(intent)
+                }
+                .setNegativeButton(getString(R.string.cancel), null)
+                .show()
         }
     }
 
@@ -664,9 +686,14 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             executeComplaintButtonAction()
         }
 
+        // Prompt for notification permission once if not yet granted
+        promptNotificationPermissionIfNeeded()
+
         // Check if user returned from settings and granted permissions
-        if (pendingAction != null && permissionHandler.hasAllPermissions()) {
-            Log.i(TAG, "✅ User returned from settings with permissions granted, executing pending action")
+        // Execute pending action as long as critical (location) permissions are now satisfied,
+        // even if POST_NOTIFICATIONS is still denied.
+        if (pendingAction != null && permissionHandler.hasCriticalPermissions()) {
+            Log.i(TAG, "✅ User returned from settings with critical permissions granted, executing pending action")
             val action = pendingAction
             pendingAction = null
             action?.invoke()
@@ -688,6 +715,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         super.onStop()
         gpsStatusMonitor.removeListener()
         gpsStatusMonitor.stopMonitoring()
+
+        // Reset so the notification prompt is shown again next time the user opens HomeFragment
+        hasPromptedNotificationPermission = false
 
         // ✅ Unregister logout broadcast receiver from LocalBroadcastManager
         try {
@@ -894,6 +924,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         val sharedPref = SharedPref.getInstance(requireContext()) ?: return
         val token = sharedPref.getToken() ?: return
         if (token.isBlank()) return
+        Log.i(TAG, "👤 HomeFragment: calling /me API to refresh user data")
         mainViewModel.fetchAndUpdateUserSilently(token, sharedPref)
     }
 
@@ -965,9 +996,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-            // Check all permissions before arrival action
-            if (!permissionHandler.hasAllPermissions()) {
-                Log.i(TAG, "⚠️ Arrival button: Missing permissions, requesting...")
+            // Arrival only needs critical (location) permissions — notification denial must not block it
+            if (!permissionHandler.hasCriticalPermissions()) {
+                Log.i(TAG, "⚠️ Arrival button: Missing critical permissions, requesting...")
                 pendingAction = {
                     performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                         arrivalButtonPressed()
@@ -977,7 +1008,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                 return@setOnClickListener
             }
 
-            // All permissions granted, proceed with fingerprint check and arrival
+            // Critical permissions granted, proceed with fingerprint check and arrival
             performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                 arrivalButtonPressed()
             }
@@ -985,9 +1016,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.departBtn.setOnClickListener {
-            // Check all permissions before departure action
-            if (!permissionHandler.hasAllPermissions()) {
-                Log.i(TAG, "⚠️ Departure button: Missing permissions, requesting...")
+            // Departure only needs critical (location) permissions — notification denial must not block it
+            if (!permissionHandler.hasCriticalPermissions()) {
+                Log.i(TAG, "⚠️ Departure button: Missing critical permissions, requesting...")
                 pendingAction = {
                     performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                         departireButtonPressed()
@@ -997,15 +1028,15 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                 return@setOnClickListener
             }
 
-            // All permissions granted, proceed with fingerprint check and departure
+            // Critical permissions granted, proceed with fingerprint check and departure
             performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                 departireButtonPressed()
             }
         }
 
         mBinding.checkinComplaintBtn.setOnClickListener {
-            if (!permissionHandler.hasAllPermissions()) {
-                Log.i(TAG, "⚠️ Complaint button: Missing permissions, requesting...")
+            if (!permissionHandler.hasCriticalPermissions()) {
+                Log.i(TAG, "⚠️ Complaint button: Missing critical permissions, requesting...")
                 pendingAction = {
                     performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                         complaintButtonPressed()
@@ -1115,6 +1146,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
 
     private fun arrivalButtonPressed() {
+        val shiftRunning = isServiceRunning(requireContext(), MyService::class.java)
+        Log.i(TAG, "🟢 Arrival button pressed — shift service running: $shiftRunning")
+//        if (!shiftRunning) {
+//            Log.w(TAG, "⚠️ Arrival pressed while shift is OFF (service not running)")
+//            Toast.makeText(requireContext(), getString(R.string.shift_inactive_recording_anyway), Toast.LENGTH_SHORT).show()
+//        }
         btnStatus = StatusEnum.arrival.name
         setChecksData()
         if (locationTrack.checkLocationPermissions()) {
@@ -1127,6 +1164,12 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
 
     private fun departireButtonPressed() {
+        val shiftRunning = isServiceRunning(requireContext(), MyService::class.java)
+        Log.i(TAG, "🔴 Departure button pressed — shift service running: $shiftRunning")
+//        if (!shiftRunning) {
+//            Log.w(TAG, "⚠️ Departure pressed while shift is OFF (service not running)")
+//            Toast.makeText(requireContext(), getString(R.string.shift_inactive_recording_anyway), Toast.LENGTH_SHORT).show()
+//        }
         btnStatus = StatusEnum.departure.name
         setChecksData()
         if (locationTrack.checkLocationPermissions()) {
@@ -1387,7 +1430,11 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
                                 }
 
                                 "offline" -> {
-                                    // If status is "offline", delete corresponding record from database
+                                    // If status is "offline", show message and delete corresponding record from database
+                                    Log.i(TAG, "setUpObserver: offline record — UUID=${attendance.UUID} message=${attendance.message}")
+                                    withContext(Dispatchers.Main) {
+                                        if (attendance.message.isNotEmpty()) showMessage(attendance.message)
+                                    }
                                     CoroutineScope(Dispatchers.IO).launch {
                                         val uuid = attendance.UUID // Get UUID from response
                                         // Find and delete records with this UUID
@@ -2084,6 +2131,38 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             // Battery optimization not disabled
             Utils.showSnackBar(getString(R.string.please_turn_off_battery_optimization_to_allow_run_app_in_background),mBinding.root)
 
+        }
+    }
+
+    private fun promptNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (Utils.isNotificationPermissionGranted(requireContext())) return
+        if (hasPromptedNotificationPermission) return
+
+        hasPromptedNotificationPermission = true
+
+        val shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+            requireActivity(), Manifest.permission.POST_NOTIFICATIONS
+        )
+
+        if (shouldShowRationale) {
+            // Denied once before (no "Don't ask again") — show in-app rationale first
+            Log.i(TAG, "🔔 Notification: denied once — showing rationale dialog")
+            AlertDialog.Builder(requireContext())
+                .setTitle(getString(R.string.post_notification))
+                .setMessage(getString(R.string.please_allow_enable_post_notification))
+                .setPositiveButton(getString(R.string.allow)) { _, _ ->
+                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                }
+                .setNegativeButton(getString(R.string.cancel), null)
+                .show()
+        } else {
+            // First time OR permanently denied — launch request directly.
+            // • First time: system dialog will appear.
+            // • Permanently denied: system silently returns DENIED → onPermissionsDenied
+            //   will then detect this and show the “Go to Settings” dialog.
+            Log.i(TAG, "🔔 Notification: requesting directly (first-time or re-check)")
+            permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
         }
     }
 

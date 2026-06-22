@@ -45,6 +45,24 @@ class PermissionHandler(
     }
 
     /**
+     * Check if the critical permissions for attendance actions are granted.
+     * This includes location (fine, coarse, background) but intentionally excludes
+     * POST_NOTIFICATIONS — arrival/departure should proceed even if notifications are denied.
+     */
+    fun hasCriticalPermissions(): Boolean {
+        val critical = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            critical.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+        return critical.all { permission ->
+            ContextCompat.checkSelfPermission(fragment.requireContext(), permission) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    /**
      * Check if basic login permissions are granted
      */
     fun hasBasicLoginPermissions(): Boolean {

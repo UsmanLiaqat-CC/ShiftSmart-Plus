@@ -76,9 +76,15 @@ class ComplaintAlertActivity : AppCompatActivity() {
         setContentView(binding.root)
         clearComplaintNotification()
 
-        val titleText = intent.getStringExtra(EXTRA_TITLE)
-        val descText  = intent.getStringExtra(EXTRA_DESCRIPTION)
+        val titleText = intent.getStringExtra(EXTRA_TITLE)?.trim().orEmpty()
+        val descText  = intent.getStringExtra(EXTRA_DESCRIPTION)?.trim().orEmpty()
         val sentAtMs  = intent.getLongExtra(EXTRA_SENT_AT_MS, 0L)
+
+        if (titleText.isBlank() || descText.isBlank()) {
+            Log.w(TAG, "Missing title/description in compliance full-screen intent")
+            finish()
+            return
+        }
 
         // Enforce 15-minute window when opened from a notification tap
         if (sentAtMs > 0L && System.currentTimeMillis() - sentAtMs > FIFTEEN_MINUTES_MS) {
@@ -87,8 +93,8 @@ class ComplaintAlertActivity : AppCompatActivity() {
             return
         }
 
-        binding.complaintTitle.text   = titleText?.ifBlank { null } ?: getString(R.string.complaint_alert_title)
-        binding.complaintMessage.text = descText?.ifBlank { null }  ?: getString(R.string.complaint_alert_message)
+        binding.complaintTitle.text   = titleText
+        binding.complaintMessage.text = descText
 
         // Hide the static details text and footer — replaced by dynamic title/description above
         binding.complaintDetails.visibility = View.GONE

@@ -91,4 +91,5 @@ interface DBDao {
     @Query("SELECT complianceRecordId FROM record WHERE user_id = :userId AND complianceRecordId != '' AND complianceStatus = 'acknowledged'")
     suspend fun getAcknowledgedComplianceIds(userId: String): List<String>
 
+
 }

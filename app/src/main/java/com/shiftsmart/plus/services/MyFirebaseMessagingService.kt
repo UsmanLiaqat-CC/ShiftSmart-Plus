@@ -17,6 +17,7 @@ import com.google.firebase.messaging.RemoteMessage
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.shiftsmart.plus.R
+import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.models.MultipleTimeTable
 import com.shiftsmart.plus.models.TimeTable
 import com.shiftsmart.plus.models.UserModel
@@ -26,6 +27,9 @@ import com.shiftsmart.plus.ui.activities.MainActivity
 import com.shiftsmart.plus.utils.ComplaintAlertNotification
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 enum class NotificationType {
@@ -36,6 +40,89 @@ enum class NotificationType {
 }
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
+
+    companion object {
+        private const val TAG = "MyFirebaseMsgService"
+    }
+
+    /**
+     * Called for ALL FCM messages regardless of app state (foreground, background, killed).
+     * We use this to handle USER_UPDATE payload updates in SharedPreferences before Firebase
+     * decides whether to call onMessageReceived (foreground) or show a system notification
+     * (background/killed). This ensures timetable & isActive are always updated from FCM payload.
+     */
+    override fun handleIntent(intent: android.content.Intent) {
+        try {
+            val userJson = intent.getStringExtra("user")
+            if (!userJson.isNullOrBlank()) {
+                val jsonObject = runCatching { JSONObject(userJson) }.getOrNull()
+                if (jsonObject != null) {
+                    val type = jsonObject.optString("type")
+                    if (type == NotificationType.USER_UPDATE.name) {
+                        Log.i(TAG, "🔔 handleIntent: USER_UPDATE detected — applying SharedPrefs update from FCM payload (all states)")
+                        applyUserUpdateFromPayload(jsonObject)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "handleIntent: unexpected error during USER_UPDATE processing", e)
+        }
+        super.handleIntent(intent)
+    }
+
+    /**
+     * Applies timetable, multipleTimeTables and isActive from a USER_UPDATE FCM data payload
+     * directly into SharedPreferences, then reschedules/stops alarms accordingly.
+     * Safe to call from any thread; no Activity context needed.
+     */
+    private fun applyUserUpdateFromPayload(jsonObject: JSONObject) {
+        val sharedPref = SharedPref.getInstance(applicationContext) ?: run {
+            Log.w(TAG, "applyUserUpdateFromPayload: SharedPref unavailable, skipping")
+            return
+        }
+        val user = sharedPref.getUser() ?: run {
+            Log.w(TAG, "applyUserUpdateFromPayload: no cached user in SharedPrefs, skipping")
+            return
+        }
+
+        val isActive = jsonObject.optBoolean("isActive", user.isActive)
+
+        val timetableJson = jsonObject.optJSONObject("timetable")?.toString()
+        val timetableModel = if (!timetableJson.isNullOrBlank()) {
+            runCatching { Gson().fromJson(timetableJson, TimeTable::class.java) }.getOrElse {
+                Log.w(TAG, "applyUserUpdateFromPayload: failed to parse timetable: ${it.message}")
+                user.timetable
+            }
+        } else user.timetable
+
+        val multiTimeTableJson = jsonObject.optJSONArray("multipleTimeTables")?.toString()
+        val multiTimeTableList: List<MultipleTimeTable> = if (!multiTimeTableJson.isNullOrBlank()) {
+            runCatching<List<MultipleTimeTable>> {
+                Gson().fromJson(
+                    multiTimeTableJson,
+                    object : TypeToken<List<MultipleTimeTable>>() {}.type
+                )
+            }.getOrElse {
+                Log.w(TAG, "applyUserUpdateFromPayload: failed to parse multipleTimeTables: ${it.message}")
+                user.multipleTimeTables ?: emptyList()
+            }
+        } else user.multipleTimeTables ?: emptyList()
+
+        user.isActive = isActive
+        user.timetable = timetableModel
+        user.multipleTimeTables = multiTimeTableList
+        sharedPref.saveUser(user)
+
+        Log.i(
+            TAG,
+            "✅ USER_UPDATE applied to SharedPrefs: isActive=$isActive | " +
+            "timetable=${timetableModel?.timeTableName} | " +
+            "multiTimeTables=${multiTimeTableList.size}"
+        )
+
+        // Reschedule or stop the shift service based on updated isActive state
+        handleUserFromNotification(applicationContext, user)
+    }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         // ✅ CRITICAL: Acquire wake lock IMMEDIATELY to ensure notification processing during Doze Mode
@@ -53,6 +140,19 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             Log.e("MyFirebaseMessagingService", "📬 FCM received at ${System.currentTimeMillis()}")
             Log.e("MyFirebaseMessagingService", "📦 notification.title=${remoteMessage.notification?.title} | notification.body=${remoteMessage.notification?.body}")
             Log.e("MyFirebaseMessagingService", "🗃️ data map (${remoteMessage.data.size} keys): ${remoteMessage.data.entries.joinToString { "${it.key}=${it.value}" }}")
+            Log.e(
+                "MyFirebaseMessagingService",
+                "📬 messageId=${remoteMessage.messageId} | from=${remoteMessage.from} | sentTime=${remoteMessage.sentTime} | ttl=${remoteMessage.ttl}"
+            )
+            val fullDataJson = JSONObject(remoteMessage.data as Map<*, *>).toString(2)
+            Log.e("MyFirebaseMessagingService", "🧾 full data payload JSON:\n$fullDataJson")
+
+            remoteMessage.notification?.let { notification ->
+                Log.e(
+                    "MyFirebaseMessagingService",
+                    "📦 full notification payload -> title=${notification.title}, body=${notification.body}, channelId=${notification.channelId}, clickAction=${notification.clickAction}, imageUrl=${notification.imageUrl}, sound=${notification.sound}"
+                )
+            } ?: Log.e("MyFirebaseMessagingService", "📦 full notification payload -> null (data-only push)")
 
             if (remoteMessage.notification != null) {
                 Log.w(
@@ -77,6 +177,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 val payloadObject = runCatching {
                     if (payloadJson.isNullOrBlank()) JSONObject() else JSONObject(payloadJson)
                 }.getOrElse { JSONObject() }
+                if (payloadJson.isNullOrBlank()) {
+                    Log.e("MyFirebaseMessagingService", "🗃️ data.payload raw: <empty>")
+                } else {
+                    Log.e("MyFirebaseMessagingService", "🗃️ data.payload raw: $payloadJson")
+                    Log.e("MyFirebaseMessagingService", "🗃️ data.payload pretty:\n${payloadObject.toString(2)}")
+                }
                 Log.e("MyFirebaseMessagingService", "🗃️ data.payload parsed: $payloadObject")
 
                 // Prefer data payload fields so this also works for data-only FCM messages
@@ -85,12 +191,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 val title = data["title"]
                     ?: remoteMessage.notification?.title
                     ?: payloadObject.optString("title").takeIf { it.isNotBlank() }
-                    ?: getString(R.string.complaint_alert_title)
+                    ?: ""
                 val body = data["body"]
                     ?: remoteMessage.notification?.body
                     ?: payloadObject.optString("body").takeIf { it.isNotBlank() }
                     ?: payloadObject.optString("message").takeIf { it.isNotBlank() }
-                    ?: getString(R.string.complaint_alert_message)
+                    ?: ""
 
                 // Global safety: if backend sends "Removed from Compliance" in title,
                 // always cancel complaint alarms immediately.
@@ -160,7 +266,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                             val sentAtMs = parseIsoTimestamp(
                                 data["timestamp"] ?: payloadObject.optString("timestamp").takeIf { it.isNotBlank() }
                             )
-                            showComplianceNotification(title, body, complianceRecordId, sentAtMs)
+                            if (title.isBlank() || body.isBlank() || complianceRecordId.isBlank()) {
+                                Log.w(
+                                    "MyFirebaseMessagingService",
+                                    "Skipping compliance full-screen notification: missing title/body/complianceRecordId"
+                                )
+                            } else {
+                                showComplianceNotification(title, body, complianceRecordId, sentAtMs)
+                            }
                             Log.e("MyFirebaseMessagingService", "✅ Compliance: badge incremented, ComplaintAlertActivity notification shown")
                         }
                         return@let  // handled — skip the type-based branches below
@@ -294,8 +407,15 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                         val complianceRecordId = data["userComplianceRecordId"]
                             ?: data["complianceRecordId"] ?: ""
                         val sentAtMs = parseIsoTimestamp(data["timestamp"])
-                        showComplianceNotification(title, body, complianceRecordId, sentAtMs)
-                        Log.i("MyFirebaseMessagingService", "📢 Compliance notification shown → ComplaintAlertActivity")
+                        if (title.isBlank() || body.isBlank() || complianceRecordId.isBlank()) {
+                            Log.w(
+                                "MyFirebaseMessagingService",
+                                "Skipping compliance full-screen notification: missing title/body/complianceRecordId"
+                            )
+                        } else {
+                            showComplianceNotification(title, body, complianceRecordId, sentAtMs)
+                            Log.i("MyFirebaseMessagingService", "📢 Compliance notification shown → ComplaintAlertActivity")
+                        }
                     } else if (notificationType != NotificationType.USER_COMPLAINCE.name) {
                         showNotification(title, body)
                     }

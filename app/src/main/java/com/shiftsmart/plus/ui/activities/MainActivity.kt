@@ -39,6 +39,7 @@ import com.shiftsmart.plus.R
 import com.shiftsmart.plus.databinding.ActivityMainBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.databinding.LogoutDialogBinding
+import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.periodicAction.PeriodicSyncWorkerManager
 import com.shiftsmart.plus.periodicAction.RestartWatchdogManager
@@ -60,6 +61,7 @@ import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.model.AppUpdateType
 import com.google.android.play.core.install.model.UpdateAvailability
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -1048,23 +1050,38 @@ class MainActivity : AppCompatActivity() {
      * Returns true if the tap was handled (opened ComplaintAlertActivity), false otherwise.
      */
     private fun handleComplianceNotificationTap(intent: Intent): Boolean {
-        // The server wraps everything in data.payload JSON string:
-        // data: { payload: '{"type":"USER_COMPLIANCE","userComplianceRecordId":"...","timestamp":"..."}' }
-        // When the tray notification is tapped in background, Android passes these as intent extras.
-        val rawPayload = intent.getStringExtra("payload") ?: ""
-        val payloadObj = if (rawPayload.isNotBlank()) {
-            try { org.json.JSONObject(rawPayload) } catch (_: Exception) { org.json.JSONObject() }
-        } else org.json.JSONObject()
+        // In killed/background states, Android can expose notification click fields
+        // under different keys depending on transport path/OEM behavior.
+        val rawPayload = findFirstStringExtra(
+            intent,
+            "payload",
+            "gcm.notification.payload",
+            "notification_payload",
+            "data"
+        ) ?: ""
+        val payloadObj = parseJsonObject(rawPayload)
+        val payloadDataObj = parseJsonObject(payloadObj.optString("data"))
 
-        val type = intent.getStringExtra("type")
+        val type = findFirstStringExtra(intent, "type", "notification_type")
             ?: payloadObj.optString("type").takeIf { it.isNotBlank() }
+            ?: payloadDataObj.optString("type").takeIf { it.isNotBlank() }
             ?: ""
-        val isCompliant = intent.getStringExtra("isComplaint")?.toBooleanStrictOrNull()
+
+        val isCompliant = findFirstStringExtra(intent, "isComplaint", "isCompliant")
+            ?.toBooleanStrictOrNull()
             ?: (type.equals("USER_COMPLIANCE", ignoreCase = true) || type.equals("USER_COMPLAINCE", ignoreCase = true))
-        val complianceRecordId = intent.getStringExtra("userComplianceRecordId")
-            ?: intent.getStringExtra("complianceRecordId")
+
+        val complianceRecordId = findFirstStringExtra(
+            intent,
+            "userComplianceRecordId",
+            "complianceRecordId",
+            "recordId",
+            EXTRA_COMPLIANCE_RECORD_ID
+        )
             ?: payloadObj.optString("userComplianceRecordId").takeIf { it.isNotBlank() }
             ?: payloadObj.optString("complianceRecordId").takeIf { it.isNotBlank() }
+            ?: payloadDataObj.optString("userComplianceRecordId").takeIf { it.isNotBlank() }
+            ?: payloadDataObj.optString("complianceRecordId").takeIf { it.isNotBlank() }
             ?: ""
 
         val isComplianceNotification = isCompliant &&
@@ -1074,15 +1091,60 @@ class MainActivity : AppCompatActivity() {
 
         if (!isComplianceNotification) return false
 
-        val title     = intent.getStringExtra("title")?.ifBlank { null }
+        val title = findFirstStringExtra(
+            intent,
+            "title",
+            "gcm.notification.title",
+            "gcm.n.title",
+            "notification_title",
+            "gcm.notification.android.title"
+        )
             ?: payloadObj.optString("title").takeIf { it.isNotBlank() }
-            ?: getString(R.string.complaint_alert_title)
-        val body      = intent.getStringExtra("body")?.ifBlank { null }
+            ?: payloadDataObj.optString("title").takeIf { it.isNotBlank() }
+            ?: ""
+
+        val body = findFirstStringExtra(
+            intent,
+            "body",
+            "message",
+            "gcm.notification.body",
+            "gcm.n.body",
+            "notification_body",
+            "gcm.notification.android.body"
+        )
             ?: payloadObj.optString("body").takeIf { it.isNotBlank() }
             ?: payloadObj.optString("message").takeIf { it.isNotBlank() }
-            ?: getString(R.string.complaint_alert_message)
-        val timestamp = intent.getStringExtra("timestamp")
+            ?: payloadDataObj.optString("body").takeIf { it.isNotBlank() }
+            ?: payloadDataObj.optString("message").takeIf { it.isNotBlank() }
+            ?: ""
+
+        if (complianceRecordId.isBlank()) {
+            Log.w(
+                TAG,
+                "Skipping compliance tap handling: missing complianceRecordId (type=$type)"
+            )
+            return false
+        }
+
+        // When FCM sends notification+data and the app is killed/background, onMessageReceived
+        // is NOT called and the notification block title/body are NOT delivered as intent extras
+        // on tap. Derive fallback strings from complianceType so ComplaintAlertActivity opens.
+        val complianceType = payloadObj.optString("complianceType").takeIf { it.isNotBlank() }
+            ?: payloadDataObj.optString("complianceType").takeIf { it.isNotBlank() }
+        val finalTitle = title.ifBlank { getString(R.string.compliance_alert_title) }
+        val finalBody = body.ifBlank {
+            if (!complianceType.isNullOrBlank())
+                getString(R.string.compliance_tap_fallback_body, complianceType.replaceFirstChar { it.uppercase() })
+            else
+                getString(R.string.compliance_alert_message)
+        }
+        if (title.isBlank() || body.isBlank()) {
+            Log.w(TAG, "No title/body in tap intent — using fallback (complianceType=$complianceType, recordId=$complianceRecordId)")
+        }
+
+        val timestamp = findFirstStringExtra(intent, "timestamp", "sentAt", "sent_at")
             ?: payloadObj.optString("timestamp").takeIf { it.isNotBlank() }
+            ?: payloadDataObj.optString("timestamp").takeIf { it.isNotBlank() }
             ?: ""
         val sentAtMs  = try {
             if (timestamp.isNotBlank()) java.time.Instant.parse(timestamp).toEpochMilli() else 0L
@@ -1093,14 +1155,33 @@ class MainActivity : AppCompatActivity() {
 
         val alertIntent = Intent(this, ComplaintAlertActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(ComplaintAlertActivity.EXTRA_TITLE, title)
-            putExtra(ComplaintAlertActivity.EXTRA_DESCRIPTION, body)
+            putExtra(ComplaintAlertActivity.EXTRA_TITLE, finalTitle)
+            putExtra(ComplaintAlertActivity.EXTRA_DESCRIPTION, finalBody)
             putExtra(ComplaintAlertActivity.EXTRA_SENT_AT_MS, sentAtMs)
             putExtra(EXTRA_COMPLIANCE_RECORD_ID, complianceRecordId)
         }
         startActivity(alertIntent)
         Log.i(TAG, "✅ Compliance notification tap handled → opening ComplaintAlertActivity (recordId=$complianceRecordId)")
         return true
+    }
+
+    private fun findFirstStringExtra(intent: Intent, vararg keys: String): String? {
+        for (key in keys) {
+            val value = intent.getStringExtra(key)?.trim()
+            if (!value.isNullOrBlank()) return value
+            val bundleValue = intent.extras?.get(key)?.toString()?.trim()
+            if (!bundleValue.isNullOrBlank()) return bundleValue
+        }
+        return null
+    }
+
+    private fun parseJsonObject(raw: String?): org.json.JSONObject {
+        if (raw.isNullOrBlank()) return org.json.JSONObject()
+        return try {
+            org.json.JSONObject(raw)
+        } catch (_: Exception) {
+            org.json.JSONObject()
+        }
     }
 
     private fun handleComplaintIntent(intent: Intent) {

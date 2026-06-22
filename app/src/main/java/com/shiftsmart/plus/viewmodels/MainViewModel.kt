@@ -92,17 +92,21 @@ class MainViewModel @Inject constructor(
     fun fetchAndUpdateUserSilently(token: String, sharedPref: SharedPref) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                Log.i(TAG, "👤 /me API: calling GET /user/me")
                 val response = repository.getMe(token)
+                Log.i(TAG, "👤 /me API: HTTP ${response.code()} isSuccessful=${response.isSuccessful}")
                 if (response.isSuccessful) {
-                    response.body()?.data?.let { updatedUser ->
+                    val body = response.body()
+                    Log.i(TAG, "👤 /me API response body: ${Gson().toJson(body)}")
+                    body?.data?.let { updatedUser ->
                         sharedPref.saveUser(updatedUser)
-                        Log.i(TAG, "Silent user refresh: updated SharedPrefs for ${updatedUser._id}")
-                    }
+                        Log.i(TAG, "👤 /me: updated SharedPrefs for userId=${updatedUser._id} name=${updatedUser.name} isActive=${updatedUser.isActive} isComplaint=${updatedUser.isComplaint}")
+                    } ?: Log.w(TAG, "👤 /me: response body or data was null")
                 } else {
-                    Log.w(TAG, "Silent user refresh failed: HTTP ${response.code()}")
+                    Log.w(TAG, "👤 /me API failed: HTTP ${response.code()} ${response.message()}")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Silent user refresh error: ${e.localizedMessage}")
+                Log.w(TAG, "👤 /me API error: ${e.localizedMessage}")
             }
         }
     }

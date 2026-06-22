@@ -6,7 +6,14 @@ import androidx.room.RoomDatabase
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-@Database(entities = [RecordModel::class, IssueModel::class], version = 15 , exportSchema = false)
+@Database(
+    entities = [
+        RecordModel::class,
+        IssueModel::class,
+    ],
+    version = 17,
+    exportSchema = false
+)
 abstract class ShiftSmartPlusDatabase : RoomDatabase() {
      abstract fun dbDao(): DBDao
     companion object {
