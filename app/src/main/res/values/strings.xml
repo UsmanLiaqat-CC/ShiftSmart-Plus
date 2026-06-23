@@ -76,6 +76,14 @@
     <string name="post_notification">Post Notification</string>
     <string name="please_allow_enable_post_notification">Please allow post notification to run foreground service</string>
     <string name="please_turn_off_battery_optimization_to_allow_run_app_in_background">Please turn off battery optimization to allow run app in background</string>
+
+    <!-- Permission required dialog strings -->
+    <string name="perm_both_title">Permissions Required</string>
+    <string name="perm_both_message">ShiftSmart Plus needs both <b>Location</b> and <b>Notification</b> permissions to track your shifts and keep you informed.\n\nPlease grant them in App Settings to ensure the app works correctly.</string>
+    <string name="perm_notification_only_title">Notification Permission Required</string>
+    <string name="perm_notification_only_message">ShiftSmart Plus needs <b>Notification</b> permission to run the foreground service and alert you about compliance events.\n\nPlease enable it in App Settings.</string>
+    <string name="perm_location_only_title">Location Permission Required</string>
+    <string name="perm_location_only_message">ShiftSmart Plus needs <b>Location</b> permission to track your attendance and verify your shift location.\n\nPlease grant it in App Settings.</string>
     <string name="fetching_location">Fetching location...</string>
     <string name="unable_to_fetch_location_please_try_again_later">Unable to fetch Location. Please move around to get better signal and then try again</string>
     <string name="unable_to_fetch_location">Unable to fetch Location. Please move around to get better signal and then try again</string>

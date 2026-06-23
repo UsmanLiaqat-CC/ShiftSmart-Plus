@@ -152,20 +152,9 @@ class ComplaintAlertActivity : AppCompatActivity() {
         when {
             fineGranted || coarseGranted -> fetchLocationAndSubmit()
             else -> {
-                // Show rationale then request
-                AlertDialog.Builder(this)
-                    .setTitle("Location Permission Needed")
-                    .setMessage("Your location is required to record the compliance acknowledgment.")
-                    .setPositiveButton("Grant") { _, _ ->
-                        locationPermLauncher.launch(
-                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        )
-                    }
-                    .setNegativeButton("Skip") { _, _ ->
-                        // Proceed without location (0,0)
-                        processAcknowledgment(0.0, 0.0)
-                    }
-                    .show()
+                // Location permission not granted — proceed immediately with 0.0, 0.0
+                Log.w(TAG, "⚠️ Acknowledge: location permission not granted, using 0.0, 0.0")
+                processAcknowledgment(0.0, 0.0)
             }
         }
     }

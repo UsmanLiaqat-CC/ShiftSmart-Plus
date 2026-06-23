@@ -268,13 +268,13 @@ class MyService : Service() {
         currentIntent = intent
         Log.i(TAG, "Service command received: ${intent?.action}")
 
-        // ✅ CRITICAL: Check if location permissions are granted before starting foreground service
-        if (!hasRequiredPermissions()) {
-            Log.e(TAG, "❌ Cannot start foreground service - missing required permissions")
-            Log.e(TAG, "   Location permissions must be granted before service can start")
-            stopSelf()
-            return START_NOT_STICKY
-        }
+//        // ✅ CRITICAL: Check if location permissions are granted before starting foreground service
+//        if (!hasRequiredPermissions()) {
+//            Log.e(TAG, "❌ Cannot start foreground service - missing required permissions")
+//            Log.e(TAG, "   Location permissions must be granted before service can start")
+//            stopSelf()
+//            return START_NOT_STICKY
+//        }
 
         val user = SharedPref.getInstance(this)?.getUser()
         val isInShift = if (user != null) attendanceSyncManager.shouldRunCheck(user) else false

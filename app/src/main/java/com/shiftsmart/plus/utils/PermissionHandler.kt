@@ -34,6 +34,63 @@ class PermissionHandler(
         permissionLauncher = launcher
     }
 
+    // ─── Permission-requestability helpers ───────────────────────────────────────
+
+    private fun getPrefs() = fragment.requireContext()
+        .getSharedPreferences("shiftsmart_perm_prefs", android.content.Context.MODE_PRIVATE)
+
+    private fun markPermissionsAsAsked(permissions: Array<String>) {
+        val editor = getPrefs().edit()
+        permissions.forEach { editor.putBoolean("asked_$it", true) }
+        editor.apply()
+    }
+
+    private fun wasPermissionAsked(permission: String): Boolean =
+        getPrefs().getBoolean("asked_$permission", false)
+
+    /**
+     * Returns true if the OS will still show a system dialog for [permission]:
+     *  - Never asked before (first time)                            → true
+     *  - Denied once, no "don't ask again" (rationale = true)       → true
+     *  - Permanently denied / "don't ask again" (rationale = false) → false
+     */
+    fun canRequestPermission(permission: String): Boolean {
+        if (ContextCompat.checkSelfPermission(fragment.requireContext(), permission)
+                == PackageManager.PERMISSION_GRANTED) return false
+        val askedBefore = wasPermissionAsked(permission)
+        val showRationale = fragment.shouldShowRequestPermissionRationale(permission)
+        // Never asked → first time, request it.
+        // Asked + rationale → denied once, OS can still show dialog.
+        // Asked + no rationale → permanently denied, OS won't show dialog.
+        return !askedBefore || showRationale
+    }
+
+    /**
+     * Returns true when at least one basic permission (foreground location / notification)
+     * is missing AND the OS will still display a runtime dialog for it.
+     * Returns false when every missing basic permission is permanently denied
+     * → caller should show the custom settings-redirect dialog instead.
+     */
+    fun hasMissingPermissionsRequestable(): Boolean =
+        getBasicPermissions()
+            .filter { ContextCompat.checkSelfPermission(fragment.requireContext(), it) != PackageManager.PERMISSION_GRANTED }
+            .any { canRequestPermission(it) }
+
+    /**
+     * Mark [permissions] as asked and launch the system permission dialog.
+     * Using this wrapper ensures canRequestPermission() works correctly on the next call.
+     */
+    private fun launchPermissions(permissions: Array<String>) {
+        markPermissionsAsAsked(permissions)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionLauncher?.launch(permissions)
+        } else {
+            fragment.requestPermissions(permissions, PERMISSION_REQUEST_CODE)
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+
     /**
      * Check if all required permissions are granted
      */
@@ -191,11 +248,7 @@ class PermissionHandler(
         } else {
             // No location permissions needed, proceed directly
             Log.i(TAG, "⏳ Requesting basic login permissions: $missingPermissions")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                permissionLauncher?.launch(missingPermissions.toTypedArray())
-            } else {
-                fragment.requestPermissions(missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
-            }
+            launchPermissions(missingPermissions.toTypedArray())
         }
 
         return false
@@ -210,11 +263,7 @@ class PermissionHandler(
             onAccepted = {
                 Log.i(TAG, "✅ User accepted location disclosure, now requesting permissions")
                 // User accepted disclosure, now request permissions
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    permissionLauncher?.launch(permissionsToRequest.toTypedArray())
-                } else {
-                    fragment.requestPermissions(permissionsToRequest.toTypedArray(), PERMISSION_REQUEST_CODE)
-                }
+                launchPermissions(permissionsToRequest.toTypedArray())
             },
             onDeclined = {
                 Log.i(TAG, "❌ User declined location disclosure")
@@ -336,13 +385,7 @@ class PermissionHandler(
 
             Log.i(TAG, "⏳ Requesting FOREGROUND location permissions: $foregroundPermissions")
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    Log.i(TAG, "🚀 Using permissionLauncher (Android 13+)")
-                    permissionLauncher?.launch(foregroundPermissions.toTypedArray())
-                } else {
-                    Log.i(TAG, "🚀 Using fragment.requestPermissions (Android <13)")
-                    fragment.requestPermissions(foregroundPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
-                }
+                launchPermissions(foregroundPermissions.toTypedArray())
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error requesting foreground location permissions", e)
                 onPermissionsDenied?.invoke(foregroundPermissions)
@@ -386,12 +429,7 @@ class PermissionHandler(
                     dialog.dismiss()
                     fragment.view?.postDelayed({
                         try {
-                            val backgroundPermission = arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                permissionLauncher?.launch(backgroundPermission)
-                            } else {
-                                fragment.requestPermissions(backgroundPermission, PERMISSION_REQUEST_CODE)
-                            }
+                            launchPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
                         } catch (e: Exception) {
                             Log.e(TAG, "❌ Error requesting background location", e)
                             // Continue anyway, background location is optional
@@ -421,10 +459,10 @@ class PermissionHandler(
             ContextCompat.checkSelfPermission(fragment.requireContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             Log.i(TAG, "⏳ Requesting POST_NOTIFICATIONS permission")
-            permissionLauncher?.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+            launchPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
         } else {
-            Log.i(TAG, "✅ POST_NOTIFICATIONS already granted or not required, showing location permission rationale")
-            showLocationPermissionRationale()
+            Log.i(TAG, "✅ POST_NOTIFICATIONS already granted or not required, requesting location permissions")
+            requestLocationPermissions()
         }
     }
 
@@ -528,7 +566,7 @@ class PermissionHandler(
             if (!isForegroundServicePermissionRequested) {
                 isForegroundServicePermissionRequested = true
                 Log.i(TAG, "⏳ Requesting FOREGROUND_SERVICE permission")
-                permissionLauncher?.launch(arrayOf(Manifest.permission.FOREGROUND_SERVICE))
+                launchPermissions(arrayOf(Manifest.permission.FOREGROUND_SERVICE))
             }
         } else {
             onAllPermissionsGranted()
@@ -566,11 +604,11 @@ class PermissionHandler(
 
             Log.i(TAG, "🔍 Permission check - POST_NOTIFICATIONS: $hasPostNotifications, ForegroundLocation: $hasForegroundLocation, BackgroundLocation: $hasBackgroundLocation, ForegroundService: $hasForegroundService")
 
-            // Continue comprehensive flow: Notification → Location Rationale → Foreground Location → Background Location → Battery → Foreground Service
+            // Continue flow: Notification → Location → Background Location → Battery → Foreground Service
             when {
                 hasPostNotifications -> {
-                    Log.i(TAG, "🔔 POST_NOTIFICATIONS granted, showing location permission rationale")
-                    showLocationPermissionRationale()
+                    Log.i(TAG, "🔔 POST_NOTIFICATIONS granted, requesting location permissions")
+                    requestLocationPermissions()
                 }
                 hasBackgroundLocation -> {
                     Log.i(TAG, "📍 Background location granted, proceeding to battery optimization")
@@ -598,16 +636,27 @@ class PermissionHandler(
         } else {
             Log.i(TAG, "❌ Some permissions denied: $deniedPermissions")
 
-            val permanentlyDenied = deniedPermissions.firstOrNull {
-                !ActivityCompat.shouldShowRequestPermissionRationale(fragment.requireActivity(), it)
+            // If POST_NOTIFICATIONS was the permission being requested and was denied,
+            // continue the flow to request location permissions instead of stopping —
+            // BUT only if location was NOT already part of this same batch (to avoid asking
+            // for location twice when login launches both together and the user denies both).
+            val notificationWasDenied = result.containsKey(Manifest.permission.POST_NOTIFICATIONS) &&
+                    !result.getOrDefault(Manifest.permission.POST_NOTIFICATIONS, false)
+            val locationAlreadyGranted = hasLocationPermissions()
+            val locationWasInThisBatch =
+                result.containsKey(Manifest.permission.ACCESS_FINE_LOCATION) ||
+                result.containsKey(Manifest.permission.ACCESS_COARSE_LOCATION)
+
+            if (notificationWasDenied && !locationAlreadyGranted && !locationWasInThisBatch) {
+                Log.i(TAG, "🔔 POST_NOTIFICATIONS denied — requesting location permissions")
+                requestLocationPermissions()
+                return
             }
 
-            if (permanentlyDenied != null) {
-                Log.i(TAG, "⚠️ Permission permanently denied: $permanentlyDenied")
-                onPermissionsDenied?.invoke(deniedPermissions)
-            } else {
-                onPermissionsDenied?.invoke(deniedPermissions)
-            }
+            // Location or other permission denied — collect ALL currently missing permissions and notify
+            val allMissing = getMissingPermissions()
+            Log.i(TAG, "📋 All missing permissions after full flow: $allMissing")
+            onPermissionsDenied?.invoke(if (allMissing.isNotEmpty()) allMissing else deniedPermissions)
         }
     }
 
@@ -658,11 +707,11 @@ class PermissionHandler(
 
             Log.i(TAG, "🔍 Permission check - POST_NOTIFICATIONS: $hasPostNotifications, ForegroundLocation: $hasForegroundLocation, BackgroundLocation: $hasBackgroundLocation, ForegroundService: $hasForegroundService")
 
-            // Continue comprehensive flow: Notification → Location Rationale → Foreground Location → Background Location → Battery → Foreground Service
+            // Continue flow: Notification → Location → Background Location → Battery → Foreground Service
             when {
                 hasPostNotifications -> {
-                    Log.i(TAG, "🔔 POST_NOTIFICATIONS granted, showing location permission rationale")
-                    showLocationPermissionRationale()
+                    Log.i(TAG, "🔔 POST_NOTIFICATIONS granted, requesting location permissions")
+                    requestLocationPermissions()
                 }
                 hasBackgroundLocation -> {
                     Log.i(TAG, "📍 Background location granted, proceeding to battery optimization")

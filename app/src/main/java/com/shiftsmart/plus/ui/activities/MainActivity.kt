@@ -240,7 +240,7 @@ class MainActivity : AppCompatActivity() {
                 isUpdateDialogShowing = false
 
                 // Only show background location dialog if NO update is showing
-                checkAndRequestBackgroundLocation()
+//                checkAndRequestBackgroundLocation()
             }
         }.addOnFailureListener { e ->
             Log.e(TAG, "❌ Failed to check for updates: ${e.message}")
@@ -262,7 +262,7 @@ class MainActivity : AppCompatActivity() {
             // On update check failure - continue with normal app flow
             isUpdateAvailable = false
             isUpdateDialogShowing = false
-            checkAndRequestBackgroundLocation()
+//            checkAndRequestBackgroundLocation()
         }
     }
 
@@ -831,7 +831,7 @@ class MainActivity : AppCompatActivity() {
             }
             // ✅ Continue with next permission dialog
             Log.i(TAG, "📋 Battery dialog closed, proceeding to next dialog...")
-            checkAndRequestFullScreenIntentPermission()
+//            checkAndRequestFullScreenIntentPermission()
         }
     }
 
@@ -923,7 +923,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             Log.i(TAG, "✅ Step 1/2: Battery optimization already ignored, proceeding to next...")
             // Battery already ok, move to full-screen intent
-            checkAndRequestFullScreenIntentPermission()
+//            checkAndRequestFullScreenIntentPermission()
         }
     }
 
@@ -939,15 +939,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val canUseFsi = FullScreenIntentPermissionHelper.canUseFullScreenIntent(this)
-        Log.i(TAG, "Step 2/2: Checking full-screen intent permission (granted: $canUseFsi)")
-
-        if (!canUseFsi) {
-            Log.i(TAG, "⚠️ Step 2/2: Full-screen intent permission missing, showing dialog")
-            showFullScreenIntentPermissionDialog()
-        } else {
-            Log.i(TAG, "✅ Step 2/2: Full-screen intent permission already granted")
-        }
+//        val canUseFsi = FullScreenIntentPermissionHelper.canUseFullScreenIntent(this)
+//        Log.i(TAG, "Step 2/2: Checking full-screen intent permission (granted: $canUseFsi)")
+//
+//        if (!canUseFsi) {
+//            Log.i(TAG, "⚠️ Step 2/2: Full-screen intent permission missing, showing dialog")
+//            showFullScreenIntentPermissionDialog()
+//        } else {
+//            Log.i(TAG, "✅ Step 2/2: Full-screen intent permission already granted")
+//        }
     }
 
     private fun showFullScreenIntentPermissionDialog() {

@@ -40,6 +40,7 @@ import com.shiftsmart.plus.database.IssueModel
 import com.shiftsmart.plus.database.RecordModel
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.databinding.CustomAlertDialogBinding
+import com.shiftsmart.plus.databinding.DialogPermissionRequiredBinding
 import com.shiftsmart.plus.databinding.FragmentHomeBinding
 import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.enums.StatusEnum
@@ -97,9 +98,9 @@ import kotlin.toString
 class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
     companion object {
-        // Persists across fragment recreations for the whole app process.
-        // Resets only when the app process is killed — so the dialog shows at most once per session.
-        private var hasPromptedNotificationPermission: Boolean = false
+        // Persists across onPause/onResume cycles (e.g. system permission dialogs) so the
+        // dialog is shown only once per real visit. Reset in onStop when the user truly leaves.
+        private var hasShownPermissionDialogThisVisit: Boolean = false
     }
 
     private val TAG = "HomeFragment"
@@ -279,8 +280,14 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         )
         permissionHandler.initializePermissionLauncher(permissionLauncher)
 
-        // Request all permissions in sequence when page opens
-        permissionHandler.requestPermissions()
+        // Request permissions only when the OS will actually show a system dialog:
+        //  - First time (never asked) → request via system dialog
+        //  - Denied once without "don't ask again" → request via system dialog
+        //  - Permanently denied → skip system dialog; onResume shows the custom
+        //    settings-redirect dialog (dialog_permission_required) instead.
+        if (permissionHandler.hasMissingPermissionsRequestable()) {
+            permissionHandler.requestPermissions()
+        }
 
         val user = SharedPref.getInstance(requireContext())?.getUser()
         user?.let {
@@ -538,6 +545,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             return
         }
 
+        // Location is confirmed granted — ensure the service is running
+        ensureServiceRunning()
+
         // ✅ Only schedule alarms if they haven't been scheduled yet
         // This prevents duplicate scheduling when user clicks button after initial permission grant
         if (!areAlarmsScheduled) {
@@ -625,38 +635,104 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         return true
     }
 
-    // This method is called when permissions are denied
-    // Note: PermissionHandler already shows its own dialogs and handles opening settings
-    // We only need to handle cleanup here
+    // Called after all runtime permission requests have been attempted.
+    // Now that the system dialog flow is done, show our custom settings-redirect dialog
+    // if any permission is still missing.
     private fun onPermissionsDenied(deniedPermissions: List<String>) {
         Log.i(TAG, "❌ Permissions denied: $deniedPermissions")
+        // Reset flag so showPermissionRequiredDialog() will run even if it already fired once
+        // earlier this visit (e.g. it was suppressed while system dialogs were in progress).
+        hasShownPermissionDialogThisVisit = false
+        showPermissionRequiredDialog()
+    }
 
-        val message = permissionHandler.getDeniedPermissionsMessage(deniedPermissions)
-        if (message.isNotEmpty()) {
-            Log.i(TAG, "Permission message: $message")
+    /**
+     * Show a custom eye-catching dialog directing the user to App Settings.
+     * The title and message adapt to exactly which permissions are missing.
+     * Called every time HomeFragment opens — shows whenever any permission is still missing.
+     */
+    private fun showPermissionRequiredDialog() {
+        if (!isAdded || !isResumed) return
+        if (hasShownPermissionDialogThisVisit) return  // already shown once this visit
+
+        val notifMissing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                !Utils.isNotificationPermissionGranted(requireContext())
+        val locationMissing = !permissionHandler.hasLocationPermissions()
+
+        val key = when {
+            notifMissing && locationMissing -> "both"
+            notifMissing                   -> "notif"
+            locationMissing                -> "location"
+            else                           -> return  // all granted, nothing to show
         }
 
-        // If notification is the only denied permission and the system will no longer show
-        // the dialog ("Don't ask again" selected), guide the user to app Settings.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            deniedPermissions.size == 1 &&
-            deniedPermissions.contains(Manifest.permission.POST_NOTIFICATIONS) &&
-            !ActivityCompat.shouldShowRequestPermissionRationale(
-                requireActivity(), Manifest.permission.POST_NOTIFICATIONS
-            )
-        ) {
-            Log.i(TAG, "🔔 Notification permanently denied — prompting to open Settings")
-            AlertDialog.Builder(requireContext())
-                .setTitle(getString(R.string.post_notification))
-                .setMessage(getString(R.string.please_allow_enable_post_notification))
-                .setPositiveButton(getString(R.string.go_to_settings)) { _, _ ->
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = Uri.fromParts("package", requireContext().packageName, null)
-                    }
-                    startActivity(intent)
-                }
-                .setNegativeButton(getString(R.string.cancel), null)
-                .show()
+        val title: String
+        val message: CharSequence
+        when (key) {
+            "both" -> {
+                title   = getString(R.string.perm_both_title)
+                message = android.text.Html.fromHtml(getString(R.string.perm_both_message), android.text.Html.FROM_HTML_MODE_LEGACY)
+            }
+            "notif" -> {
+                title   = getString(R.string.perm_notification_only_title)
+                message = android.text.Html.fromHtml(getString(R.string.perm_notification_only_message), android.text.Html.FROM_HTML_MODE_LEGACY)
+            }
+            else -> {
+                title   = getString(R.string.perm_location_only_title)
+                message = android.text.Html.fromHtml(getString(R.string.perm_location_only_message), android.text.Html.FROM_HTML_MODE_LEGACY)
+            }
+        }
+
+        val dialog = Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(true)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        dialog.window?.setDimAmount(0.6f)
+
+        val b = DialogPermissionRequiredBinding.inflate(layoutInflater)
+        dialog.setContentView(b.root)
+
+        b.permissionTitleTv.text   = title
+        b.permissionMessageTv.text = message
+
+        b.permissionCancelBtn.setOnClickListener { dialog.dismiss() }
+        b.permissionSettingsBtn.setOnClickListener {
+            dialog.dismiss()
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", requireContext().packageName, null)
+            }
+            startActivity(intent)
+        }
+
+        hasShownPermissionDialogThisVisit = true
+        dialog.show()
+    }
+
+    /**
+     * Starts MyService if it is not already running.
+     * Called every time HomeFragment resumes — permission state does not matter.
+     */
+    /**
+     * Starts MyService if location permission is granted and the service is not already running.
+     * Called from onResume (covers every visit + return from Settings) and onPermissionsGranted.
+     */
+    private fun ensureServiceRunning() {
+        if (!permissionHandler.hasLocationPermissions()) {
+            Log.i(TAG, "⏭️ Service start skipped — location permission not granted")
+            return
+        }
+        if (!isServiceRunning(requireContext(), MyService::class.java)) {
+            Log.i(TAG, "▶️ Service not running — starting now")
+            val intent = Intent(requireContext(), MyService::class.java).apply {
+                action = "START_SERVICE"
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                requireContext().startForegroundService(intent)
+            } else {
+                requireContext().startService(intent)
+            }
+        } else {
+            Log.i(TAG, "✅ Service already running")
         }
     }
 
@@ -665,10 +741,17 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         Log.i(TAG, "onResume: HomeFragment")
         setChecksData()
         updateNotificationBadge()
+        ensureServiceRunning()
         // Silently refresh user data from server whenever HomeFragment becomes visible
         if (Utils.isInternetAvailable(requireContext())) fetchAndUpdateUserSilently()
         // Subscribe to the user's FCM topic if not already subscribed
         subscribeToUserTopicIfNeeded()
+
+
+
+        // Allow the permission dialog to show once for this visit
+        // (flag is reset in onStop, not here, so system permission dialogs
+        //  closing mid-visit do not re-trigger the dialog via another onResume)
 
         // If complaint was removed while app was backgrounded, ensure stale watchdog is disarmed.
         if (!isComplaintCurrentlyActive()) {
@@ -705,6 +788,11 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         gpsStatusMonitor.setListener(this)
         gpsStatusMonitor.startMonitoring()
 
+        // Reset so the permission dialog can show once for this visit.
+        // onStart fires on every real visit but NOT when system permission dialogs
+        // open/close (those only trigger onPause/onResume), so it's safe to reset here.
+        hasShownPermissionDialogThisVisit = false
+
         // ✅ Register logout broadcast receiver using LocalBroadcastManager
         registerLogoutReceiverIfNeeded()
         registerComplaintReceiverIfNeeded()
@@ -716,8 +804,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         gpsStatusMonitor.removeListener()
         gpsStatusMonitor.stopMonitoring()
 
-        // Reset so the notification prompt is shown again next time the user opens HomeFragment
-        hasPromptedNotificationPermission = false
+        // Flag is also reset in onStart, but clear it here too so it's tidy.
 
         // ✅ Unregister logout broadcast receiver from LocalBroadcastManager
         try {
@@ -825,15 +912,7 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             return
         }
 
-        if (!permissionHandler.hasAllPermissions()) {
-            Log.i(TAG, "⚠️ Complaint action requires permissions, requesting...")
-            pendingAction = {
-                complaintButtonPressed()
-            }
-            permissionHandler.requestPermissions()
-            return
-        }
-
+        // Proceed regardless of location permission — if not granted, 0.0, 0.0 will be used
         Log.i(TAG, "✅ Executing complaintButtonPressed from complaint alert")
         startComplaintWatchdog()
         complaintButtonPressed()
@@ -996,19 +1075,8 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.arrivalBtn.setOnClickListener {
-            // Arrival only needs critical (location) permissions — notification denial must not block it
-            if (!permissionHandler.hasCriticalPermissions()) {
-                Log.i(TAG, "⚠️ Arrival button: Missing critical permissions, requesting...")
-                pendingAction = {
-                    performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-                        arrivalButtonPressed()
-                    }
-                }
-                permissionHandler.requestPermissions()
-                return@setOnClickListener
-            }
-
-            // Critical permissions granted, proceed with fingerprint check and arrival
+            // Proceed with fingerprint check and arrival regardless of location permission
+            // If location permission is missing, callApiData will use 0.0, 0.0
             performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                 arrivalButtonPressed()
             }
@@ -1016,36 +1084,16 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
 
         mBinding.departBtn.setOnClickListener {
-            // Departure only needs critical (location) permissions — notification denial must not block it
-            if (!permissionHandler.hasCriticalPermissions()) {
-                Log.i(TAG, "⚠️ Departure button: Missing critical permissions, requesting...")
-                pendingAction = {
-                    performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-                        departireButtonPressed()
-                    }
-                }
-                permissionHandler.requestPermissions()
-                return@setOnClickListener
-            }
-
-            // Critical permissions granted, proceed with fingerprint check and departure
+            // Proceed with fingerprint check and departure regardless of location permission
+            // If location permission is missing, callApiData will use 0.0, 0.0
             performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                 departireButtonPressed()
             }
         }
 
         mBinding.checkinComplaintBtn.setOnClickListener {
-            if (!permissionHandler.hasCriticalPermissions()) {
-                Log.i(TAG, "⚠️ Complaint button: Missing critical permissions, requesting...")
-                pendingAction = {
-                    performActionWithFingerprintCheck(requireActivity(), requireContext()) {
-                        complaintButtonPressed()
-                    }
-                }
-                permissionHandler.requestPermissions()
-                return@setOnClickListener
-            }
-
+            // Proceed with fingerprint check and complaint regardless of location permission
+            // If location permission is missing, callApiData will use 0.0, 0.0
             performActionWithFingerprintCheck(requireActivity(), requireContext()) {
                 complaintButtonPressed()
             }
@@ -1159,7 +1207,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             locationTrack.loc = null
             fetchLocationData()
         } else {
-            checkandGrantLocationPermission()
+            // Location permission not granted — proceed with 0.0, 0.0
+            Log.w(TAG, "⚠️ Arrival: location permission not granted, using 0.0, 0.0")
+            callApiData(0.0, 0.0)
         }
     }
 
@@ -1177,7 +1227,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             locationTrack.loc = null
             fetchLocationData()
         } else {
-            checkandGrantLocationPermission()
+            // Location permission not granted — proceed with 0.0, 0.0
+            Log.w(TAG, "⚠️ Departure: location permission not granted, using 0.0, 0.0")
+            callApiData(0.0, 0.0)
         }
     }
 
@@ -1194,8 +1246,9 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             locationTrack.loc = null
             fetchLocationData()
         } else {
-            Log.w(TAG, "⚠️ Location permissions missing")
-            checkandGrantLocationPermission()
+            // Location permission not granted — proceed with 0.0, 0.0
+            Log.w(TAG, "⚠️ Complaint: location permission not granted, using 0.0, 0.0")
+            callApiData(0.0, 0.0)
         }
     }
 
@@ -2134,38 +2187,19 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
     }
 
+    /**
+     * Shows the custom permission settings dialog if any tracked permission is still missing.
+     * Re-shows with updated content whenever the set of missing permissions changes.
+     */
     private fun promptNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (Utils.isNotificationPermissionGranted(requireContext())) return
-        if (hasPromptedNotificationPermission) return
-
-        hasPromptedNotificationPermission = true
-
-        val shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(
-            requireActivity(), Manifest.permission.POST_NOTIFICATIONS
-        )
-
-        if (shouldShowRationale) {
-            // Denied once before (no "Don't ask again") — show in-app rationale first
-            Log.i(TAG, "🔔 Notification: denied once — showing rationale dialog")
-            AlertDialog.Builder(requireContext())
-                .setTitle(getString(R.string.post_notification))
-                .setMessage(getString(R.string.please_allow_enable_post_notification))
-                .setPositiveButton(getString(R.string.allow)) { _, _ ->
-                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-                }
-                .setNegativeButton(getString(R.string.cancel), null)
-                .show()
-        } else {
-            // First time OR permanently denied — launch request directly.
-            // • First time: system dialog will appear.
-            // • Permanently denied: system silently returns DENIED → onPermissionsDenied
-            //   will then detect this and show the “Go to Settings” dialog.
-            Log.i(TAG, "🔔 Notification: requesting directly (first-time or re-check)")
-            permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+        // Only show the custom settings-redirect dialog when the OS will NO LONGER show
+        // a system permission dialog (permanently denied / "don't ask again").
+        // When permissions can still be requested, the runtime flow started in
+        // onViewCreated handles them; onPermissionsDenied shows the dialog afterwards.
+        if (!permissionHandler.hasMissingPermissionsRequestable()) {
+            showPermissionRequiredDialog()
         }
     }
-
     fun getNotificationPermission() {
         try {
             if (Build.VERSION.SDK_INT > 32) {
