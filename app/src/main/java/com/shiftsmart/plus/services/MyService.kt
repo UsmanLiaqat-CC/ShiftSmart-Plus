@@ -13,7 +13,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
 
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -287,12 +286,10 @@ class MyService : Service() {
                 intent?.action == ACTION_STOP -> "Stopping service..."
                 else -> "Attendance tracking active"
             }
-            val notification = createNotification(initialMessage)
-            startForeground(NOTIFICATION_ID, notification)
+            startForegroundSafely(createNotification(initialMessage))
         } else if (intent?.action == ACTION_COLLECT_AND_STOP) {
             // ✅ For COLLECT_AND_STOP, start foreground with brief message
-            val notification = createNotification("Collecting data...")
-            startForeground(NOTIFICATION_ID, notification)
+            startForegroundSafely(createNotification("Collecting data..."))
         }
 
         when (intent?.action) {
@@ -936,23 +933,55 @@ class MyService : Service() {
     }
 
 
+    /**
+     * Safe wrapper for startForeground that avoids SecurityException on Android 14+
+     * (targetSdk 34+) when location permission is not granted.
+     *
+     * On API 34+, calling startForeground() without explicit type flags causes Android to apply
+     * ALL types declared in the manifest. If the manifest includes foregroundServiceType=location
+     * but ACCESS_FINE_LOCATION is not granted, a SecurityException is thrown immediately.
+     * Passing explicit flags overrides the manifest types for this call.
+     */
+    private fun startForegroundSafely(notification: android.app.Notification) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val hasLocation = androidx.core.content.ContextCompat.checkSelfPermission(
+                    this, android.Manifest.permission.ACCESS_FINE_LOCATION
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                // IMPORTANT: Never OR with FOREGROUND_SERVICE_TYPE_MANIFEST.
+                // MANIFEST = 0x7FFFFFFF; OR-ing it collapses any value to 0x7FFFFFFF which Android
+                // expands to ALL manifest-declared types (including location), causing SecurityException
+                // when location permission is denied. Use only explicit, individually declared types.
+                val serviceTypes = if (hasLocation) {
+                    FOREGROUND_SERVICE_TYPE_LOCATION or FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                } else {
+                    FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                }
+                startForeground(NOTIFICATION_ID, notification, serviceTypes)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            // startForeground() can throw (e.g. ForegroundServiceStartNotAllowedException on
+            // Android 12+ if the app has been placed in a restricted App Standby bucket after
+            // long idle/locked periods). Left uncaught, this crashes the service BEFORE
+            // handleServiceStart() re-arms its backup alarms/watchdog — so the whole auto
+            // start/stop chain dies silently until the user manually reopens the app.
+            // Swallow it and arm the 1-minute watchdog so the system retries on its own.
+            Log.e(TAG, "❌ startForeground() failed - device may be in a restricted standby bucket. Arming retry watchdog.", e)
+            try {
+                com.shiftsmart.plus.periodicAction.RestartWatchdogManager.scheduleOneMinuteRestart(this)
+            } catch (inner: Exception) {
+                Log.e(TAG, "❌ Failed to arm retry watchdog after startForeground failure", inner)
+            }
+        }
+    }
+
     private fun startServiceInForeground() {
         val notification = createNotification("Service started").apply {
             flags = flags or Notification.FLAG_NO_CLEAR
         }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val serviceTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                FOREGROUND_SERVICE_TYPE_LOCATION or
-                        FOREGROUND_SERVICE_TYPE_DATA_SYNC or
-                        FOREGROUND_SERVICE_TYPE_MANIFEST
-            } else {
-                FOREGROUND_SERVICE_TYPE_LOCATION
-            }
-            startForeground(NOTIFICATION_ID, notification, serviceTypes)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        startForegroundSafely(notification)
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)

@@ -32,6 +32,7 @@ import com.shiftsmart.plus.utils.PermissionHandler
 import com.shiftsmart.plus.utils.Resource
 import com.shiftsmart.plus.utils.SessionLogoutCoordinator
 import com.shiftsmart.plus.utils.SharedPref
+import com.shiftsmart.plus.utils.FingerprintHelper
 import com.shiftsmart.plus.utils.Utils
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -137,6 +138,8 @@ class LoginFragment : Fragment() {
 
                             SharedPref.getInstance(requireContext())?.saveToken(it.data.accessToken)
                             SharedPref.getInstance(requireContext())?.saveUser(it.data?.userModel)
+                            // Fingerprint auth is OFF by default on every login
+                            FingerprintHelper.setFingerprintEnabled(requireContext(), false)
 
                             val userId = it.data?.userModel?._id.toString()
                             FirebaseMessaging.getInstance().subscribeToTopic(userId)
@@ -145,28 +148,33 @@ class LoginFragment : Fragment() {
                                     Log.i(TAG, "✅ FCM subscribed to topic: $userId")
                                 }
 
+                            val defaultShifts = it.data?.userModel?.timetable?.range
+                            val multiTimeTables = it.data?.userModel?.multipleTimeTables
+
+                            AlarmScheduler.scheduleAlarms(
+                                context = requireContext(),
+                                defaultShifts = defaultShifts!!,
+                                multipleTimeTables = multiTimeTables!!
+                            )
+
+
                             // ✅ IMPORTANT: Only schedule alarms if basic permissions are granted
                             // This prevents crash when trying to start foreground service without permissions
-                            if (permissionHandler.hasBasicLoginPermissions()) {
-                                Log.i(TAG, "✅ Permissions granted, scheduling alarms and starting service")
-                                val defaultShifts = it.data?.userModel?.timetable?.range
-                                val multiTimeTables = it.data?.userModel?.multipleTimeTables
-
-                                AlarmScheduler.scheduleAlarms(
-                                    context = requireContext(),
-                                    defaultShifts = defaultShifts!!,
-                                    multipleTimeTables = multiTimeTables!!
-                                )
-
-                                if (it.data?.userModel?.isComplaint == true) {
-                                    Log.i(TAG, "LoginFragment: user has active compliance flag")
-                                }
-                            } else {
-                                Log.i(TAG, "⚠️ Permissions not granted yet, will schedule alarms from HomeFragment")
-                                if (it.data?.userModel?.isComplaint == true) {
-                                    Log.i(TAG, "LoginFragment: user has active compliance flag (permissions not yet granted)")
-                                }
-                            }
+//                            if (permissionHandler.hasBasicLoginPermissions()) {
+//                                Log.i(TAG, "✅ Permissions granted, scheduling alarms and starting service")
+//                                val defaultShifts = it.data?.userModel?.timetable?.range
+//                                val multiTimeTables = it.data?.userModel?.multipleTimeTables
+//
+//                                AlarmScheduler.scheduleAlarms(
+//                                    context = requireContext(),
+//                                    defaultShifts = defaultShifts!!,
+//                                    multipleTimeTables = multiTimeTables!!
+//                                )
+//
+//
+//                            } else {
+//                                Log.i(TAG, "⚠️ Permissions not granted yet, will schedule alarms from HomeFragment")
+//                            }
 
                             // Navigate to home
                             findNavController().navigate(R.id.action_loginFragment_to_homeFragment)

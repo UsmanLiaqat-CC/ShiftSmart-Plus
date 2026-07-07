@@ -1,12 +1,10 @@
 package com.shiftsmart.plus.periodicAction
 
-import android.Manifest
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
@@ -88,49 +86,66 @@ class AlarmReceiver : BroadcastReceiver() {
                 "START_SERVICE" -> {
                     Log.i(TAG, "Received START_SERVICE_ALARM")
 
-                    // ✅ Check if we have required permissions before starting foreground service
-                    if (!hasRequiredPermissions(context)) {
-                        Log.e(TAG, "❌ Cannot start foreground service - missing required permissions")
-                        Log.e(TAG, "   User needs to grant location permissions from app settings")
-                        // Schedule next attempt in case user grants permissions later
-                        AlarmScheduler.scheduleTomorrowFromPrefs(context)
-                        return
-                    }
-
                     // Check if we're inside shift before starting
                     val user = SharedPref.getInstance(context)?.getUser()
                     if (user != null && isInsideShiftWindow(user)) {
                         Log.i(TAG, "✅ Inside shift - starting service")
 
-                        val wakeIntent = Intent(context, WakeUpActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        // ✅ Start the service FIRST and independently of the wake-screen activity.
+                        // On Android 10+ launching an Activity from a BroadcastReceiver (background
+                        // activity-launch restriction) can be denied/throw on some OEMs, especially
+                        // while the device is locked/idle. That must never prevent the service from
+                        // starting, and must never abort the tomorrow-alarm chain below.
+                        try {
+                            val serviceIntent = Intent(context, MyService::class.java).apply {
+                                action = MyService.ACTION_START
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                context.startForegroundService(serviceIntent)
+                            else
+                                context.startService(serviceIntent)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ Failed to start MyService from alarm", e)
                         }
-                        context.startActivity(wakeIntent)
 
-                        val serviceIntent = Intent(context, MyService::class.java).apply {
-                            action = MyService.ACTION_START
+                        try {
+                            val wakeIntent = Intent(context, WakeUpActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            }
+                            context.startActivity(wakeIntent)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "⚠️ Could not launch wake-screen activity (locked/background-start restriction) - service start is unaffected", e)
                         }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                            context.startForegroundService(serviceIntent)
-                        else
-                            context.startService(serviceIntent)
 
                     } else {
                         Log.i(TAG, "⏭️ Outside shift window - skipping service start")
                     }
 
-                    AlarmScheduler.scheduleTomorrowFromPrefs(context)
+                    // Always chain tomorrow's alarms, even if the above failed.
+                    try {
+                        AlarmScheduler.scheduleTomorrowFromPrefs(context)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Failed to schedule tomorrow's alarms", e)
+                    }
                 }
 
                 "STOP_SERVICE" -> {
                     Log.i("AlarmReceiver", "Received STOP_SERVICE_ALARM")
 
-                    val stopIntent = Intent(context, MyService::class.java).apply {
-                        action = MyService.ACTION_STOP
+                    try {
+                        val stopIntent = Intent(context, MyService::class.java).apply {
+                            action = MyService.ACTION_STOP
+                        }
+                        context.startService(stopIntent)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Failed to stop MyService from alarm", e)
                     }
-                    context.startService(stopIntent)
 
-                    AlarmScheduler.scheduleTomorrowFromPrefs(context)
+                    try {
+                        AlarmScheduler.scheduleTomorrowFromPrefs(context)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Failed to schedule tomorrow's alarms", e)
+                    }
                 }
 
                 "CALL_API" -> {
@@ -139,15 +154,6 @@ class AlarmReceiver : BroadcastReceiver() {
                     val user = SharedPref.getInstance(context)?.getUser()
                     if (user == null) {
                         Log.w(TAG, "❌ No user found; skipping CALL_API")
-                        return
-                    }
-
-                    // ✅ Check if we have required permissions before starting foreground service
-                    if (!hasRequiredPermissions(context)) {
-                        Log.e(TAG, "❌ Cannot start foreground service - missing required permissions")
-                        Log.e(TAG, "   User needs to grant location permissions from app settings")
-                        // Schedule next attempt in case user grants permissions later
-                        scheduleNextAlarmFromCurrentTime(context)
                         return
                     }
 
@@ -203,44 +209,6 @@ class AlarmReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "AlarmReceiver"
-
-        /**
-         * Check if all required permissions for foreground service with location are granted
-         */
-        private fun hasRequiredPermissions(context: Context): Boolean {
-            val fineLocation = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-
-            val coarseLocation = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-
-            // For Android 14+ (API 34+), also need FOREGROUND_SERVICE_LOCATION permission
-            val foregroundServiceLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.FOREGROUND_SERVICE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
-            } else {
-                true // Not required on older versions
-            }
-
-            val hasPermissions = fineLocation && coarseLocation && foregroundServiceLocation
-
-            if (!hasPermissions) {
-                Log.e(TAG, "❌ Missing required permissions for foreground service:")
-                Log.e(TAG, "   - ACCESS_FINE_LOCATION: $fineLocation")
-                Log.e(TAG, "   - ACCESS_COARSE_LOCATION: $coarseLocation")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    Log.e(TAG, "   - FOREGROUND_SERVICE_LOCATION: $foregroundServiceLocation")
-                }
-            }
-
-            return hasPermissions
-        }
 
         /**
          * Check if current time is within shift window (with ±1 hour buffer)

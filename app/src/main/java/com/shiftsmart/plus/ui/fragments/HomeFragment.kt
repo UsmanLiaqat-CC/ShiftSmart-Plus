@@ -50,6 +50,7 @@ import com.shiftsmart.plus.models.WifiModel
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.ui.activities.MainActivity
+import com.google.android.material.snackbar.Snackbar
 import com.shiftsmart.plus.utils.BatteryOptimizationContract
 import com.shiftsmart.plus.utils.ButtonActionEnum
 import com.shiftsmart.plus.utils.Constants.MY_PERMISSIONS_REQUEST_LOCATION
@@ -101,6 +102,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         // Persists across onPause/onResume cycles (e.g. system permission dialogs) so the
         // dialog is shown only once per real visit. Reset in onStop when the user truly leaves.
         private var hasShownPermissionDialogThisVisit: Boolean = false
+
+        // Persists across fragment recreation within one app session.
+        // AlarmScheduler is idempotent but we avoid redundant cancel+reschedule on every onResume.
+        private var areAlarmsScheduled: Boolean = false
     }
 
     private val TAG = "HomeFragment"
@@ -143,9 +148,6 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     }
     private var pendingAction: (() -> Unit)? = null
 
-    // Track if alarms have been scheduled to prevent duplicate scheduling
-    private var areAlarmsScheduled: Boolean = false
-
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -180,15 +182,10 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
 
         val user = SharedPref.getInstance(requireContext())?.getUser()
         if (user != null) {
-            // Schedule alarms only if permissions are available
-            // This handles the case where user logged in without permissions
-            if (hasLocationPermissions()) {
-                Log.i(TAG, "✅ Scheduling shift alarms with permissions granted")
-                ShiftRestartAlarmManager.scheduleNextShiftAlarm(requireContext(), user)
-                areAlarmsScheduled = true // Mark as scheduled
-            } else {
-                Log.i(TAG, "⚠️ Waiting for permissions before scheduling alarms")
-            }
+            // Schedule the shift restart alarm regardless of permission state.
+            // The alarm triggers the service; the service uses 0.0 when location is missing.
+            Log.i(TAG, "⏰ Scheduling shift restart alarm on onCreate")
+            ShiftRestartAlarmManager.scheduleNextShiftAlarm(requireContext(), user)
         }
 
         gpsStatusMonitor = GpsStatusMonitor(requireContext())
@@ -537,40 +534,8 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     private fun onPermissionsGranted() {
         Log.i(TAG, "✅ All permissions granted in HomeFragment")
         setChecksData()
-
-        // ✅ CRITICAL: Verify ALL required permissions before scheduling alarms
-        // This prevents crash when only notification permission is granted but location is still pending
-        if (!hasAllRequiredPermissions()) {
-            Log.w(TAG, "⚠️ Not all required permissions granted yet, waiting...")
-            return
-        }
-
-        // Location is confirmed granted — ensure the service is running
         ensureServiceRunning()
-
-        // ✅ Only schedule alarms if they haven't been scheduled yet
-        // This prevents duplicate scheduling when user clicks button after initial permission grant
-        if (!areAlarmsScheduled) {
-            val user = SharedPref.getInstance(requireContext())?.getUser()
-            if (user != null) {
-                val defaultShifts = user.timetable?.range
-                val multiTimeTables = user.multipleTimeTables
-
-                if (defaultShifts != null) {
-                    Log.i(TAG, "✅ All permissions granted, scheduling shift alarms with AlarmScheduler (first time)")
-                    AlarmScheduler.scheduleAlarms(
-                        context = requireContext(),
-                        defaultShifts = defaultShifts,
-                        multipleTimeTables = multiTimeTables ?: emptyList()
-                    )
-                    areAlarmsScheduled = true // Mark as scheduled
-                } else {
-                    Log.e(TAG, "❌ Cannot schedule alarms - user timetable is null")
-                }
-            }
-        } else {
-            Log.i(TAG, "ℹ️ Alarms already scheduled, skipping duplicate scheduling")
-        }
+        scheduleAlarmsIfNeeded()
 
         // Execute pending action if any (arrival, departure, or sync)
         pendingAction?.let { action ->
@@ -578,6 +543,33 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             pendingAction = null
             action.invoke()
         }
+    }
+
+    /**
+     * Schedule shift alarms via AlarmScheduler regardless of permission state.
+     * The service uses lat=0.0/lng=0.0 when location is not granted.
+     * Uses a companion-object flag so the same app session doesn’t reschedule on every onResume.
+     */
+    private fun scheduleAlarmsIfNeeded() {
+        if (areAlarmsScheduled) {
+            Log.i(TAG, "ℹ️ Alarms already scheduled this session — skipping")
+            return
+        }
+        val user = SharedPref.getInstance(requireContext())?.getUser() ?: run {
+            Log.w(TAG, "⚠️ Cannot schedule alarms — no logged-in user")
+            return
+        }
+        val defaultShifts = user.timetable?.range ?: run {
+            Log.e(TAG, "❌ Cannot schedule alarms — user timetable is null")
+            return
+        }
+        Log.i(TAG, "⏰ Scheduling shift alarms (permission-independent)")
+        AlarmScheduler.scheduleAlarms(
+            context = requireContext(),
+            defaultShifts = defaultShifts,
+            multipleTimeTables = user.multipleTimeTables ?: emptyList()
+        )
+        areAlarmsScheduled = true
     }
 
     /**
@@ -736,12 +728,30 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
         }
     }
 
+    /**
+     * OEMs like Samsung can demote the app to App Standby Bucket RESTRICTED (Device Care
+     * "Sleeping apps") independent of the standard battery-optimization exemption, which silently
+     * blocks auto start/stop after reboot. That flag can't be flipped by the app itself, so surface
+     * it here on every resume rather than relying on a one-time settings redirect the user may miss.
+     */
+    private fun warnIfBackgroundTrackingRestricted() {
+        if (Utils.isAppStandbyRestricted(requireContext())) {
+            Snackbar.make(mBinding.root, getString(R.string.background_tracking_restricted), Snackbar.LENGTH_INDEFINITE)
+                .setAction(getString(R.string.fix)) {
+                    com.shiftsmart.plus.utils.BatteryOptimizationHelper.openBatterySettingsNow(requireContext())
+                }
+                .show()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         Log.i(TAG, "onResume: HomeFragment")
         setChecksData()
         updateNotificationBadge()
         ensureServiceRunning()
+        scheduleAlarmsIfNeeded()
+        warnIfBackgroundTrackingRestricted()
         // Silently refresh user data from server whenever HomeFragment becomes visible
         if (Utils.isInternetAvailable(requireContext())) fetchAndUpdateUserSilently()
         // Subscribe to the user's FCM topic if not already subscribed

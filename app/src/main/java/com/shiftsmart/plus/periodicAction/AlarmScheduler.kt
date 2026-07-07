@@ -154,9 +154,19 @@ object AlarmScheduler {
      * WHO: Called internally by scheduleAlarms/scheduleDay when inside window.
      */
     private fun startServiceNow(context: Context) {
-        val intent = Intent(context, MyService::class.java).apply { action = "START_SERVICE" }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
-        else context.startService(intent)
+        try {
+            val intent = Intent(context, MyService::class.java).apply { action = "START_SERVICE" }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+            else context.startService(intent)
+        } catch (e: Exception) {
+            // startForegroundService() can throw ForegroundServiceStartNotAllowedException right
+            // after boot (app not yet foregrounded/restricted standby bucket). If uncaught here,
+            // MyService never gets created, so the 1-minute watchdog it would normally arm from
+            // within itself never gets scheduled either — the shift silently never starts until
+            // the user opens the app. Arm the watchdog directly so it keeps retrying.
+            Log.e(TAG, "❌ startServiceNow() failed - arming retry watchdog", e)
+            RestartWatchdogManager.scheduleOneMinuteRestart(context)
+        }
     }
 
 

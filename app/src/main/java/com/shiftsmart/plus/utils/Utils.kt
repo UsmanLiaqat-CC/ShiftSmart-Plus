@@ -214,6 +214,24 @@ object Utils {
         return true
     }
 
+    /**
+     * Returns true if the OS has demoted this app to the RESTRICTED (or "never") App Standby
+     * Bucket. This is the standard, OEM-agnostic Android signal (API 28+) for the actual
+     * mechanism that blocks alarms/background starts — including Samsung's "Sleeping apps" list,
+     * which forces the app into this same bucket even though isIgnoringBatteryOptimizations()
+     * still reports true. Unlike that flag, this one reflects the real current restriction state
+     * and can be re-checked any time (e.g. on every app resume), not just once at first grant.
+     */
+    fun isAppStandbyRestricted(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+            usm?.appStandbyBucket == android.app.usage.UsageStatsManager.STANDBY_BUCKET_RESTRICTED
+        } catch (e: Exception) {
+            false
+        }
+    }
+
 
 
      fun getCurrentDayName(): String {

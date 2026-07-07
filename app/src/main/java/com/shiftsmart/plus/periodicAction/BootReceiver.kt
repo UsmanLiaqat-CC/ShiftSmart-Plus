@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.UserManager
 import android.util.Log
@@ -19,7 +20,7 @@ import com.shiftsmart.plus.utils.Utils.isServiceRunning
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        var action = intent.action ?: return
+        val action = intent.action ?: return
         Log.i("BootReceiver", "onReceive: $action → reschedule if needed")
 
         // We’ll act on reboot and clock changes
@@ -33,29 +34,62 @@ class BootReceiver : BroadcastReceiver() {
 
         val appContext = context.applicationContext
 
-        // ⚠️ Before user unlock, credential-protected storage (your SharedPref) may be unavailable.
-//        //    If you don't use device-protected storage, wait for unlock.
-//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-//            val um = appContext.getSystemService(UserManager::class.java)
-//            if (um != null && !um.isUserUnlocked) {
-//                Log.w("BootReceiver", "User not unlocked yet. Deferring reschedule.")
-//                return
-//            }
-//        }
+        // ⚠️ Before user unlock, credential-protected storage (SharedPref) may be unavailable
+        // on FBE-encrypted devices. Defer the reschedule until ACTION_USER_UNLOCKED instead of
+        // silently giving up, so shift alarms still get armed after an early boot.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val um = appContext.getSystemService(UserManager::class.java)
+            if (um != null && !um.isUserUnlocked) {
+                Log.w("BootReceiver", "User not unlocked yet. Waiting for ACTION_USER_UNLOCKED to reschedule.")
+                waitForUnlockThenReschedule(appContext)
+                return
+            }
+        }
 
+        rescheduleShiftAlarms(appContext)
+    }
+
+    /**
+     * Registers a one-shot receiver for ACTION_USER_UNLOCKED so FBE-encrypted devices
+     * still get their shift alarms rearmed once credential storage becomes readable.
+     */
+    private fun waitForUnlockThenReschedule(appContext: Context) {
+        val unlockReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, unlockIntent: Intent) {
+                if (unlockIntent.action == Intent.ACTION_USER_UNLOCKED) {
+                    try {
+                        appContext.unregisterReceiver(this)
+                    } catch (e: Exception) {
+                        Log.w("BootReceiver", "unregisterReceiver failed", e)
+                    }
+                    rescheduleShiftAlarms(appContext)
+                }
+            }
+        }
+        appContext.registerReceiver(unlockReceiver, IntentFilter(Intent.ACTION_USER_UNLOCKED))
+    }
+
+    /**
+     * Unconditionally (re)arms TODAY's and TOMORROW's shift START/STOP alarms.
+     * AlarmManager drops all alarms on reboot, so this must run every boot regardless of
+     * whether we're currently inside a shift window — otherwise a shift starting later that
+     * day would never auto-start until the user manually opens the app.
+     */
+    private fun rescheduleShiftAlarms(appContext: Context) {
         try {
             val user = SharedPref.getInstance(appContext)?.getUser()
             Log.i("BootReceiver", "Retrieved user from SharedPref: $user")
 
-            if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
-                Log.i(
-                    "BootReceiver",
-                    "⏰ Service destroyed during shift - AlarmManager will handle next wake-up"
+            val defaultShifts = user?.timetable?.range ?: emptyList()
+            if (user != null && defaultShifts.isNotEmpty()) {
+                Log.i("BootReceiver", "🔁 Rescheduling today+tomorrow shift alarms after boot/time change")
+                AlarmScheduler.scheduleTodayAndTomorrow(
+                    appContext,
+                    defaultShifts,
+                    user.multipleTimeTables ?: emptyList()
                 )
-                // Ensure alarms are scheduled (they should already be, but just in case)
-                AlarmReceiver.scheduleNextAlignedAlarm(context)
             } else {
-                Log.i("BootReceiver", "⏸️ Service destroyed outside shift - no action needed")
+                Log.i("BootReceiver", "No logged-in user/timetable found - nothing to schedule")
             }
 
             // Complaint alarm scheduling removed (no longer needed)

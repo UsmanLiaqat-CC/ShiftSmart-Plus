@@ -187,13 +187,15 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
                 // Prefer data payload fields so this also works for data-only FCM messages
                 // (required for reliable background delivery to onMessageReceived).
-                // Fall back through: data["title"] → notification.title → payloadObject["title"] → default string
+                // Fall back through: data["title"] → notification.title → user JSON → payloadObject → default string
                 val title = data["title"]
                     ?: remoteMessage.notification?.title
+                    ?: jsonObject.optString("title").takeIf { it.isNotBlank() }
                     ?: payloadObject.optString("title").takeIf { it.isNotBlank() }
                     ?: ""
                 val body = data["body"]
                     ?: remoteMessage.notification?.body
+                    ?: jsonObject.optString("body").takeIf { it.isNotBlank() }
                     ?: payloadObject.optString("body").takeIf { it.isNotBlank() }
                     ?: payloadObject.optString("message").takeIf { it.isNotBlank() }
                     ?: ""

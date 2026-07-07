@@ -22,6 +22,7 @@ class SharedPref(private val ctx: Context) {
     private val COMPLIANCE_BADGE_COUNT = "compliance_badge_count"
     private val LAST_COMPLIANCE_NOTIFICATION_TIME = "last_compliance_notification_time"
     private val SUBSCRIBED_FCM_USER_ID = "subscribed_fcm_user_id"
+    private val OEM_BATTERY_PROMPT_SHOWN = "oem_battery_prompt_shown"
 
     // Save Token
     fun saveToken(token: String?) {
@@ -209,6 +210,21 @@ class SharedPref(private val ctx: Context) {
     // 🔐 Get fingerprint state
     fun isFingerprintEnabled(): Boolean {
         return sharedPreferences.getBoolean(FINGERPRINT, false)
+    }
+
+    /**
+     * Last time (epoch ms) the OEM-specific battery/autostart settings screen (Samsung Device
+     * Care, MIUI autostart, etc.) was shown to the user. These OEM restrictions are independent
+     * of the standard Android ignoreBatteryOptimizations flag, so we must not gate showing them
+     * on that flag alone — and since the user can dismiss the screen without actually fixing the
+     * setting, we re-show it periodically (throttled) rather than only once ever.
+     */
+    fun getLastOemBatteryPromptTime(): Long {
+        return sharedPreferences.getLong(OEM_BATTERY_PROMPT_SHOWN, 0L)
+    }
+
+    fun setLastOemBatteryPromptTime(timestampMs: Long) {
+        sharedPreferences.edit().putLong(OEM_BATTERY_PROMPT_SHOWN, timestampMs).apply()
     }
 
 

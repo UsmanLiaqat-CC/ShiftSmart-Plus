@@ -200,6 +200,11 @@ class PermissionHandler(
             permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
 
+        // NEARBY_WIFI_DEVICES permission commented out per requirement.
+        // if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        //     permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        // }
+
         // Notification permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -287,6 +292,11 @@ class PermissionHandler(
         // Basic location permissions (NOT background)
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+
+        // NEARBY_WIFI_DEVICES permission commented out per requirement.
+        // if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        //     permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        // }
 
         // Notification permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -534,7 +544,7 @@ class PermissionHandler(
         val powerManager = fragment.requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!powerManager.isPowerSaveMode) {
             Log.i(TAG, "✅ Battery Saver mode is OFF")
-            checkForegroundServicePermission()
+            checkExactAlarmPermission()
         } else {
             Log.i(TAG, "⚠️ Battery Saver mode is ON, showing dialog")
             showBatterySaverDialog()
@@ -549,9 +559,46 @@ class PermissionHandler(
                 val intent = Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
                 fragment.startActivity(intent)
                 // Continue flow even if user goes to settings
-                checkForegroundServicePermission()
+                checkExactAlarmPermission()
             }
             .setNegativeButton("Cancel") { _, _ ->
+                checkExactAlarmPermission()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    // Step 4.5: Check & request the "Alarms & reminders" special permission (Android 12+).
+    // Without this, shift START/STOP alarms silently fall back to inexact scheduling,
+    // which the OS can batch/delay by minutes to hours under Doze - the #1 cause of
+    // "shift didn't auto start/stop on time" on Android 12+ devices.
+    private fun checkExactAlarmPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = fragment.requireContext()
+                .getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            if (!alarmManager.canScheduleExactAlarms()) {
+                Log.i(TAG, "⚠️ Exact alarm permission not granted, showing dialog")
+                showExactAlarmDialog()
+                return
+            }
+            Log.i(TAG, "✅ Exact alarm permission already granted")
+        }
+        checkForegroundServicePermission()
+    }
+
+    private fun showExactAlarmDialog() {
+        AlertDialog.Builder(fragment.requireContext())
+            .setTitle("Allow Precise Alarms")
+            .setMessage("To reliably start and stop your shift automatically at the right time, allow \"Alarms & reminders\" for this app.")
+            .setPositiveButton("Go to Settings") { _, _ ->
+                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                    data = Uri.parse("package:${fragment.requireContext().packageName}")
+                }
+                fragment.startActivity(intent)
+                // Continue flow even if user doesn't grant it - don't block onboarding
+                checkForegroundServicePermission()
+            }
+            .setNegativeButton("Skip") { _, _ ->
                 checkForegroundServicePermission()
             }
             .setCancelable(false)
@@ -786,4 +833,3 @@ class PermissionHandler(
         private const val PERMISSION_REQUEST_CODE = 100
     }
 }
-

@@ -13,13 +13,69 @@ import androidx.annotation.RequiresApi
 
 object BatteryOptimizationHelper {
 
+    private val OEMS_WITH_EXTRA_RESTRICTIONS = setOf("xiaomi", "samsung", "huawei", "oppo", "vivo")
+    private const val OEM_PROMPT_THROTTLE_MS = 24 * 60 * 60 * 1000L // don't reopen Settings more than once/day
+
     fun checkBatteryOptimizations(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        val isKnownOem = manufacturer in OEMS_WITH_EXTRA_RESTRICTIONS ||
+                Build.MODEL.contains("mara", ignoreCase = true) ||
+                Build.MODEL.contains("mobicel", ignoreCase = true)
+
+        if (isKnownOem) {
+            // ⚠️ Samsung (and other OEMs) enforce a SECOND, separate restriction layer on top of
+            // the standard Android battery-optimization allowlist: e.g. Samsung Device Care's
+            // "Sleeping apps" list, which forces the app into App Standby Bucket RESTRICTED.
+            // isIgnoringBatteryOptimizations() only reflects the standard allowlist and returns
+            // true even while the app is still being killed by Device Care, so gating this
+            // prompt on it (as before) meant Samsung users who'd already granted the standard
+            // exemption never saw the Device Care screen at all.
+            //
+            // Re-check the real standby bucket (OEM-agnostic Android API) each time instead of
+            // trusting a one-time "shown" flag: the user can dismiss the Settings screen without
+            // fixing anything, so we keep nudging (throttled to once/day) until the bucket is no
+            // longer RESTRICTED.
+            val sharedPref = SharedPref.getInstance(context)
+            val isRestricted = Utils.isAppStandbyRestricted(context)
+            val lastShown = sharedPref?.getLastOemBatteryPromptTime() ?: 0L
+            val dueForRecheck = System.currentTimeMillis() - lastShown > OEM_PROMPT_THROTTLE_MS
+
+            if (isRestricted && dueForRecheck) {
+                Log.w("BatteryOpt", "App is in RESTRICTED standby bucket on ${Build.MANUFACTURER} - showing OEM battery settings")
+                handleDeviceSpecificOptimizations(context)
+                sharedPref?.setLastOemBatteryPromptTime(System.currentTimeMillis())
+            } else if (lastShown == 0L) {
+                // First run ever on this OEM: show it once even if the bucket check isn't
+                // conclusive yet (bucket may not be populated until the app has run a while).
+                handleDeviceSpecificOptimizations(context)
+                sharedPref?.setLastOemBatteryPromptTime(System.currentTimeMillis())
+            }
+        } else {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
-                handleDeviceSpecificOptimizations(context)
+                requestIgnoreBatteryOptimizations(context)
             }
         }
+    }
+
+    /**
+     * Opens the OEM-specific (or generic) battery settings screen immediately, bypassing the
+     * once-a-day throttle in checkBatteryOptimizations(). Use this for an explicit user action
+     * (e.g. tapping "Fix" on an in-app warning) where the throttle would otherwise be surprising.
+     */
+    fun openBatterySettingsNow(context: Context) {
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        val isKnownOem = manufacturer in OEMS_WITH_EXTRA_RESTRICTIONS ||
+                Build.MODEL.contains("mara", ignoreCase = true) ||
+                Build.MODEL.contains("mobicel", ignoreCase = true)
+        if (isKnownOem) {
+            handleDeviceSpecificOptimizations(context)
+        } else {
+            requestIgnoreBatteryOptimizations(context)
+        }
+        SharedPref.getInstance(context)?.setLastOemBatteryPromptTime(System.currentTimeMillis())
     }
 
     private fun handleDeviceSpecificOptimizations(context: Context) {

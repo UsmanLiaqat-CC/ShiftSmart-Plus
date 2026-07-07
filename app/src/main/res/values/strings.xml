@@ -76,6 +76,8 @@
     <string name="post_notification">Post Notification</string>
     <string name="please_allow_enable_post_notification">Please allow post notification to run foreground service</string>
     <string name="please_turn_off_battery_optimization_to_allow_run_app_in_background">Please turn off battery optimization to allow run app in background</string>
+    <string name="background_tracking_restricted">Background tracking may be unreliable on this device. Tap Fix to resolve.</string>
+    <string name="fix">Fix</string>
 
     <!-- Permission required dialog strings -->
     <string name="perm_both_title">Permissions Required</string>

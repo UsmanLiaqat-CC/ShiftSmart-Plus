@@ -22,11 +22,27 @@ class RestartWatchdogReceiver : BroadcastReceiver() {
         val user = sharedPref?.getUser()
 
         if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
-            Log.i("BootReceiver", "⏰ Service destroyed during shift - AlarmManager will handle next wake-up")
+            if (!isServiceRunning(context, MyService::class.java)) {
+                // ⚠️ This is the actual point of the watchdog: MyService may have failed to
+                // start (e.g. startForeground() threw ForegroundServiceStartNotAllowedException
+                // right after boot) or been killed by the OS. Relaunch it here instead of just
+                // rescheduling the next CALL_API alarm, otherwise a dead service never comes back.
+                Log.i("RestartWatchdogReceiver", "🔁 Service not running during shift - restarting MyService")
+                val serviceIntent = Intent(context, MyService::class.java).apply {
+                    action = MyService.ACTION_START
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+            } else {
+                Log.i("RestartWatchdogReceiver", "✅ Service already running during shift")
+            }
             // Ensure alarms are scheduled (they should already be, but just in case)
             AlarmReceiver.scheduleNextAlignedAlarm(context)
         } else {
-            Log.i("BootReceiver", "⏸️ Service destroyed outside shift - no action needed")
+            Log.i("RestartWatchdogReceiver", "⏸️ Outside shift - no action needed")
         }
 
 

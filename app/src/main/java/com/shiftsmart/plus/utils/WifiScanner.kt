@@ -13,7 +13,9 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.shiftsmart.plus.models.WifiModel
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.suspendCoroutine
 
 /**
@@ -42,10 +44,13 @@ class WifiScanner(private val context: Context) {
             return emptyList()
         }
 
-        // Check permissions
+        // Attempt scan regardless of location permission.
+        // On Android 10+ the OS requires ACCESS_FINE_LOCATION to read scan results;
+        // getCachedWifiResults() already catches SecurityException and returns emptyList() in that case.
+        // On older Android versions the scan may succeed even without location permission.
         if (!hasWifiPermissions()) {
-            Log.w(TAG, "⚠️ WiFi scan permission not granted - returning empty list")
-            return emptyList()
+            Log.w(TAG, "⚠️ WiFi scan permission not granted - attempting cached results anyway")
+            return getCachedWifiResults() ?: emptyList()
         }
 
         return try {
@@ -133,10 +138,10 @@ class WifiScanner(private val context: Context) {
                     context,
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 ) == PackageManager.PERMISSION_GRANTED ||
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
             }
             else -> {
                 // Android 5.x and below: No location permission needed
@@ -144,6 +149,7 @@ class WifiScanner(private val context: Context) {
             }
         }
     }
+
 
     /**
      * Check if WiFi is enabled

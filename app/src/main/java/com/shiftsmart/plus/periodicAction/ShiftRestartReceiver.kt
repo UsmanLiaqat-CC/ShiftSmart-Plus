@@ -21,20 +21,33 @@ class ShiftRestartReceiver : BroadcastReceiver() {
     private val TAG = "ShiftRestartReceiver"
 
     override fun onReceive(context: Context, intent: Intent) {
-        Log.i(TAG, "⏰ Restart alarm triggered - checking if service should start...")
+        val action = intent.action
+        Log.i(TAG, "⏰ Restart/boot trigger received: $action")
 
-        val sharedPref = SharedPref.getInstance(context = context)
-        val user = sharedPref?.getUser()
-
-        if (user != null && AlarmReceiver.isInsideShiftWindow(user)) {
-            Log.i("BootReceiver", "⏰ Service destroyed during shift - AlarmManager will handle next wake-up")
-            // Ensure alarms are scheduled (they should already be, but just in case)
-            AlarmReceiver.scheduleNextAlignedAlarm(context)
-        } else {
-            Log.i("BootReceiver", "⏸️ Service destroyed outside shift - no action needed")
+        // Device is going down - nothing to (re)schedule.
+        if (action == Intent.ACTION_SHUTDOWN) {
+            return
         }
 
+        val appContext = context.applicationContext
+        val sharedPref = SharedPref.getInstance(context = appContext)
+        val user = sharedPref?.getUser()
 
+        // AlarmManager alarms are wiped on every reboot/quickboot, so we must unconditionally
+        // rearm TODAY's and TOMORROW's shift START/STOP alarms here — not just when we happen
+        // to already be inside the shift window — otherwise a shift starting later that day
+        // would never auto-start until the app is opened manually.
+        val defaultShifts = user?.timetable?.range ?: emptyList()
+        if (user != null && defaultShifts.isNotEmpty()) {
+            Log.i(TAG, "🔁 Rescheduling today+tomorrow shift alarms after boot/quickboot")
+            AlarmScheduler.scheduleTodayAndTomorrow(
+                appContext,
+                defaultShifts,
+                user.multipleTimeTables ?: emptyList()
+            )
+        } else {
+            Log.i(TAG, "No logged-in user/timetable found - nothing to schedule")
+        }
     }
 
 }

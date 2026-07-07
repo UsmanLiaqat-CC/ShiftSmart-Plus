@@ -31,6 +31,13 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
 
+    // testing
+//    http://153.92.211.248/shiftsmartplus-sync-test-api/api/v1/
+
+//    live
+//    https://api.shiftsmartplus.com/api/v1/
+
+
     @JvmStatic
     @Provides
     @Singleton
@@ -48,6 +55,7 @@ object NetworkModule {
     fun provideApplicationContext(@ApplicationContext context: Context): Context {
         return context
     }
+
     @Provides
     @Singleton
     fun provideOkHttpClient(forceLogoutInterceptor: ForceLogoutInterceptor): OkHttpClient {
