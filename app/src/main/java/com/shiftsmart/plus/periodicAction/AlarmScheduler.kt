@@ -32,8 +32,9 @@ import java.util.concurrent.TimeUnit
  *      • START one hour before shift start
  *      • STOP  one hour after  shift end
  *  - If currently inside the window, starts service immediately and only schedules STOP.
- *  - Also provides helpers to schedule TOMORROW’s start/stop using distinct request codes (1101/1102)
- *    so today’s alarms (1001/1002) aren’t overwritten.
+ *  - Also provides helpers to schedule TOMORROW’s start/stop using request codes derived from
+ *    the target date (see requestCodeForDate) so today’s alarms (1001/1002) aren’t overwritten
+ *    and each day's "next day" alarm never collides with any other day's pending alarm.
  *  - Periodic 5-min CALL_API ticker: can be (re)scheduled and is always deduped.
  */
 
@@ -373,6 +374,69 @@ object AlarmScheduler {
     }
 
     /**
+     * findNextShiftDate(...)
+     * WHAT: Starting from `from` (inclusive), scans forward up to `maxLookaheadDays` to find the
+     *       next date that has a valid shift configured (skipping OFF days).
+     * WHY: The alarm chain only advances when a pending alarm fires. If "tomorrow" is an OFF day
+     *      and we schedule nothing, no alarm exists to fire and re-arm the day after — the chain
+     *      silently dies at the first OFF day, on every Android version, until the app is reopened.
+     *      Looking ahead lets us schedule the actual next working day directly, regardless of how
+     *      many consecutive OFF days precede it.
+     */
+    private fun findNextShiftDate(
+        from: LocalDate,
+        defaultShifts: List<TimeRange>,
+        multipleTimeTables: List<MultipleTimeTable>,
+        maxLookaheadDays: Int = 14
+    ): Pair<LocalDate, TimeRange>? {
+        for (offset in 0 until maxLookaheadDays) {
+            val candidate = from.plusDays(offset.toLong())
+            val activeMulti = multipleTimeTables.find { mt ->
+                val start = mt.startDate.toLocalDate()
+                val end = mt.endDate.toLocalDate()
+                candidate in start..end
+            }
+            val dayName = candidate.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
+            val effectiveRange = activeMulti?.timetable?.range ?: defaultShifts
+            val shift = effectiveRange.find { it.day.equals(dayName, ignoreCase = true) }
+            if (shift?.start != null && shift.end != null) {
+                return candidate to shift
+            }
+            Log.i(TAG, "findNextShiftDate → $dayName ($candidate) is OFF, checking next day")
+        }
+        Log.w(TAG, "findNextShiftDate → No shift found within $maxLookaheadDays days from $from")
+        return null
+    }
+
+    /**
+     * requestCodeForDate(...)
+     * WHAT: Derives a request code from the actual target date instead of a fixed constant.
+     * WHY: A fixed pair (e.g. 1101/1102) reused for "tomorrow" every single day caused a bug:
+     *      when that day's own START fired, it re-armed "the next tomorrow" using the SAME pair,
+     *      cancelling that same day's still-pending STOP before it ever fired. Deriving the code
+     *      from the date means today's and tomorrow's alarms are NEVER the same PendingIntent
+     *      identity, so rescheduling tomorrow can never cancel today's pending alarm.
+     *      Range (3000+) is kept disjoint from the legacy fixed codes (1001/1002/1101/1102) so
+     *      already-scheduled legacy alarms on existing installs can coexist harmlessly until they
+     *      fire and this logic takes over.
+     */
+    private fun requestCodeForDate(date: LocalDate, isStart: Boolean): Int {
+        val base = 3000 + (date.toEpochDay() % 1000).toInt() * 2
+        return if (isStart) base else base + 1
+    }
+
+    /**
+     * cancelLegacyFixedTomorrowAlarms(...)
+     * WHAT: One-time cleanup of the OLD fixed rc=1101/1102 scheme on already-deployed installs.
+     * WHY: Ensures existing devices self-heal onto the new date-derived scheme without needing
+     *      a fresh app open — the next natural reschedule call cleans up any stale legacy alarm.
+     */
+    private fun cancelLegacyFixedTomorrowAlarms(context: Context) {
+        cancelServiceAlarmByCode(context, "START_SERVICE", 1101)
+        cancelServiceAlarmByCode(context, "STOP_SERVICE", 1102)
+    }
+
+    /**
      * getCalendarForDate(...)
      * WHAT: Build a Calendar for a specific LocalDate + "HH:mm" time and apply ±offset hours.
      * WHO: Used by scheduleDay()/tomorrow helpers.
@@ -395,7 +459,7 @@ object AlarmScheduler {
     /**
      * scheduleTomorrowFromPrefs(...)
      * WHEN: Called by AlarmReceiver right after START fires.
-     * WHAT: Schedules TOMORROW’s start/stop using distinct request codes (1101/1102)
+     * WHAT: Schedules TOMORROW’s start/stop using a request code derived from tomorrow's date
      *       so TODAY’s alarms remain intact.
      * WHY: Ensures overnight shifts continue seamlessly (e.g., Mon→Tue, Tue→Wed).
      */
@@ -403,43 +467,38 @@ object AlarmScheduler {
         val user = SharedPref.getInstance(context)?.getUser() ?: return
         val defaultShifts = user.timetable?.range ?: return
         val multipleTables = user.multipleTimeTables ?: emptyList()
-        val tomorrow = LocalDate.now().plusDays(1)
 
-        // 1️⃣ Pick the correct timetable
-        val activeMulti = multipleTables.find { mt ->
-            val start = mt.startDate.toLocalDate()
-            val end = mt.endDate.toLocalDate()
-            tomorrow in start..end
-        }
-
-        val dayName = tomorrow.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
-        val effectiveRange = activeMulti?.timetable?.range ?: defaultShifts
-        val tomorrowShift = effectiveRange.find { it.day.equals(dayName, ignoreCase = true) }
-
-        if (tomorrowShift == null || tomorrowShift.start == null || tomorrowShift.end == null) {
-            Log.i(TAG, "scheduleTomorrowFromPrefs → No valid shift for $dayName (OFF)")
+        // Look ahead (skipping OFF days) instead of only checking literal "tomorrow" — otherwise
+        // a single OFF day in the schedule leaves nothing pending to fire and re-arm the chain.
+        val next = findNextShiftDate(LocalDate.now().plusDays(1), defaultShifts, multipleTables)
+        if (next == null) {
+            Log.i(TAG, "scheduleTomorrowFromPrefs → No upcoming shift found in lookahead window")
             return
         }
+        val (nextDate, nextShift) = next
+        val dayName = nextDate.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
 
         // 2️⃣ Build start and end calendars with ±1h
-        val startCal = getCalendarForDate(tomorrow, tomorrowShift.start, -1)
-        val endCal = getCalendarForDate(tomorrow, tomorrowShift.end, 1)
+        val startCal = getCalendarForDate(nextDate, nextShift.start!!, -1)
+        val endCal = getCalendarForDate(nextDate, nextShift.end!!, 1)
 
         // 🕛 Normalize overnight: if end <= start, push end to next day
         if (endCal.timeInMillis <= startCal.timeInMillis) {
             endCal.add(Calendar.DAY_OF_YEAR, 1)
         }
 
-        // 3️⃣ Cancel any existing tomorrow alarms (rc=1101/1102)
-        cancelTomorrowAlarms(context)
+        // 3️⃣ Cancel any existing alarm for the next shift date (date-derived code) + legacy fixed codes
+        cancelTomorrowAlarms(context, nextDate)
 
-        // 4️⃣ Schedule tomorrow’s start and stop
-        scheduleServiceWithCode(context, startCal, true, 1101)
-        scheduleServiceWithCode(context, endCal, false, 1102)
+        // 4️⃣ Schedule the next shift's start and stop using codes derived from that date
+        val startCode = requestCodeForDate(nextDate, true)
+        val stopCode = requestCodeForDate(nextDate, false)
+        scheduleServiceWithCode(context, startCal, true, startCode)
+        scheduleServiceWithCode(context, endCal, false, stopCode)
 
         Log.i(
             TAG,
-            "✅ Tomorrow scheduled: $dayName start=${startCal.time} (rc=1101), stop=${endCal.time} (rc=1102)"
+            "✅ Next shift scheduled: $dayName ($nextDate) start=${startCal.time} (rc=$startCode), stop=${endCal.time} (rc=$stopCode)"
         )
     }
 
@@ -447,7 +506,8 @@ object AlarmScheduler {
     /**
      * scheduleTodayAndTomorrow(...)
      * WHEN: Use at login/FCM to guarantee both TODAY and TOMORROW are armed.
-     * WHAT: Calls scheduleAlarms() for today, then independently schedules tomorrow with 1101/1102.
+     * WHAT: Calls scheduleAlarms() for today, then independently schedules tomorrow with a
+     *       date-derived request code.
      */
     fun scheduleTodayAndTomorrow(
         context: Context,
@@ -458,32 +518,28 @@ object AlarmScheduler {
         // TODAY (rc=1001/1002; with immediate start if inside window)
         scheduleAlarms(context, defaultShifts, multipleTimeTables, reschedulePeriodic)
 
-        // TOMORROW (rc=1101/1102; never cancels today’s)
-        val tomorrow = LocalDate.now().plusDays(1)
-        val activeMulti = multipleTimeTables.find { mt ->
-            val s = mt.startDate.toLocalDate(); val e = mt.endDate.toLocalDate()
-            tomorrow in s..e
-        }
-        val dayName = tomorrow.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
-        val range = activeMulti?.timetable?.range ?: defaultShifts
-        val shift = range.find { it.day.equals(dayName, ignoreCase = true) }
-
-        if (shift?.start != null && shift.end != null) {
-            val startCal = getCalendarForDate(tomorrow, shift.start, -1)
-            val endCal   = getCalendarForDate(tomorrow, shift.end,   1)
+        // NEXT SHIFT (date-derived rc; never cancels today’s). Looks ahead past OFF days so the
+        // chain has something pending to fire even if tomorrow (or several days) are OFF.
+        val next = findNextShiftDate(LocalDate.now().plusDays(1), defaultShifts, multipleTimeTables)
+        if (next != null) {
+            val (nextDate, shift) = next
+            val startCal = getCalendarForDate(nextDate, shift.start!!, -1)
+            val endCal   = getCalendarForDate(nextDate, shift.end!!,   1)
             if (endCal.timeInMillis <= startCal.timeInMillis) endCal.add(Calendar.DAY_OF_YEAR, 1)
 
-            cancelTomorrowAlarms(context)
-            scheduleServiceWithCode(context, startCal, true,  1101)
-            scheduleServiceWithCode(context, endCal,   false, 1102)
+            cancelTomorrowAlarms(context, nextDate)
+            val startCode = requestCodeForDate(nextDate, true)
+            val stopCode = requestCodeForDate(nextDate, false)
+            scheduleServiceWithCode(context, startCal, true,  startCode)
+            scheduleServiceWithCode(context, endCal,   false, stopCode)
 
-            Log.i(TAG, "Scheduled TOMORROW start=${startCal.time} (rc=1101), stop=${endCal.time} (rc=1102)")
+            Log.i(TAG, "Scheduled NEXT SHIFT $nextDate start=${startCal.time} (rc=$startCode), stop=${endCal.time} (rc=$stopCode)")
         } else {
-            Log.i(TAG, "No shift found for $dayName (tomorrow); skipping.")
+            Log.i(TAG, "No upcoming shift found in lookahead window; skipping.")
         }
     }
 
-    // ===== Helpers for "tomorrow" alarms with distinct request codes (1101/1102) =====
+    // ===== Helpers for "tomorrow" alarms with date-derived request codes =====
 
     /**
      * scheduleServiceWithCode(...)
@@ -545,7 +601,7 @@ object AlarmScheduler {
 
     /**
      * cancelServiceAlarmByCode(...)
-     * WHAT: Cancels a specific PI identified by (action, requestCode). Used to clear TOMORROW (1101/1102).
+     * WHAT: Cancels a specific PI identified by (action, requestCode). Used to clear TOMORROW's alarm.
      */
     private fun cancelServiceAlarmByCode(context: Context, action: String, requestCode: Int) {
         val intent = Intent(context, MyService::class.java).apply { this.action = action }
@@ -560,11 +616,14 @@ object AlarmScheduler {
 
     /**
      * cancelTomorrowAlarms(...)
-     * WHAT: Clears TOMORROW’s start (1101) and stop (1102) so we can re-plan cleanly.
+     * WHAT: Clears the pending alarm for the given target date (start+stop, date-derived codes)
+     *       so we can re-plan cleanly. Also purges the legacy fixed rc=1101/1102 scheme so
+     *       already-deployed devices migrate onto the date-derived scheme automatically.
      */
-    private fun cancelTomorrowAlarms(context: Context) {
-        cancelServiceAlarmByCode(context, "START_SERVICE", 1101)
-        cancelServiceAlarmByCode(context, "STOP_SERVICE", 1102)
+    private fun cancelTomorrowAlarms(context: Context, targetDate: LocalDate) {
+        cancelServiceAlarmByCode(context, "START_SERVICE", requestCodeForDate(targetDate, true))
+        cancelServiceAlarmByCode(context, "STOP_SERVICE", requestCodeForDate(targetDate, false))
+        cancelLegacyFixedTomorrowAlarms(context)
     }
 
     /**
@@ -574,7 +633,11 @@ object AlarmScheduler {
     fun cancelAllAlarms(context: Context) {
         cancelServiceAlarm(context, true)   // today start (1001)
         cancelServiceAlarm(context, false)  // today stop (1002)
-        cancelTomorrowAlarms(context)       // tomorrow start/stop (1101/1102)
+        // Cancel both today's and tomorrow's date-derived "next day" alarms (whichever is
+        // actually pending depends on when this runs relative to the last schedule call),
+        // plus the legacy fixed rc=1101/1102 scheme.
+        cancelTomorrowAlarms(context, LocalDate.now())
+        cancelTomorrowAlarms(context, LocalDate.now().plusDays(1))
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val periodicIntent = Intent(context, AlarmReceiver::class.java).apply { action = "CALL_API" }

@@ -747,6 +747,14 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
     override fun onResume() {
         super.onResume()
         Log.i(TAG, "onResume: HomeFragment")
+
+        // Logged out in the background: don't restart the service or call APIs.
+        // MainActivity.onResume opens Login.
+        if (SharedPref.getInstance(requireContext())?.getUser() == null) {
+            Log.w(TAG, "onResume: no saved user, skipping Home work")
+            return
+        }
+
         setChecksData()
         updateNotificationBadge()
         ensureServiceRunning()
@@ -2242,6 +2250,11 @@ class HomeFragment : Fragment(), GpsStatusMonitor.GpsStatusListener {
             batteryOptimization = this.batteryOptimization,
             wifi_list = this.wifi_list,
             errorlogs =errorsList?: emptyList(),
+            appVersion = this.appVersion.ifBlank { BuildConfig.VERSION_NAME },
+            deviceName = this.deviceName.ifBlank { Build.MODEL },
+            deviceType = this.deviceType.ifBlank { "android" },
+            complianceRecordId = this.complianceRecordId,
+            complianceStatus = this.complianceStatus,
         )
     }
 

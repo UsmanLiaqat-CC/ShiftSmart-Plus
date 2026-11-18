@@ -11,6 +11,7 @@ import com.shiftsmart.plus.database.DBDao
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.repository.MainRepository
 import com.shiftsmart.plus.retrofit.ApiService
+import com.shiftsmart.plus.retrofit.DeviceHeadersInterceptor
 import com.shiftsmart.plus.retrofit.ForceLogoutInterceptor
 import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.utils.AttendanceSyncManager
@@ -58,12 +59,16 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(forceLogoutInterceptor: ForceLogoutInterceptor): OkHttpClient {
+    fun provideOkHttpClient(
+        forceLogoutInterceptor: ForceLogoutInterceptor,
+        deviceHeadersInterceptor: DeviceHeadersInterceptor
+    ): OkHttpClient {
         val okHttpClientBuilder = OkHttpClient.Builder()
         okHttpClientBuilder.readTimeout(100, TimeUnit.SECONDS)
         okHttpClientBuilder.connectTimeout(100, TimeUnit.SECONDS)
         okHttpClientBuilder.writeTimeout(100, TimeUnit.SECONDS)
         okHttpClientBuilder.addInterceptor(forceLogoutInterceptor)
+        okHttpClientBuilder.addInterceptor(deviceHeadersInterceptor)
 
         return okHttpClientBuilder.build()
     }

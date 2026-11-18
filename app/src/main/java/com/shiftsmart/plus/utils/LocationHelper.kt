@@ -63,9 +63,23 @@ class LocationHelper(private val context: Context) {
             override fun onProviderEnabled(provider: String) {}
         }
 
+        val availableProviders = locationManager.allProviders
+        val provider = when {
+            LocationManager.NETWORK_PROVIDER in availableProviders -> LocationManager.NETWORK_PROVIDER
+            LocationManager.GPS_PROVIDER in availableProviders -> LocationManager.GPS_PROVIDER
+            else -> null
+        }
+
+        if (provider == null) {
+            Log.w("LocationHelper", "No location provider available on this device. Falling back to last known location.")
+            val fallback = getBestLastKnownLocation(locationManager)
+            callback(fallback, "No location provider available")
+            return
+        }
+
         try {
             locationManager.requestLocationUpdates(
-                LocationManager.NETWORK_PROVIDER,
+                provider,
                 0L,
                 0f,
                 listener,
@@ -86,6 +100,10 @@ class LocationHelper(private val context: Context) {
             Log.e("LocationHelper", "SecurityException while requesting updates: ${e.message}")
             val fallback = getBestLastKnownLocation(locationManager)
             callback(fallback, e.message)
+        } catch (e: IllegalArgumentException) {
+            Log.e("LocationHelper", "Provider '$provider' unavailable: ${e.message}")
+            val fallback = getBestLastKnownLocation(locationManager)
+            callback(fallback, e.message)
         }
     }
 
@@ -100,8 +118,12 @@ class LocationHelper(private val context: Context) {
             return lastLocation
         }
 
+        val availableProviders = locationManager.allProviders
+
         // Try GPS first (most accurate)
-        val gpsLocation = try {
+        val gpsLocation = if (LocationManager.GPS_PROVIDER !in availableProviders) {
+            null
+        } else try {
             locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
         } catch (e: SecurityException) {
             Log.e("LocationHelper", "GPS SecurityException: ${e.message}")
@@ -109,7 +131,9 @@ class LocationHelper(private val context: Context) {
         }
 
         // Try Network provider
-        val networkLocation = try {
+        val networkLocation = if (LocationManager.NETWORK_PROVIDER !in availableProviders) {
+            null
+        } else try {
             locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
         } catch (e: SecurityException) {
             Log.e("LocationHelper", "Network SecurityException: ${e.message}")

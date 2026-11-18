@@ -3,7 +3,6 @@ package com.shiftsmart.plus.ui.activities
 import android.Manifest
 import android.app.AlarmManager
 import android.app.Dialog
-import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -41,20 +40,17 @@ import com.shiftsmart.plus.databinding.LoadingDialogBinding
 import com.shiftsmart.plus.databinding.LogoutDialogBinding
 import com.shiftsmart.plus.database.ShiftSmartPlusDatabase
 import com.shiftsmart.plus.periodicAction.AlarmScheduler
-import com.shiftsmart.plus.periodicAction.PeriodicSyncWorkerManager
-import com.shiftsmart.plus.periodicAction.RestartWatchdogManager
 import com.shiftsmart.plus.periodicAction.ServiceHealthWorkerManager
-import com.shiftsmart.plus.periodicAction.ShiftRestartAlarmManager
 import com.shiftsmart.plus.services.LocationTrack
 import com.shiftsmart.plus.services.MyService
 import com.shiftsmart.plus.utils.DialogManager
 import com.shiftsmart.plus.utils.FingerprintHelper
 import com.shiftsmart.plus.utils.FullScreenIntentPermissionHelper
 import com.shiftsmart.plus.utils.Resource
+import com.shiftsmart.plus.utils.SessionCleanup
 import com.shiftsmart.plus.utils.SessionLogoutCoordinator
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils
-import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import com.shiftsmart.plus.viewmodels.MainViewModel
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.appupdate.AppUpdateOptions
@@ -555,34 +551,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             locationTrack.stopListener()
-            val user=SharedPref.getInstance(this@MainActivity)?.getUser()
-            user?.let {
-                FirebaseMessaging.getInstance().unsubscribeFromTopic(it?._id.toString())
-                // Clear the subscribed state so re-login subscribes fresh
-                SharedPref.getInstance(this@MainActivity)?.saveSubscribedFcmUserId("")
-            }
-
-            // Stop all schedulers/workers/alarms
-            AlarmScheduler.cancelAllAlarms(this@MainActivity)
-            PeriodicSyncWorkerManager.stopPeriodicSync(this@MainActivity)
-            // ✅ Cancel periodic health check worker
-            ServiceHealthWorkerManager.cancelPeriodicHealthCheck(this@MainActivity)
-            ShiftRestartAlarmManager.cancelAllRestartSchedules(this@MainActivity)
-            RestartWatchdogManager.cancelOneMinuteRestart(this@MainActivity)
-            Log.i(TAG, "✅ Periodic health check worker cancelled on logout")
-
-            // Clear notifications and stop service
-            val notificationManager = this@MainActivity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.cancelAll()
-
-            if (isServiceRunning(this@MainActivity, MyService::class.java)) {
-                Log.i(TAG, "Service is running. Stopping it now.")
-                this@MainActivity.stopService(Intent(this@MainActivity, MyService::class.java))
-            }
-
-            FingerprintHelper.setFingerprintEnabled(this@MainActivity, false)
-            SharedPref.getInstance(this@MainActivity)?.clearLastSyncTime() // Clear sync timestamps
-            SharedPref.getInstance(this@MainActivity)?.clearPrefrence()
+            SessionCleanup.logoutLocally(this@MainActivity)
             val navController = findNavController(R.id.nav_host_fragment)
             val navOptions = navOptions {
                 popUpTo(R.id.nav_graph) { inclusive = true }
@@ -739,6 +708,13 @@ class MainActivity : AppCompatActivity() {
 
             val user = SharedPref.getInstance(this@MainActivity)?.getUser()
             val token = SharedPref.getInstance(this@MainActivity)?.getToken()
+
+            // Already logged out in the background: there's nothing to send, just open Login
+            if (user == null) {
+                deleteUserDataAndLogout()
+                return@launch
+            }
+
             user?.let {
                 if (Utils.isInternetAvailable(this@MainActivity)) {
                     mainViewModel.logoutUser(user_token = token ?: "", id = it._id ?: "")
@@ -859,6 +835,27 @@ class MainActivity : AppCompatActivity() {
 
         SessionLogoutCoordinator.consumePendingMessage()?.let { pendingMessage ->
             showForceLogoutDialog(pendingMessage)
+        }
+
+        // Logged out in the background (a ping got LOGOUT, 401 or 403, so SessionCleanup
+        // cleared the user). Android may have restored Home without going through Splash,
+        // so open Login here. Skipped while a logout dialog is open: its OK button does this.
+        if (SharedPref.getInstance(this)?.getUser() == null &&
+            !isLogoutDialogShowing &&
+            forceLogoutDialog?.isShowing != true
+        ) {
+            val currentId = try {
+                findNavController(R.id.nav_host_fragment).currentDestination?.id
+            } catch (e: Exception) {
+                null
+            }
+            if (currentId != null &&
+                currentId != R.id.loginFragment &&
+                currentId != R.id.splashFragment
+            ) {
+                Log.w(TAG, "onResume: no saved user on screen $currentId, opening Login")
+                deleteUserDataAndLogout()
+            }
         }
 
         // ✅ Clear battery dialog state when returning from system dialogs

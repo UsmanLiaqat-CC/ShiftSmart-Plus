@@ -680,6 +680,14 @@ class AttendanceSyncManager @Inject constructor(
         if (response.code() == 404 || response.code() == 401 || response.code() == 403) {
             Log.e(TAG, "❌ API Error ${response.code()} - Triggering logout through SessionLogoutCoordinator")
 
+            // Read the body once. It can't be read again later
+            val errorBodyString = response.errorBody()?.string()
+            val isServerLogout = response.code() == 401 || response.code() == 403 ||
+                (errorBodyString?.contains("\"LOGOUT\"") == true)
+
+            // Stop uploads now, without waiting for the user to open the app
+            if (isServerLogout) SessionCleanup.logoutLocally(context)
+
             withContext(Dispatchers.Main) {
                 try {
                     // Ensure complaint alert chain is stopped on forced logout.
@@ -688,12 +696,10 @@ class AttendanceSyncManager @Inject constructor(
                     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     notificationManager.cancel(ComplaintAlertNotification.NOTIFICATION_ID)
 
-                    // ✅ Send notification update to service for error handling
+                    // ✅ Send notification update to service for error handling.
+                    // Not after a server logout: the service has just been stopped.
                     val errorMessage = "API error ${response.code()} - Session expired"
-                    sendNotificationUpdate(errorMessage)
-
-                    // Extract error body as string
-                    val errorBodyString = response.errorBody()?.string()
+                    if (!isServerLogout) sendNotificationUpdate(errorMessage)
 
                     // ✅ Use SessionLogoutCoordinator to broadcast logout intent
                     // This will be caught by HomeFragment to show logout dialog

@@ -495,7 +495,7 @@ class MainViewModel @Inject constructor(
         parentScope.launch {
             try {
                 val request = ComplianceDateRequest(startDate, endDate)
-                Log.i(TAG, "getFieldWorkerCompliance URL: https://api.shiftsmartplus.com/api/v1/user-compliance/field-worker?page=$page&limit=$limit | body: startDate=$startDate, endDate=$endDate \n token: $token")
+                Log.i(TAG, "getFieldWorkerCompliance: page=$page, limit=$limit | body: startDate=$startDate, endDate=$endDate \n token: $token")
 
                 val response = withContext(Dispatchers.IO) {
                     repository.getFieldWorkerCompliance(page, limit, request, token)

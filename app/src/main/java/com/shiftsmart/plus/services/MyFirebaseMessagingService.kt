@@ -25,6 +25,8 @@ import com.shiftsmart.plus.periodicAction.AlarmScheduler
 import com.shiftsmart.plus.ui.activities.ComplaintAlertActivity
 import com.shiftsmart.plus.ui.activities.MainActivity
 import com.shiftsmart.plus.utils.ComplaintAlertNotification
+import com.shiftsmart.plus.utils.SessionCleanup
+import com.shiftsmart.plus.utils.SessionLogoutCoordinator
 import com.shiftsmart.plus.utils.SharedPref
 import com.shiftsmart.plus.utils.Utils.isServiceRunning
 import kotlinx.coroutines.CoroutineScope
@@ -213,6 +215,19 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                         ?: jsonObject.optString("type").takeIf { it.isNotBlank() }
                         ?: payloadObject.optString("type").takeIf { it.isNotBlank() }
                         ?: ""
+                    val forceLogout = data["forceLogout"]?.toBooleanStrictOrNull()
+                        ?: jsonObject.optBoolean("forceLogout", false)
+                    if (forceLogout) {
+                        Log.e("MyFirebaseMessagingService", "Force logout push received")
+                        SessionCleanup.logoutLocally(applicationContext)
+                        // Shows the "logged out by admin" dialog now if the app is open, or next time it opens
+                        SessionLogoutCoordinator.handleIfSessionExpired(
+                            applicationContext,
+                            401,
+                            "{\"errors\":[{\"detail\":\"LOGOUT\",\"code\":401}]}"
+                        )
+                        return@let
+                    }
                     val complaintFlag = extractComplaintFlag(
                         data = data,
                         jsonObject = jsonObject,
